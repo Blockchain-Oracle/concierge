@@ -45,32 +45,36 @@ describe('bigintSafeStringify', () => {
     expect(() => bigintSafeStringify(Promise.resolve(1))).toThrow(/not serializable/);
   });
 
-  it('throws on NESTED Promise/function/Symbol instead of silently emitting {}', () => {
-    expect(() => bigintSafeStringify({ data: Promise.resolve(1) })).toThrow(/nested/);
-    expect(() => bigintSafeStringify({ cb: () => 1 })).toThrow(/nested/);
-    expect(() => bigintSafeStringify({ k: Symbol('x') })).toThrow(/nested/);
+  it('throws on NESTED Promise/function/Symbol with key-path attribution', () => {
+    expect(() => bigintSafeStringify({ data: Promise.resolve(1) })).toThrow(/nested.*at \.data/);
+    expect(() => bigintSafeStringify({ cb: () => 1 })).toThrow(/nested.*at \.cb/);
+    expect(() => bigintSafeStringify({ k: Symbol('x') })).toThrow(/nested.*at \.k/);
   });
 
   it('catches empty-string-key Promise (value-identity check vs root, not key-string)', () => {
     // Previous PR used `key !== ''` to skip the top-level call, which conflated
     // root invocation with literal `''` keys. This payload would silently emit
-    // `{"":{}}` under the broken check.
-    expect(() => bigintSafeStringify({ '': Promise.resolve(1) })).toThrow(/nested/);
+    // `{"":{}}` under the broken check. Key-path attribution is empty here.
+    expect(() => bigintSafeStringify({ '': Promise.resolve(1) })).toThrow(/nested.*at \./);
   });
 
-  it('catches deeply nested non-serializable values (depth 3+)', () => {
-    expect(() => bigintSafeStringify({ a: { b: { c: Promise.resolve(1) } } })).toThrow(/nested/);
-    expect(() => bigintSafeStringify({ a: { b: { c: () => 1 } } })).toThrow(/nested/);
+  it('catches deeply nested non-serializable values (depth 3+) with the leaf key', () => {
+    expect(() => bigintSafeStringify({ a: { b: { c: Promise.resolve(1) } } })).toThrow(
+      /nested.*at \.c/,
+    );
+    expect(() => bigintSafeStringify({ a: { b: { c: () => 1 } } })).toThrow(/nested.*at \.c/);
   });
 
   it('catches a Promise inside an array (numeric-string key path)', () => {
-    expect(() => bigintSafeStringify([Promise.resolve(1)])).toThrow(/nested/);
-    expect(() => bigintSafeStringify({ positions: [Promise.resolve(1)] })).toThrow(/nested/);
+    expect(() => bigintSafeStringify([Promise.resolve(1)])).toThrow(/nested.*at \.0/);
+    expect(() => bigintSafeStringify({ positions: [Promise.resolve(1)] })).toThrow(
+      /nested.*at \.0/,
+    );
   });
 
-  it('throws on nested WeakMap / WeakSet (would serialize as {} silently)', () => {
-    expect(() => bigintSafeStringify({ wm: new WeakMap() })).toThrow(/WeakMap\/WeakSet/);
-    expect(() => bigintSafeStringify({ ws: new WeakSet() })).toThrow(/WeakMap\/WeakSet/);
+  it('throws on nested WeakMap / WeakSet with key-path (would serialize as {} silently)', () => {
+    expect(() => bigintSafeStringify({ wm: new WeakMap() })).toThrow(/WeakMap\/WeakSet at \.wm/);
+    expect(() => bigintSafeStringify({ ws: new WeakSet() })).toThrow(/WeakMap\/WeakSet at \.ws/);
   });
 
   it('accepts top-level null (JSON.stringify(null) = "null")', () => {

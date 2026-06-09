@@ -8,11 +8,11 @@
 //     representable in JSON Schema; normalize inside invoke() instead);
 // (7) enforces inputSchema AND outputSchema are ZodObject (MCP tool-calls
 //     pass args + return structuredContent as objects);
-// (8) chain-gates each tool via supportsNetwork (type-checks fn + boolean return,
-//     and isolates supportsNetwork throws so one buggy gate doesn't kill the
-//     whole registry);
+// (8) chain-gates each tool via supportsNetwork (type-checks fn + boolean
+//     return; ATTRIBUTES supportsNetwork throws to the tool name + factory
+//     index — this is fail-fast at registration, NOT isolation);
 // (9) dedups names with factory-index attribution on collision;
-// (10) returns an immutable ReadonlyArray for adapter consumption.
+// (10) returns a ReadonlyArray (type-level read-only — not Object.freeze'd).
 // invoke() errors are NOT wrapped here — each adapter (Vercel AI / OpenAI /
 // MCP / AgentKit) owns its own invoke error envelope per ADR-014.
 // Per-tool generics intentionally erased; adapters dispatch by name at runtime.
@@ -78,29 +78,25 @@ export function createConciergeTools(
           `[@concierge/tools] tool "${t.name}" inputSchema/outputSchema must be Zod schemas (got input=${typeof t.inputSchema}, output=${typeof t.outputSchema})`,
         );
       }
-      // Symmetric pipe check on inputSchema — MCP tool-call args are passed as
-      // an object; .transform()/.pipe() inputSchemas would fail JSON Schema
-      // conversion later in the adapter layer with worse attribution.
-      if (isZodPipe(t.inputSchema)) {
+      // Collect-first / throw-once: a tool with BOTH transform inputSchema AND
+      // transform outputSchema should see ONE error naming both fields, not
+      // a two-trip "fix input → re-run → fix output" cycle.
+      const pipeFields: string[] = [];
+      if (isZodPipe(t.inputSchema)) pipeFields.push('inputSchema');
+      if (isZodPipe(t.outputSchema)) pipeFields.push('outputSchema');
+      if (pipeFields.length > 0) {
         throw new TypeError(
-          `[@concierge/tools] tool "${t.name}".inputSchema uses .transform() or .pipe() — cannot be represented in JSON Schema (perform normalization inside invoke() instead of in the schema).`,
+          `[@concierge/tools] tool "${t.name}" ${pipeFields.join(' and ')} use(s) .transform() or .pipe() — cannot be represented in JSON Schema (perform normalization inside invoke() instead of in the schema).`,
         );
       }
-      if (isZodPipe(t.outputSchema)) {
+      // Same pattern for ZodObject: MCP tool-call args + return both must be
+      // objects (ADR-017 emphasizes output; spec applies symmetrically to args).
+      const nonObjectFields: string[] = [];
+      if (!isZodObject(t.inputSchema)) nonObjectFields.push('inputSchema');
+      if (!isZodObject(t.outputSchema)) nonObjectFields.push('outputSchema');
+      if (nonObjectFields.length > 0) {
         throw new TypeError(
-          `[@concierge/tools] tool "${t.name}".outputSchema uses .transform() or .pipe() — cannot be represented in JSON Schema (perform normalization inside invoke() instead of in the schema).`,
-        );
-      }
-      // MCP tool-call args MUST be an object too (asymmetric with outputSchema
-      // only in spec emphasis; the ADR doesn't carve out scalar inputs).
-      if (!isZodObject(t.inputSchema)) {
-        throw new TypeError(
-          `[@concierge/tools] tool "${t.name}".inputSchema must be a z.ZodObject (MCP / Vercel AI / OpenAI tool-calls pass args as an object); wrap scalar inputs in z.object({ value: ... })`,
-        );
-      }
-      if (!isZodObject(t.outputSchema)) {
-        throw new TypeError(
-          `[@concierge/tools] tool "${t.name}".outputSchema must be a z.ZodObject per ADR-017 (MCP structuredContent requires top-level object); wrap scalar returns in z.object({ value: ... })`,
+          `[@concierge/tools] tool "${t.name}" ${nonObjectFields.join(' and ')} must be a z.ZodObject (MCP / Vercel AI / OpenAI tool-calls pass args + structuredContent as objects); wrap scalar values in z.object({ value: ... })`,
         );
       }
       if (t.supportsNetwork !== undefined) {
@@ -113,7 +109,9 @@ export function createConciergeTools(
         try {
           verdict = t.supportsNetwork(agent.chainId);
         } catch (cause) {
-          // Isolate: one buggy supportsNetwork shouldn't take down the whole registry.
+          // Attribute (NOT isolate): wrap so the user knows WHICH tool's gate
+          // threw, then re-raise. Failing fast at registration is correct —
+          // silently skipping the tool would hide the bug.
           throw new Error(
             `[@concierge/tools] tool "${t.name}".supportsNetwork threw: ${
               cause instanceof Error ? cause.message : String(cause)

@@ -186,12 +186,12 @@ describe('createConciergeTools aggregation', () => {
     ).toThrow(/must be Zod schemas/);
   });
 
-  it('rejects a non-ZodObject outputSchema per ADR-017', () => {
+  it('rejects a non-ZodObject outputSchema', () => {
     expect(() =>
       createConciergeTools(agentMainnet, [
         () => [{ ...echo, outputSchema: z.string() } as unknown as ConciergeTool],
       ]),
-    ).toThrow(/must be a z\.ZodObject per ADR-017/);
+    ).toThrow(/outputSchema must be a z\.ZodObject/);
   });
 
   it('rejects a .transform()-wrapped outputSchema with a transform-specific message', () => {
@@ -204,7 +204,7 @@ describe('createConciergeTools aggregation', () => {
           } as unknown as ConciergeTool,
         ],
       ]),
-    ).toThrow(/outputSchema uses \.transform\(\) or \.pipe\(\)/);
+    ).toThrow(/outputSchema use\(s\) \.transform\(\) or \.pipe\(\)/);
   });
 
   it('rejects a .transform()-wrapped inputSchema symmetrically with outputSchema', () => {
@@ -217,10 +217,25 @@ describe('createConciergeTools aggregation', () => {
           } as unknown as ConciergeTool,
         ],
       ]),
-    ).toThrow(/inputSchema uses \.transform\(\) or \.pipe\(\)/);
+    ).toThrow(/inputSchema use\(s\) \.transform\(\) or \.pipe\(\)/);
   });
 
-  it('rejects a non-ZodObject inputSchema (MCP tool-call args must be object)', () => {
+  it('reports BOTH inputSchema and outputSchema in one error when both are transforms', () => {
+    // Collect-first / throw-once UX: author fixes both fields in one trip.
+    expect(() =>
+      createConciergeTools(agentMainnet, [
+        () => [
+          {
+            ...echo,
+            inputSchema: z.object({ a: z.string() }).transform((o) => o),
+            outputSchema: z.object({ b: z.string() }).transform((o) => o),
+          } as unknown as ConciergeTool,
+        ],
+      ]),
+    ).toThrow(/inputSchema and outputSchema use\(s\) \.transform\(\) or \.pipe\(\)/);
+  });
+
+  it('rejects a non-ZodObject inputSchema', () => {
     expect(() =>
       createConciergeTools(agentMainnet, [
         () => [{ ...echo, inputSchema: z.string() } as unknown as ConciergeTool],

@@ -72,6 +72,16 @@ describe('isZodSchema (duck-type for monorepo / peer-dep tolerance)', () => {
     expect(isZodSchema({ _def: { type: 42 }, safeParse: () => ({}) })).toBe(false); // _def.type not a string
     expect(isZodSchema({ _def: {}, safeParse: () => ({}) })).toBe(false); // _def has no type
   });
+
+  it('returns false on a throwing _def getter (Proxy / MobX / RxJS schemas)', () => {
+    const trap = Object.defineProperty({}, '_def', {
+      get() {
+        throw new Error('proxy boom');
+      },
+    });
+    expect(() => isZodSchema(trap)).not.toThrow();
+    expect(isZodSchema(trap)).toBe(false);
+  });
 });
 
 describe('isZodObject / isZodPipe (ADR-017 gate)', () => {
