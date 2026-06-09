@@ -1,0 +1,12 @@
+{
+  "filter_paths": "lib/|out/|cache/|broadcast/|test/",
+  "exclude_informational": true,
+  "exclude_low": true,
+  "exclude_optimization": true,
+  "fail_on": "high",
+  "solc_remaps": [
+    "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
+    "@aave/=lib/aave-v3-origin/src/contracts/",
+    "forge-std/=lib/forge-std/src/"
+  ]
+}

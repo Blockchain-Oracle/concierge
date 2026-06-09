@@ -1,0 +1,82 @@
+# Contracts CI — Foundry build / test / coverage / static analysis.
+# Separate workflow so path-filter triggers cleanly (per-job `paths:` is not
+# supported in GH Actions; workflow-level is the canonical place). This file
+# only runs when contracts/** or this workflow change — saves CI minutes on
+# TS-only PRs.
+#
+# Branch protection: rename a job here only if you also update the protection
+# rule — renaming silently bypasses the gate.
+
+name: Contracts
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "contracts/**"
+      - ".github/workflows/contracts.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "contracts/**"
+      - ".github/workflows/contracts.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: contracts
+    steps:
+      - uses: actions/checkout@v6
+      - uses: foundry-rs/foundry-toolchain@v1.8.0
+        with:
+          version: stable
+      - name: Install Foundry dependencies
+        run: bash scripts/install-deps.sh
+      - name: forge fmt --check
+        run: forge fmt --check
+      - name: forge build --sizes
+        run: forge build --sizes
+      - name: forge test -vvv
+        run: forge test -vvv
+      - name: forge coverage --report summary
+        # 80% coverage gate activates when real `src/` contracts arrive
+        # (story-10+ ConciergeRegistry). Today src/ is empty; coverage
+        # reports 100% (0/0). The step runs informationally now so the
+        # toolchain wiring is exercised end-to-end before real source.
+        run: forge coverage --report summary
+
+  contracts-security:
+    # Run on PRs only (not every push to a feature branch) to save runner
+    # minutes. Slither is slower than forge test and offers diminishing
+    # returns on rapid-iteration branches.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: foundry-rs/foundry-toolchain@v1.8.0
+        with:
+          version: stable
+      - name: Install Foundry dependencies
+        run: bash contracts/scripts/install-deps.sh
+      - name: Slither static analysis
+        uses: crytic/slither-action@v0.4.2
+        with:
+          target: contracts/
+          slither-config: contracts/.slither.config.json
+          fail-on: high
