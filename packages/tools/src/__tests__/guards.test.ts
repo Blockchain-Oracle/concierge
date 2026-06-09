@@ -22,6 +22,24 @@ describe('isThenable (tightened then+catch duck-type)', () => {
     expect(isThenable({ then: 'not a fn', catch: 'not a fn' })).toBe(false);
   });
 
+  it('rejects the exact Promises/A+ §1.2 thenable (then function, no catch)', () => {
+    // The headline false-positive the tightened check exists to defend against.
+    // biome-ignore lint/suspicious/noThenProperty: testing the duck-type guard
+    expect(isThenable({ then: () => Promise.resolve(1) })).toBe(false);
+    // biome-ignore lint/suspicious/noThenProperty: testing the duck-type guard
+    expect(isThenable({ then: () => 'x', catch: 'not a fn' })).toBe(false);
+  });
+
+  it('returns false on a throwing then-getter instead of propagating', () => {
+    const obj = Object.defineProperty({}, 'then', {
+      get() {
+        throw new Error('getter boom');
+      },
+    });
+    expect(() => isThenable(obj)).not.toThrow();
+    expect(isThenable(obj)).toBe(false);
+  });
+
   it('rejects null, undefined, primitives, function values', () => {
     expect(isThenable(null)).toBe(false);
     expect(isThenable(undefined)).toBe(false);
