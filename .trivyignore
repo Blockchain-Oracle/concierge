@@ -1,0 +1,19 @@
+# .trivyignore — CVE allowlist for the security workflow.
+#
+# Format: one CVE ID per line (e.g., CVE-2024-12345). Optional inline
+# comment via `#`. Blank lines + `#`-prefixed lines are ignored.
+#
+# DISCIPLINE per ADR-007 + non-negotiable #1 (Quality > deadline):
+#   - NEVER silence a CVE just to make CI green. Fix the dep, or document
+#     here with: (a) the upstream issue link, (b) why the CVE doesn't
+#     affect Concierge's specific use, (c) the expected un-ignore date
+#     (when upstream ships a fix).
+#   - Treat every entry as tech debt with a deadline. Quarterly bump
+#     pass (see CONTRIBUTING.md "Manual-bump checklist") includes
+#     re-evaluating each ignore.
+#
+# Examples (commented; uncomment + fill when first needed):
+#
+# CVE-2024-12345  # node-fetch reachable only via dev-deps; ignore until v3.4.0 fix lands. Track: https://github.com/x/y/issues/123
+#
+# No active ignores as of story-07 landing (2026-06-09).
