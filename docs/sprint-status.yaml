@@ -62,11 +62,11 @@ stories:
     merged_at: "2026-06-09T17:15:00Z"
   - id: story-07-security-workflow
     epic: "Epic E0 — Foundation"
-    status: PENDING
+    status: COMPLETE
     depends_on: [story-04-ci-typescript-pipeline, story-06-husky-precommit-hooks]
     issue_url: ""
-    pr_url: ""
-    merged_at: ""
+    pr_url: "https://github.com/Blockchain-Oracle/concierge/pull/11"
+    merged_at: "2026-06-09T17:55:00Z"
 
   # ─────────────────────────────────────────────────────────────────
   # Epic E1 — Smart Contracts
