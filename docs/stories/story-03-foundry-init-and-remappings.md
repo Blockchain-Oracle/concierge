@@ -46,15 +46,19 @@ Then exit code is 0
 
 Given contracts/remappings.txt exists
 When grep checks the file
-Then it contains "openzeppelin-contracts/=lib/openzeppelin-contracts/contracts/" AND "aave-v3-origin/=lib/aave-v3-origin/" AND it does NOT contain "chainlink" (case-insensitive)
+Then it contains "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/" AND "@aave/=lib/aave-v3-origin/src/contracts/" AND it does NOT contain "chainlink" (case-insensitive). (Spec patched 2026-06-09 per type-design reviewer on PR #6: dual aliases dropped — keeping only the `@`-prefixed upstream-canonical form, since `openzeppelin-contracts/` + `@openzeppelin/contracts/` two-way aliasing invites inconsistent import styles across stories.)
 
 Given the install-deps script exists
 When `bash contracts/scripts/install-deps.sh` runs in a fresh clone
 Then `contracts/lib/openzeppelin-contracts` + `contracts/lib/aave-v3-origin` + `contracts/lib/forge-std` exist
 
 Given Foundry is set up
-When `cd contracts && forge build` runs (with no contracts in src/ yet)
+When `cd contracts && forge build` runs (with no contracts in src/ yet; test/Smoke.t.sol exercises the toolchain)
 Then exit code is 0
+
+Given the Smoke.t.sol toolchain test exists
+When `cd contracts && forge test` runs
+Then exit code is 0 with 2 passing tests (test_forgeStdIsWired + test_vmCheatcodesExecute) — validates that forge-std remap resolves, solc 0.8.26 compiles, shanghai EVM evaluates, and `vm.warp` cheatcode executes
 ```
 
 ---
@@ -72,19 +76,25 @@ test -d contracts/script
 # solc 0.8.26 pinned
 grep -qE "solc\s*=\s*['\"]0\.8\.26['\"]" contracts/foundry.toml
 
-# OZ + Aave V3 Origin remappings present
-grep -q "openzeppelin-contracts" contracts/remappings.txt
-grep -q "aave-v3-origin" contracts/remappings.txt
+# OZ + Aave V3 Origin remappings present (upstream-canonical @-form only)
+grep -q "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/" contracts/remappings.txt
+grep -q "@aave/=lib/aave-v3-origin/src/contracts/" contracts/remappings.txt
 
-# NO Chainlink (per ADR-008)
+# NO Chainlink dep installed (per ADR-008). Skip comment lines (`#`) so
+# the script can document the no-chainlink rationale without tripping
+# this grep — only `forge install` lines (or any non-comment) matter.
 ! grep -iq "chainlink" contracts/remappings.txt
-! grep -iq "chainlink" contracts/scripts/install-deps.sh
+! grep -vE "^\s*#" contracts/scripts/install-deps.sh | grep -iq "chainlink"
 
 # install-deps script is executable
 test -x contracts/scripts/install-deps.sh
 
-# Foundry builds cleanly (empty src is OK)
+# Foundry builds cleanly (empty src + Smoke.t.sol in test/)
 cd contracts && forge build
+test $? -eq 0
+
+# forge test passes Smoke.t.sol (toolchain wiring validation)
+cd contracts && forge test
 test $? -eq 0
 ```
 
