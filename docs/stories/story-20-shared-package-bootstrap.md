@@ -18,13 +18,15 @@
 
 ## File modification map
 
-- `packages/shared/package.json` — NEW — `name: "@concierge/shared"`, version `0.0.0`, exports map, type `module`
+- `packages/shared/package.json` — NEW — `name: "@concierge/shared"`, version `0.0.0`, exports map, type `module`, `peerDependencies.viem` per ADR-018, `"files":["dist","src"]`, build script via tsup
 - `packages/shared/tsconfig.json` — UPDATE (created in story-02) — declare `outDir: dist`, `composite: true`
-- `packages/shared/src/index.ts` — NEW — barrel exports
-- `packages/shared/src/addresses.ts` — NEW — `ADDRESSES.mantleMainnet` + `ADDRESSES.mantleSepolia` (each with: `aave.pool`, `aave.oracle`, `aave.addressesProvider`, `aave.protocolDataProvider`, `tokens.sUSDe`, `tokens.USDC`, `tokens.USDe`, `tokens.WMNT`, `tokens.WETH`, `tokens.USDY`, `tokens.mETH`, `erc8004.identityRegistry`, `erc8004.reputationRegistry`, `lifi.diamond`, `mantleDex.merchantMoe.lbRouter`, `mantleDex.agni.factory`); types
-- `packages/shared/src/chains.ts` — NEW — viem chain configs for Mantle Mainnet + Sepolia
-- `packages/shared/src/types.ts` — NEW — shared `AgentId`, `TickPhase`, `ActionKind`, `ProviderName`, `Hex`, `Address`, `EvmChainId` types
-- `packages/shared/src/index.test.ts` — NEW — sanity tests (addresses are well-formed 0x40-hex strings)
+- `packages/shared/tsconfig.build.json` — NEW — separate build tsconfig (`composite: false`, `emitDeclarationOnly: true`, `ignoreDeprecations: "6.0"`) so tsup's dts pipeline doesn't trip on project-reference strictness
+- `packages/shared/tsup.config.ts` — NEW — ESM-only, `dts: { resolve: true }`, target `node22`, points at `tsconfig.build.json` per ADR-018
+- `packages/shared/src/index.ts` — NEW — barrel exports (named only, no `export *`)
+- `packages/shared/src/addresses.ts` — NEW — `ADDRESSES.mantleMainnet` + `ADDRESSES.mantleSepolia` (each with: `aave.pool`, `aave.oracle`, `aave.addressesProvider`, `aave.protocolDataProvider`, `tokens.sUSDe`, `tokens.USDC`, `tokens.USDe`, `tokens.WMNT`, `tokens.WETH`, `tokens.USDY`, `tokens.mETH`, `erc8004.identityRegistry`, `erc8004.reputationRegistry`, `lifi.diamond`, `mantleDex.merchantMoe.lbRouter`, `mantleDex.agni.factory`); recursive `deepFreeze` at runtime; `addressesFor` overloads narrowing per chain id with `satisfies never` exhaustiveness; `SEPOLIA_PENDING_ADDRESS_SLOTS` lockbox so future stories cannot silently regress a populated address back to zero
+- `packages/shared/src/chains.ts` — NEW — viem chain configs for Mantle Mainnet + Sepolia; `chainFor(chainId: EvmChainId)` uses the shared type (not an inline literal union) so adding a third chain becomes a compile error here
+- `packages/shared/src/types.ts` — NEW — shared types: `EvmChainId` (5000 | 5003 literal union), `AgentId` (`unique symbol` brand with `agentId()` constructor + `isAgentId()` guard validating `^agent_[0-9a-f]{32}$`), `TickPhase` (6-arm union — `plan | simulate | propose | decide | execute | record` per architecture.md repo-structure + story-60 routeModelForPhase), `ActionKind` (11-arm), `ProviderName` (7-arm), `Hex`, `Address` (viem re-exports). SOURCE OF TRUTH banner — downstream packages MUST import these (no local redeclaration)
+- `packages/shared/src/index.test.ts` — NEW — vitest invariant suite covering: format regex + EIP-55 checksum on every Mainnet entry (WETH vanity exempt per `research/concierge/03-providers/aave-v3-mantle.md:34`); pinned-value `it.each` for every Mainnet address (16) + Sepolia ERC-8004 (2); deep-freeze runtime test; Sepolia pending-slot lockbox; negative-path tests for `addressesFor` + `chainFor`; `agentId()` happy + sad path; `expectTypeOf` type-level contracts for every public type union
 
 ---
 
