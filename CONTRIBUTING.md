@@ -54,6 +54,17 @@ npm-ecosystem PRs are lower-risk thanks to the lockfile + `pnpm.onlyBuiltDepende
 
 **actionlint is Dependabot-tracked** via the `reviewdog/action-actionlint` wrapper — the github-actions ecosystem entry in `dependabot.yml` covers it automatically. No manual binary pinning required.
 
+## Manual-bump checklist (quarterly, not Dependabot-tracked)
+
+A few tooling versions live OUTSIDE the npm + github-actions ecosystems Dependabot watches. Bump them by hand every quarter (or when CI surfaces a regression):
+
+- **Solidity compiler** (`solc` version in `contracts/foundry.toml`) — currently `"0.8.26"`
+- **Foundry binary** (`with: version:` in `.github/workflows/contracts.yml`) — currently `v1.7.1`
+- **Slither** (`with: slither-version:` in `.github/workflows/contracts.yml` + `pip install slither-analyzer==X.Y.Z` in `.github/workflows/ci.yml`) — currently `0.11.5`. Bump both lines together to keep CI's `test-config` smoke and the actual `contracts-security` job on the same version.
+- **OpenZeppelin Contracts / Aave V3 Origin / forge-std** (`forge install ... @vX.Y.Z` in `contracts/scripts/install-deps.sh`) — currently OZ `v5.6.1`, aave-v3-origin `v3.6.0`, forge-std `v1.16.1`.
+
+Procedure: bump → run full CI locally (`pnpm run check && pnpm run typecheck && pnpm run test:config && cd contracts && forge fmt --check && forge test && forge coverage --report summary`) → if green, open a `chore(deps): bump <thing>` PR.
+
 ## Where things are
 
 - `docs/` — PRD, architecture (19 ADRs), ux-spec, epics (16, 110 stories), sprint-status, all story files.

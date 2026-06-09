@@ -80,6 +80,14 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # Install slither so scripts/test-slither-config.mjs ACTUALLY runs
+      # under CI (without this, `which slither` returns non-zero and the
+      # smoke test exits 0 silently — defeating its purpose). Matches the
+      # version pinned in contracts.yml's slither-action.
+      - run: pip install slither-analyzer==0.11.5
       - run: pnpm install --frozen-lockfile
       - run: pnpm run test:config
 
