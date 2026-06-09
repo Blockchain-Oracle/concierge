@@ -1,10 +1,13 @@
 // Convert a tool's schemas to OpenAPI 3 JSON Schema for OpenAI / Anthropic / MCP.
 // Behavior on non-representable shapes:
-//  - Refinements (.refine, .superRefine) are stripped silently — JSON Schema can't
-//    represent them. Prefer expressible constraints (.regex, .min, .max, .email).
-//  - .transform() / z.custom() / .pipe() throw at conversion time (neither silent
-//    strip nor lossy round-trip is safe). The wrapper re-throws with tool name
-//    + which schema (input vs output) for attribution.
+//  - Refinements (.refine, .superRefine) are stripped silently.
+//  - .transform() throws at conversion time (shape changes, no safe round-trip).
+//  - z.custom() emits trivial `{}` (no constraints) — adapter sends a schema-less
+//    field to the LLM.
+//  - .pipe() may convert as the first segment or throw — adapter should validate.
+// Wrapper re-throws with tool name + field (inputSchema vs outputSchema) for
+// attribution; original Zod throw preserved as `cause`. ADR-017 outputSchema-
+// must-be-ZodObject is enforced upstream in createConciergeTools.
 
 import { z } from 'zod';
 import type { ConciergeTool } from './types.ts';

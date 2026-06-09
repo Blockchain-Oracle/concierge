@@ -1,21 +1,24 @@
-// JSON.stringify with bigint → decimal-string, Map → object, Set → array. Native
-// JSON.stringify already throws on circular refs; we wrap with a tool-context error.
-// Shared-reference DAGs serialize normally. Spec-defined nested drops (Symbol-keyed,
-// function-valued, undefined-valued props) are NOT recovered — `:string` contract
-// applies to TOP-LEVEL only; nested drops follow JSON.stringify spec.
+// JSON.stringify with bigint → decimal-string, Map → object, Set → array.
+// Wraps THREE failure modes:
+//  - top-level non-serializable values throw before stringify (function / Symbol /
+//    undefined / thenable — all would otherwise return value `undefined`, violating
+//    the `:string` contract);
+//  - JSON.stringify failures (e.g. circular refs) are decorated with tool-context;
+//  - a post-stringify guard catches any future replacer change that lets
+//    `undefined` escape (defense-in-depth).
+// Plus a nested-value guard: a tool that forgot to `await` and returns
+// `{ data: Promise.resolve(...) }` would silently emit `{"data":{}}` per JSON
+// spec — data corruption. We throw on nested Promise/function/Symbol/WeakMap/
+// WeakSet too, so the failure is loud at the boundary, not silent in MCP.
+
+import { isThenable } from './guards.ts';
 
 export function bigintSafeStringify(value: unknown, space?: number | string): string {
-  // Reject every top-level value where JSON.stringify returns the value `undefined`
-  // (violates the `: string` return contract). Symbol, function, undefined, and
-  // Promise all hit this trap. Promise.then check is duck-typed so thenables also
-  // catch.
   if (
     value === undefined ||
     typeof value === 'function' ||
     typeof value === 'symbol' ||
-    (value !== null &&
-      typeof value === 'object' &&
-      typeof (value as { then?: unknown }).then === 'function')
+    isThenable(value)
   ) {
     throw new TypeError(
       `[@concierge/tools] bigintSafeStringify: top-level ${typeof value === 'object' ? 'thenable/Promise' : typeof value} is not serializable (violates :string contract)`,
@@ -26,22 +29,37 @@ export function bigintSafeStringify(value: unknown, space?: number | string): st
   try {
     result = JSON.stringify(
       value,
-      (_key, v) => {
+      (key, v) => {
         if (typeof v === 'bigint') return v.toString();
         if (v instanceof Map) return Object.fromEntries(v);
         if (v instanceof Set) return Array.from(v);
+        // Catch nested data-corrupting types (would otherwise become {} or drop).
+        // WeakMap/WeakSet are also covered by `instanceof` to fail loud rather
+        // than silently emit {}.
+        if (key !== '') {
+          if (typeof v === 'function' || typeof v === 'symbol' || isThenable(v)) {
+            throw new TypeError(
+              `[@concierge/tools] bigintSafeStringify: non-serializable nested ${typeof v === 'object' ? 'thenable/Promise' : typeof v} at .${key} (forgot to await?)`,
+            );
+          }
+          if (v instanceof WeakMap || v instanceof WeakSet) {
+            throw new TypeError(
+              `[@concierge/tools] bigintSafeStringify: WeakMap/WeakSet at .${key} is not serializable`,
+            );
+          }
+        }
         return v;
       },
       space,
     );
   } catch (cause) {
-    // Native JSON.stringify throws TypeError("Converting circular structure to JSON")
-    // on cycles; everything else surfaces as a regular error. Decorate either way.
+    // Pass our own typed errors through untouched (they're already decorated).
+    if (cause instanceof TypeError && /\[@concierge\/tools\]/.test(cause.message)) {
+      throw cause;
+    }
     const msg = cause instanceof Error ? cause.message : String(cause);
     throw new Error(`[@concierge/tools] bigintSafeStringify: ${msg}`, { cause });
   }
-  // Post-stringify guard: spec says replacer-returning-undefined at top level yields
-  // undefined. Defense-in-depth for any future replacer change that breaks the contract.
   if (typeof result !== 'string') {
     throw new TypeError(
       `[@concierge/tools] bigintSafeStringify: JSON.stringify returned non-string (${typeof result})`,

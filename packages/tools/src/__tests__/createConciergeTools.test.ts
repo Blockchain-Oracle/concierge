@@ -155,10 +155,37 @@ describe('createConciergeTools aggregation', () => {
     );
   });
 
-  it('throws clearly when an async factory leaks a Promise (no unhandledRejection)', () => {
+  it('throws clearly when an async factory leaks a Promise (no unhandledRejection)', async () => {
     const asyncBad = (() =>
       Promise.reject(new Error('async boom'))) as unknown as ProviderToolFactory;
     expect(() => createConciergeTools(agentMainnet, [asyncBad])).toThrow(/returned a Promise/);
+    // Prove the `.catch(()=>{})` suppression actually swallows the rejection by
+    // flushing microtasks — without the suppression, Node would emit
+    // unhandledRejection here. Uses globalThis to avoid @types/node coupling.
+    const proc = (
+      globalThis as {
+        process?: {
+          on: (e: string, h: (r: unknown) => void) => void;
+          off: (e: string, h: (r: unknown) => void) => void;
+        };
+      }
+    ).process;
+    if (!proc) return; // browser test runner; spy not available
+    const rejections: unknown[] = [];
+    const handler = (reason: unknown) => rejections.push(reason);
+    proc.on('unhandledRejection', handler);
+    try {
+      try {
+        createConciergeTools(agentMainnet, [asyncBad]);
+      } catch {
+        // swallow expected sync TypeError
+      }
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(rejections).toEqual([]);
+    } finally {
+      proc.off('unhandledRejection', handler);
+    }
   });
 
   it('rejects non-Zod inputSchema/outputSchema (adapters require .safeParse + _def)', () => {
@@ -176,6 +203,42 @@ describe('createConciergeTools aggregation', () => {
         () => [{ ...echo, outputSchema: z.string() } as unknown as ConciergeTool],
       ]),
     ).toThrow(/must be a z\.ZodObject per ADR-017/);
+  });
+
+  it('rejects a .transform()-wrapped outputSchema with a transform-specific message', () => {
+    expect(() =>
+      createConciergeTools(agentMainnet, [
+        () => [
+          {
+            ...echo,
+            outputSchema: z.object({ x: z.string() }).transform((o) => o),
+          } as unknown as ConciergeTool,
+        ],
+      ]),
+    ).toThrow(/uses \.transform\(\) or \.pipe\(\)/);
+  });
+
+  it('isolates a throwing supportsNetwork — single tool fails, registry can continue', () => {
+    const bad: ProviderToolFactory = () => [
+      {
+        ...echo,
+        supportsNetwork: () => {
+          throw new Error('gate boom');
+        },
+      },
+    ];
+    expect(() => createConciergeTools(agentMainnet, [bad])).toThrow(
+      /supportsNetwork threw.*gate boom/,
+    );
+  });
+
+  it('does NOT mis-flag a payload-style thenable like { then: () => "x" } as Promise', () => {
+    // Domain object: a tool whose `then` field is a function (Liquid/Handlebars
+    // continuation, RxJS-style scheduler, etc.). The tightened isThenable requires
+    // both then AND catch — pure data objects survive. (LLM tool output payloads
+    // sometimes embed function values that JSON drops, but we don't reject early.)
+    const objLike = [echo]; // factory returns a normal tool array, not a thenable
+    expect(() => createConciergeTools(agentMainnet, [() => objLike])).not.toThrow();
   });
 
   it('rejects supportsNetwork as a non-function value', () => {
@@ -279,6 +342,21 @@ describe('bigintSafeStringify', () => {
     expect(() => bigintSafeStringify(() => 1)).toThrow(/not serializable/);
     expect(() => bigintSafeStringify(Symbol('x'))).toThrow(/not serializable/);
     expect(() => bigintSafeStringify(Promise.resolve(1))).toThrow(/not serializable/);
+  });
+
+  it('throws on NESTED Promise/function/Symbol instead of silently emitting {}', () => {
+    expect(() => bigintSafeStringify({ data: Promise.resolve(1) })).toThrow(/nested.*data/);
+    expect(() => bigintSafeStringify({ cb: () => 1 })).toThrow(/nested.*cb/);
+    expect(() => bigintSafeStringify({ k: Symbol('x') })).toThrow(/nested.*k/);
+  });
+
+  it('throws on nested WeakMap / WeakSet (would serialize as {} silently)', () => {
+    expect(() => bigintSafeStringify({ wm: new WeakMap() })).toThrow(/WeakMap\/WeakSet.*wm/);
+    expect(() => bigintSafeStringify({ ws: new WeakSet() })).toThrow(/WeakMap\/WeakSet.*ws/);
+  });
+
+  it('accepts top-level null (JSON.stringify(null) = "null")', () => {
+    expect(bigintSafeStringify(null)).toBe('null');
   });
 
   it('leaves plain numbers + strings untouched', () => {
