@@ -34,7 +34,6 @@
     "zod": "^4.1.0"
   },
   "devDependencies": {
-    "@concierge/shared": "workspace:*",
     "ai": "6.0.199",
     "tsup": "8.5.0",
     "zod": "4.4.3"
