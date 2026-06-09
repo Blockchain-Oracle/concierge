@@ -29,7 +29,7 @@
     "test:config": "pnpm run husky:test && pnpm run commitlint:test && pnpm run gitleaks:test && pnpm run security:test && pnpm run slither:test && pnpm run loc:test && pnpm run tsconfig:test",
     "typecheck": "tsc -b --noEmit",
     "test": "pnpm -r run test",
-    "build": "echo '[stub] pnpm -r build — wired per story' && exit 0",
+    "build": "pnpm -r --workspace-concurrency=1 --if-present run build",
     "dev": "echo '[stub] pnpm --filter ./apps/web dev — wired in story-100' && exit 0",
     "prepare": "husky"
   },
@@ -40,6 +40,7 @@
     "husky": "9.1.7",
     "lint-staged": "17.0.7",
     "typescript": "6.0.3",
+    "viem": "2.52.2",
     "vitest": "4.1.8"
   },
   "pnpm": {

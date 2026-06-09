@@ -16,12 +16,15 @@
   },
   "files": [
     "dist",
-    "src"
+    "src/**/*.ts",
+    "!src/**/*.test.ts"
   ],
   "scripts": {
     "build": "tsup",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepare": "tsup",
+    "prepack": "pnpm run build"
   },
   "peerDependencies": {
     "viem": "^2.52.0"

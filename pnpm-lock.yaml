@@ -26,6 +26,9 @@ importers:
       typescript:
         specifier: 6.0.3
         version: 6.0.3
+      viem:
+        specifier: 2.52.2
+        version: 2.52.2(typescript@6.0.3)
       vitest:
         specifier: 4.1.8
         version: 4.1.8(jiti@2.6.1)(yaml@2.9.0)
