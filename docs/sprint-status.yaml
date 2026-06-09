@@ -48,11 +48,11 @@ stories:
     merged_at: "2026-06-09T14:54:21Z"
   - id: story-05-ci-contracts-pipeline
     epic: "Epic E0 — Foundation"
-    status: PENDING
+    status: COMPLETE
     depends_on: [story-03-foundry-init-and-remappings]
     issue_url: ""
-    pr_url: ""
-    merged_at: ""
+    pr_url: "https://github.com/Blockchain-Oracle/concierge/pull/7"
+    merged_at: "2026-06-09T15:30:38Z"
   - id: story-06-husky-precommit-hooks
     epic: "Epic E0 — Foundation"
     status: PENDING
