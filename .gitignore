@@ -1,14 +1,43 @@
+# Dependencies
 node_modules/
-.env*
-!.env.example
-.DS_Store
+.pnpm-store/
+
+# Build output
 dist/
-.next/
+build/
 out/
-broadcast/
-cache/
+.next/
 .turbo/
 *.tsbuildinfo
-.pnpm-store/
-screenshots/current/
+
+# Foundry
+cache/
+broadcast/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Local Claude overrides
 .claude/settings.local.json
+
+# Visual loop scratch
+screenshots/current/
+
+# Coverage
+coverage/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Cloudflare Workers
+.wrangler/
