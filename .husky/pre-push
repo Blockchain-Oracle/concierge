@@ -1,0 +1,10 @@
+#!/usr/bin/env sh
+# Pre-push: catches regressions in scripts/check-file-loc.mjs before push.
+# The full forge build runs in CI's `Contracts` workflow on every PR — no
+# need to duplicate it locally (the conditional `git diff @{u}` shape from
+# story-06's first iteration silently skipped on first-push-of-new-branch,
+# the most common scenario in the one-story-one-branch workflow).
+
+set -e
+
+node scripts/test-check-file-loc.mjs

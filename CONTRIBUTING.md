@@ -66,6 +66,8 @@ A few tooling versions live OUTSIDE the npm + github-actions ecosystems Dependab
 - **Foundry binary** (`with: version:` in `.github/workflows/contracts.yml`) — currently `v1.7.1`.
 - **Slither** (`with: slither-version:` in `.github/workflows/contracts.yml` + `pip install slither-analyzer==X.Y.Z` in `.github/workflows/ci.yml`) — currently `0.11.5`. Bump both lines together to keep CI's `test-config` smoke and the actual `contracts-security` job on the same version.
 - **OpenZeppelin Contracts / Aave V3 Origin / forge-std** (`forge install ... @vX.Y.Z` in `contracts/scripts/install-deps.sh`) — currently OZ `v5.6.1`, aave-v3-origin `v3.6.0`, forge-std `v1.16.1`.
+- **husky / lint-staged / @commitlint/cli / @commitlint/config-conventional** (devDependencies in `package.json`) — currently `9.1.7`, `17.0.7`, `21.0.2`, `21.0.2`. lint-staged + commitlint share their own release cadence; bump both `@commitlint/*` together.
+- **gitleaks binary** (local install + CI install in story-07 security workflow) — local: `brew install gitleaks` (mac) / `apt install gitleaks` (debian) / `go install github.com/gitleaks/gitleaks/v8@latest` / `scoop install gitleaks` (windows). Pre-commit hook conditionally skips if missing; CI runs gitleaks unconditionally.
 
 Procedure: bump → run full CI locally (`pnpm run check && pnpm run typecheck && pnpm run test:config && cd contracts && forge fmt --check && forge test && forge coverage --report summary`) → if green, open a `chore(deps): bump <thing>` PR.
 

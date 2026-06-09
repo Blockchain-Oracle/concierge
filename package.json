@@ -22,7 +22,10 @@
     "loc:test": "node scripts/test-check-file-loc.mjs",
     "tsconfig:test": "node scripts/test-tsconfig-strict.mjs",
     "slither:test": "node scripts/test-slither-config.mjs",
-    "test:config": "pnpm run slither:test && pnpm run loc:test && pnpm run tsconfig:test",
+    "gitleaks:test": "node scripts/test-gitleaks-config.mjs",
+    "commitlint:test": "node scripts/test-commitlint-config.mjs",
+    "husky:test": "node scripts/test-husky-hooks.mjs",
+    "test:config": "pnpm run husky:test && pnpm run commitlint:test && pnpm run gitleaks:test && pnpm run slither:test && pnpm run loc:test && pnpm run tsconfig:test",
     "typecheck": "tsc -b --noEmit",
     "test": "echo '[stub] vitest run — wired per story' && exit 0",
     "build": "echo '[stub] pnpm -r build — wired per story' && exit 0",
@@ -31,7 +34,10 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.16",
+    "@commitlint/cli": "21.0.2",
+    "@commitlint/config-conventional": "21.0.2",
     "husky": "9.1.7",
+    "lint-staged": "17.0.7",
     "typescript": "6.0.3"
   },
   "pnpm": {

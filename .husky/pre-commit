@@ -1,2 +1,21 @@
 #!/usr/bin/env sh
-pnpm run check && node scripts/check-file-loc.mjs
+# Pre-commit chain: staged-file lint+format → full-tree LOC guard →
+# workspace typecheck → secret scan (if gitleaks locally available).
+# Bypass with `git commit --no-verify` ONLY for genuine emergencies —
+# CI re-runs all of these.
+
+set -e
+
+pnpm exec lint-staged
+node scripts/check-file-loc.mjs
+pnpm run typecheck
+
+# Secret scan. gitleaks is a Go binary (not npm). Local install via
+# `brew install gitleaks` or equivalent. CI's story-07 security workflow
+# runs gitleaks unconditionally; this local hook skips with a warning
+# if missing (matches the slither smoke-test pattern).
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks detect --no-banner --config .gitleaks.toml --redact --source .
+else
+  echo "::warning::gitleaks not on PATH — local secret scan skipped. CI catches this. Install: brew install gitleaks (mac) / apt install gitleaks (debian) / go install github.com/gitleaks/gitleaks/v8@latest / scoop install gitleaks (windows)"
+fi
