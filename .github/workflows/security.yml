@@ -1,6 +1,4 @@
 # Security workflow — secret scan + dependency vuln scan + filesystem CVE scan.
-# Runs on every push, every PR to main, nightly at 03:00 UTC, and manual dispatch.
-# Branch protection: rename a job here only if you also update the protection rule.
 
 name: Security
 
@@ -13,44 +11,50 @@ on:
     - cron: '0 3 * * *'
   workflow_dispatch:
 
+# Key the concurrency group on event_name too so push/schedule/dispatch
+# never cancel each other. Without this, a push during a nightly scheduled
+# run silently cancels the schedule and we miss a day of coverage.
 concurrency:
-  group: security-${{ github.ref }}
+  group: security-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 permissions:
   contents: read
 
 env:
+  # Pinned binary versions + SHA-256 hashes verified against each tool's
+  # signed checksums file. Bump via CONTRIBUTING.md "Manual-bump checklist".
   GITLEAKS_VERSION: "8.30.1"
+  GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+  OSV_SCANNER_VERSION: "2.3.8"
+  OSV_SCANNER_SHA256: "bc98e15319ed0d515e3f9235287ba53cdc5535d576d24fd573978ecfe9ab92dc"
 
 jobs:
   gitleaks:
-    # Full git-history secret scan. Uses the gitleaks MIT-licensed binary
-    # (not the commercial gitleaks-action) to avoid the Gitleaks LLC
-    # per-organization license requirement. Same binary version pinned
-    # in story-06's pre-commit hook and CONTRIBUTING manual-bump checklist.
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - name: Install gitleaks
+          persist-credentials: false
+      - name: Install + verify gitleaks
         run: |
           set -euo pipefail
-          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
-            | tar -xzf - gitleaks
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -o gitleaks.tar.gz
+          echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf gitleaks.tar.gz gitleaks
           chmod +x gitleaks
       - name: Run gitleaks (full history)
         run: ./gitleaks detect --config .gitleaks.toml --redact --no-banner -v
 
   trivy:
-    # Filesystem CVE scan. Exit 1 on CRITICAL/HIGH; fix or document in
-    # .trivyignore (with rationale). NEVER silently downgrade exit-code.
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: 'fs'
@@ -60,17 +64,48 @@ jobs:
           trivyignores: '.trivyignore'
           ignore-unfixed: 'false'
 
+  # Job ID `osv-scanner` is the stable branch-protection contract; the
+  # underlying tool is swappable (e.g. when osv-scalibr supersedes
+  # osv-scanner, only the binary URL changes). Uses the MIT-licensed
+  # binary directly — google/osv-scanner-action is a REUSABLE WORKFLOW
+  # repo (not an action), which our PR #11 first iteration tripped on.
   osv-scanner:
-    # OSV database scan against pnpm-lock.yaml + package.json + Foundry
-    # lib/* manifests. TS-native equivalent of Python's pip-audit.
-    # google/osv-scanner-action@v2.3.8 (was v1 in spec; v2 is current).
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6
-      - uses: google/osv-scanner-action@v2.3.8
         with:
-          scan-args: |-
-            --skip-git
-            --recursive
-            ./
+          persist-credentials: false
+      - name: Install + verify osv-scanner
+        run: |
+          set -euo pipefail
+          curl -sSfL "https://github.com/google/osv-scanner/releases/download/v${OSV_SCANNER_VERSION}/osv-scanner_linux_amd64" -o osv-scanner
+          echo "${OSV_SCANNER_SHA256}  osv-scanner" | sha256sum -c -
+          chmod +x osv-scanner
+      - name: Run osv-scanner
+        run: ./osv-scanner scan source --recursive ./
+
+  # Open a GitHub issue when a SCHEDULED run fails — without this, a
+  # nightly red X on `main` produces zero notification beyond the
+  # Actions tab. Silent-failure-hunter CRITICAL on PR #11.
+  notify-on-nightly-failure:
+    needs: [gitleaks, trivy, osv-scanner]
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Open issue for failed nightly
+        uses: JasonEtco/create-an-issue@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        with:
+          filename: .github/NIGHTLY_SECURITY_FAILURE_TEMPLATE.md
+          update_existing: true
+          search_existing: open
