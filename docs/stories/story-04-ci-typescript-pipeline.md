@@ -23,19 +23,22 @@
   - `concurrency: { group: ci-${{ github.ref }}, cancel-in-progress: true }`
   - `permissions: { contents: read, pull-requests: read }` (explicit)
   - Per-job `timeout-minutes` (lint: 5, typecheck: 5, loc-cap: 2, test: 15)
-  - `env: { PNPM_VERSION: "9", NODE_VERSION: "22" }` (pinned)
+  - `env: { PNPM_VERSION: "10", NODE_VERSION: "22" }` (pinned to match `packageManager: pnpm@10.33.0` in `package.json`)
 - `.github/dependabot.yml` — NEW — weekly updates for npm + GitHub Actions
 - `CONTRIBUTING.md` — NEW — short contributor flow (clone, install, branch, commit, PR)
 
-The job matrix:
+The job matrix (placeholder shape; per-package shards activate as `@concierge/*` packages with real `test` scripts land in story-20+):
 ```yaml
 test:
   strategy:
     fail-fast: false
     matrix:
-      package: [sdk, shared, providers-aave-v3-mantle, providers-mantle-dex, providers-ethena-susde, providers-ondo-usdy, providers-meth-staking, providers-lifi-bridge, providers-erc8004]
+      # Single shard today — no @concierge/* package has a test script yet.
+      # Story-20+ expands this list as real packages arrive
+      # (e.g. sdk, shared, providers-aave-v3-mantle, ...).
+      package: [_workspace_]
 ```
-Each shard runs `pnpm run --filter=@concierge/<pkg> test --reporter=verbose --coverage`. Coverage uploaded as artifact.
+The single shard runs `pnpm -r test` workspace-wide. Once the matrix expands, each shard runs `pnpm run --filter=@concierge/<pkg> test --reporter=verbose --coverage` and coverage uploads as an artifact.
 
 ---
 
@@ -142,7 +145,7 @@ grep -q "package-ecosystem: \"github-actions\"" .github/dependabot.yml
 
 ## Notes for coding agent
 
-- Use `pnpm/action-setup@v4` (with `version: 9`) for pnpm and `actions/setup-node@v4` (with `node-version: 22`, `cache: pnpm`) for Node. The `cache: pnpm` option on setup-node@v4 handles pnpm-store caching automatically — no manual `actions/cache@v4` configuration needed.
+- Use `pnpm/action-setup@v6` (with `version: 10`) for pnpm and `actions/setup-node@v6` (with `node-version: 22`, `cache: pnpm`) for Node. Verified current as of 2026-06-09 via the GitHub API releases endpoint. The `cache: pnpm` option on setup-node@v6 handles pnpm-store caching automatically — no manual `actions/cache@v4` configuration needed. (Spec previously suggested v4; bumped because the actions/* ecosystem advanced to v6 / v7.)
 - **SEPARATE jobs, not a single matrix-task job.** Reference pattern: `find-evil/.github/workflows/ci.yml` has 8 gated jobs as required-status-checks for branch protection. Splitting lint/typecheck/loc-cap/test lets a typecheck failure not cancel the lint run — important for fast feedback on PRs.
 - **`fail-fast: false`** on the test matrix so all packages report their results even if one fails.
 - The workflow runs against Ubuntu-24.04 (pinned, not `-latest` — find-evil rationale: `-latest` floats, reproducibility matters for the audit trail).
