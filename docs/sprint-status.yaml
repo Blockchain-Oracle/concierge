@@ -154,11 +154,11 @@ stories:
     merged_at: "2026-06-09T18:30:00Z"
   - id: story-21-shared-abi-imports
     epic: "Epic E2 — Shared SDK Core"
-    status: PENDING
+    status: COMPLETE
     depends_on: [story-20-shared-package-bootstrap]
     issue_url: ""
-    pr_url: ""
-    merged_at: ""
+    pr_url: "https://github.com/Blockchain-Oracle/concierge/pull/14"
+    merged_at: "2026-06-09T20:08:00Z"
   - id: story-22-sdk-skeleton
     epic: "Epic E2 — Shared SDK Core"
     status: PENDING
