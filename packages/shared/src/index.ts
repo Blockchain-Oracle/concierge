@@ -1,3 +1,13 @@
-// Placeholder export to make this a valid TypeScript module.
-// Real surface lands in this package's owning story (see docs/sprint-status.yaml).
-export {};
+// Barrel exports for @concierge/shared.
+
+export { ADDRESSES, addressesFor } from './addresses.ts';
+export { chainFor, mantleMainnet, mantleSepolia } from './chains.ts';
+export type {
+  ActionKind,
+  Address,
+  AgentId,
+  EvmChainId,
+  Hex,
+  ProviderName,
+  TickPhase,
+} from './types.ts';

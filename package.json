@@ -28,7 +28,7 @@
     "security:test": "node scripts/test-security-workflow.mjs",
     "test:config": "pnpm run husky:test && pnpm run commitlint:test && pnpm run gitleaks:test && pnpm run security:test && pnpm run slither:test && pnpm run loc:test && pnpm run tsconfig:test",
     "typecheck": "tsc -b --noEmit",
-    "test": "echo '[stub] vitest run — wired per story' && exit 0",
+    "test": "pnpm -r run test",
     "build": "echo '[stub] pnpm -r build — wired per story' && exit 0",
     "dev": "echo '[stub] pnpm --filter ./apps/web dev — wired in story-100' && exit 0",
     "prepare": "husky"
@@ -39,7 +39,8 @@
     "@commitlint/config-conventional": "21.0.2",
     "husky": "9.1.7",
     "lint-staged": "17.0.7",
-    "typescript": "6.0.3"
+    "typescript": "6.0.3",
+    "vitest": "4.1.8"
   },
   "pnpm": {
     "onlyBuiltDependencies": []
