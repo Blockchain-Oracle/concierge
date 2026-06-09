@@ -1,27 +1,18 @@
-// Aggregate ConciergeTools from provider factories. Validates tool shape, dedups
-// names across factories (TypeError with factory index on collision), runs chain-gate
-// filter via supportsNetwork, wraps factory construction throws with cause.
+// Aggregate ConciergeTools from provider factories. Performs eight duties:
+// (1) wraps factory(agent) sync throws with factory-index attribution + cause;
+// (2) detects Promise/thenable returns (factories must be synchronous);
+// (3) rejects non-array factory returns;
+// (4) validates tool shape (name/description/invoke must be present + right types);
+// (5) duck-types inputSchema + outputSchema as actual Zod schemas via _def.type;
+// (6) enforces outputSchema is a ZodObject per ADR-017 (MCP structuredContent);
+// (7) chain-gates each tool via supportsNetwork (type-checks fn + boolean return,
+//     and isolates supportsNetwork throws so one buggy gate doesn't kill the
+//     whole registry);
+// (8) dedups names with factory-index attribution on collision.
 // Per-tool generics intentionally erased; adapters dispatch by name at runtime.
 
+import { isThenable, isZodObject, isZodPipe, isZodSchema } from './guards.ts';
 import type { ConciergeAgentLike, ConciergeTool, ProviderToolFactory } from './types.ts';
-
-// Duck-type a zod schema via its `_def.type` discriminant (zod 4 stable internal).
-function isZodSchema(
-  s: unknown,
-): s is { _def: { type: string }; safeParse: (v: unknown) => unknown } {
-  if (s === null || typeof s !== 'object') return false;
-  const def = (s as { _def?: { type?: unknown } })._def;
-  return (
-    typeof def === 'object' &&
-    def !== null &&
-    typeof def.type === 'string' &&
-    typeof (s as { safeParse?: unknown }).safeParse === 'function'
-  );
-}
-
-function isZodObject(s: unknown): boolean {
-  return isZodSchema(s) && s._def.type === 'object';
-}
 
 export function createConciergeTools(
   agent: ConciergeAgentLike,
@@ -42,14 +33,7 @@ export function createConciergeTools(
         { cause },
       );
     }
-    // Detect async factories (Promise / thenable). ProviderToolFactory is sync;
-    // an async factory would leak as a misleading "expected ConciergeTool[]" error
-    // PLUS an unhandledRejection (process crash under --unhandled-rejections=throw).
-    if (
-      produced !== null &&
-      typeof produced === 'object' &&
-      typeof (produced as { then?: unknown }).then === 'function'
-    ) {
+    if (isThenable(produced)) {
       // Suppress the secondary unhandledRejection so users see only OUR error.
       (produced as Promise<unknown>).catch(() => {});
       throw new TypeError(
@@ -80,6 +64,11 @@ export function createConciergeTools(
           `[@concierge/tools] tool "${t.name}" inputSchema/outputSchema must be Zod schemas (got input=${typeof t.inputSchema}, output=${typeof t.outputSchema})`,
         );
       }
+      if (isZodPipe(t.outputSchema)) {
+        throw new TypeError(
+          `[@concierge/tools] tool "${t.name}".outputSchema uses .transform() or .pipe() — cannot be represented in JSON Schema (perform normalization inside invoke() instead of in the schema).`,
+        );
+      }
       if (!isZodObject(t.outputSchema)) {
         throw new TypeError(
           `[@concierge/tools] tool "${t.name}".outputSchema must be a z.ZodObject per ADR-017 (MCP structuredContent requires top-level object); wrap scalar returns in z.object({ value: ... })`,
@@ -91,7 +80,18 @@ export function createConciergeTools(
             `[@concierge/tools] tool "${t.name}".supportsNetwork must be a function, got ${typeof t.supportsNetwork}`,
           );
         }
-        const verdict = t.supportsNetwork(agent.chainId);
+        let verdict: unknown;
+        try {
+          verdict = t.supportsNetwork(agent.chainId);
+        } catch (cause) {
+          // Isolate: one buggy supportsNetwork shouldn't take down the whole registry.
+          throw new Error(
+            `[@concierge/tools] tool "${t.name}".supportsNetwork threw: ${
+              cause instanceof Error ? cause.message : String(cause)
+            }`,
+            { cause },
+          );
+        }
         if (typeof verdict !== 'boolean') {
           throw new TypeError(
             `[@concierge/tools] ${t.name}.supportsNetwork must return boolean, got ${typeof verdict}`,
