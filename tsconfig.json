@@ -5,6 +5,7 @@
     { "path": "./packages/sdk" },
     { "path": "./packages/shared" },
     { "path": "./packages/tools" },
+    { "path": "./packages/vercel-ai" },
     { "path": "./packages/ui" },
     { "path": "./packages/skill" },
     { "path": "./apps/web" },
