@@ -15,8 +15,7 @@ cache/
 broadcast/
 
 # Env / secrets
-.env
-.env.*
+.env*
 !.env.example
 
 # OS / editor
@@ -39,5 +38,3 @@ coverage/
 npm-debug.log*
 pnpm-debug.log*
 
-# Cloudflare Workers
-.wrangler/
