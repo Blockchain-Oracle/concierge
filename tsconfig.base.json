@@ -19,6 +19,7 @@
     "allowUnusedLabels": false,
 
     "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": true,
     "isolatedModules": true,
     "esModuleInterop": true,
     "resolveJsonModule": true,
