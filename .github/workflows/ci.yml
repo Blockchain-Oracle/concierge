@@ -35,9 +35,13 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Validate workflow YAML (actionlint)
-        run: |
-          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
-          ./actionlint -color
+        # reviewdog/action-actionlint wraps the actionlint binary. Tracked
+        # by Dependabot via the existing github-actions ecosystem entry —
+        # no manual version pinning. `fail_level: error` makes the step
+        # fail the job on lint errors (default is warn-only).
+        uses: reviewdog/action-actionlint@v1.72.0
+        with:
+          fail_level: error
       - run: pnpm run check
 
   typecheck:
@@ -79,12 +83,6 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run test:config
 
-  # Single flat test job today. Per-package matrix re-introduces when
-  # @concierge/* packages with real `test` scripts arrive (story-20+).
-  # `pnpm -r run test` (no --if-present) — a package present in the workspace
-  # that lacks a `test` script must surface that as a workflow error, not a
-  # silent green. The temporary guard below explicitly logs the no-op state
-  # until real tests land.
   test:
     runs-on: ubuntu-24.04
     timeout-minutes: 15

@@ -117,9 +117,9 @@ grep -qE "(tsc -b|pnpm run typecheck)" .github/workflows/ci.yml
 grep -qE "(pnpm run test|vitest)" .github/workflows/ci.yml
 grep -q "pnpm run build" .github/workflows/ci.yml
 
-# LOC cap job present + invokes the script from story-01
+# LOC cap job present + invokes the script from story-01 via npm-script indirection
 grep -qE "^\s*loc-cap:" .github/workflows/ci.yml
-grep -q "scripts/check-file-loc.mjs" .github/workflows/ci.yml
+grep -q "pnpm run loc:check" .github/workflows/ci.yml
 
 # Concurrency + cancel-in-progress
 grep -q "concurrency:" .github/workflows/ci.yml
@@ -147,7 +147,7 @@ grep -q "package-ecosystem: \"github-actions\"" .github/dependabot.yml
 
 ## Notes for coding agent
 
-- Use `pnpm/action-setup@v6` (with `version: 10`) for pnpm and `actions/setup-node@v6` (with `node-version: 22`, `cache: pnpm`) for Node. Verified current as of 2026-06-09 via the GitHub API releases endpoint. The `cache: pnpm` option on setup-node@v6 handles pnpm-store caching automatically — no manual `actions/cache@v4` configuration needed. (Spec previously suggested v4; bumped because the actions/* ecosystem advanced to v6 / v7.)
+- Use `pnpm/action-setup@v6` (NO `version:` input — the action reads `packageManager: "pnpm@10.33.0"` from `package.json` directly; setting `version:` triggers `Error: Multiple versions of pnpm specified` per `feedback_pnpm_action_setup_conflict.md`) and `actions/setup-node@v6` (with `node-version: 22`, `cache: pnpm`) for Node. Verified current as of 2026-06-09 via the GitHub API releases endpoint. The `cache: pnpm` option on setup-node@v6 handles pnpm-store caching automatically — no manual `actions/cache@v4` configuration needed. (Spec previously suggested v4; bumped because the actions/* ecosystem advanced to v6 / v7.)
 - **SEPARATE jobs, not a single matrix-task job.** Reference pattern: `find-evil/.github/workflows/ci.yml` has 8 gated jobs as required-status-checks for branch protection. Splitting lint/typecheck/loc-cap/test lets a typecheck failure not cancel the lint run — important for fast feedback on PRs.
 - **`fail-fast: false`** on the test matrix so all packages report their results even if one fails.
 - The workflow runs against Ubuntu-24.04 (pinned, not `-latest` — find-evil rationale: `-latest` floats, reproducibility matters for the audit trail).

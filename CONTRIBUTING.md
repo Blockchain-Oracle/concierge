@@ -52,6 +52,8 @@ Dependabot opens grouped PRs weekly for npm and github-actions ecosystems (`/.gi
 
 npm-ecosystem PRs are lower-risk thanks to the lockfile + `pnpm.onlyBuiltDependencies: []` allowlist (blocks dep postinstall scripts), but still benefit from a quick eyeball pass.
 
+**actionlint is Dependabot-tracked** via the `reviewdog/action-actionlint` wrapper — the github-actions ecosystem entry in `dependabot.yml` covers it automatically. No manual binary pinning required.
+
 ## Where things are
 
 - `docs/` — PRD, architecture (19 ADRs), ux-spec, epics (16, 110 stories), sprint-status, all story files.
