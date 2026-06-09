@@ -11,6 +11,46 @@
 
 import { isThenable } from './guards.ts';
 
+/**
+ * Recursive shape of values bigintSafeStringify accepts at the type level.
+ * Named `JsonSerializable` (NOT `Serializable`) to avoid colliding with the
+ * `Serializable*` UI-card namespace (`SerializableTickCard` etc.) that the
+ * package barrel also exports from `serializable.ts`.
+ *
+ * - `bigint` is rewritten to decimal string by the replacer.
+ * - `Map<string, V>` is rewritten to a plain object; non-string keys would
+ *   be coerced silently by `Object.fromEntries`, so the type pins keys to
+ *   string — the runtime accepts any `Map` and the coercion is its problem.
+ * - `Set<V>` is rewritten to a JSON array. The transform is one-way (`Set`
+ *   semantics — uniqueness, insertion order vs JSON array order — are not
+ *   recoverable on parse), so the conversion is *deterministic*, not
+ *   *lossless*. Callers needing round-trip integrity should serialize a
+ *   plain array directly.
+ * - Symbol-keyed properties are dropped per JSON.stringify spec (the
+ *   property names, not the values; symbol VALUES at nested positions are
+ *   rejected by the replacer with a TypeError — see the file header).
+ * - Nested function / symbol / thenable / WeakMap / WeakSet values are
+ *   REJECTED (TypeError) by the replacer, NOT silently dropped. The
+ *   data-corruption guard is deliberately stricter than JSON.stringify.
+ * - Nested `undefined` is dropped per spec (the replacer doesn't reject it
+ *   because that path is genuinely lossless — an absent property is the
+ *   intended JSON representation).
+ *
+ * The runtime guards stay as defense-in-depth for callers passing `unknown`;
+ * this type is documentation + an opt-in compile-time hint for SDK consumers
+ * who want to constrain their payload types ahead of time.
+ */
+export type JsonSerializable =
+  | null
+  | boolean
+  | number
+  | bigint
+  | string
+  | readonly JsonSerializable[]
+  | { readonly [k: string]: JsonSerializable }
+  | Map<string, JsonSerializable>
+  | Set<JsonSerializable>;
+
 export function bigintSafeStringify(value: unknown, space?: number | string): string {
   if (
     value === undefined ||
@@ -62,10 +102,13 @@ export function bigintSafeStringify(value: unknown, space?: number | string): st
     const msg = cause instanceof Error ? cause.message : String(cause);
     throw new Error(`[@concierge/tools] bigintSafeStringify: ${msg}`, { cause });
   }
-  // Engine-level defense: the pre-guards catch every documented case where
-  // JSON.stringify returns non-string, but a runtime bug (or a Proxy whose
-  // valueOf throws and the engine recovers with undefined) would otherwise
-  // violate the `:string` contract silently. Cheap typeof check.
+  // Post-stringify guard: JSON.stringify can return the literal `undefined`
+  // value (not a string) when the root's `toJSON()` returns undefined — the
+  // pre-guards don't catch this because the root IS an object before the
+  // SerializeJSONProperty algorithm invokes toJSON. A future engine bug
+  // (or a Proxy whose valueOf throws and the engine recovers with undefined)
+  // could trip the same branch. Cheap typeof check; tested in
+  // bigintSafeStringify.test.ts under "post-stringify guard".
   if (typeof result !== 'string') {
     throw new TypeError(
       `[@concierge/tools] bigintSafeStringify: JSON.stringify returned non-string (${typeof result})`,

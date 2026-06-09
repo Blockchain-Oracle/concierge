@@ -33,6 +33,15 @@ export interface ConciergeAgentLike {
 
 /**
  * Each provider package exports one of these as `tools`; the agent constructor composes them.
+ *
+ * **Must be synchronous** — the return type is `Array<…>`, NOT `Promise<Array<…>>`. Async
+ * setup (network probes, dynamic ABI fetches, RPC version checks) belongs in the agent
+ * constructor BEFORE `createConciergeTools(agent, factories)` is called; the registry
+ * detects Promise/thenable returns and throws with a "did you forget to await?" hint
+ * (see createConciergeTools.ts duties 2-3). The signature is sync because tool composition
+ * must be deterministic at adapter-build time — Vercel AI SDK / OpenAI / MCP all need
+ * the tool list resolved before the first model call.
+ *
  * Generic narrowing is intentionally erased at the boundary — adapters dispatch by `t.name`
  * at runtime; per-tool inference belongs at the tool-definition site (via `tool()`), not here.
  */

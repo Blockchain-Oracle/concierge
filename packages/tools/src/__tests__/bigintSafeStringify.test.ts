@@ -84,4 +84,67 @@ describe('bigintSafeStringify', () => {
   it('leaves plain numbers + strings untouched', () => {
     expect(bigintSafeStringify({ n: 42, s: 'hi' })).toBe('{"n":42,"s":"hi"}');
   });
+
+  it('triggers the post-stringify guard when toJSON() returns undefined at the root', () => {
+    // The pre-guards reject undefined/function/symbol AT the root, but the
+    // ECMA-262 `SerializeJSONProperty` algorithm invokes `toJSON()` on the
+    // value BEFORE the replacer runs (step 2 of the algorithm; the
+    // version-specific section number is omitted because it has shifted
+    // across spec editions — the algorithm name is the durable identifier).
+    // A root whose `toJSON` returns undefined passes our pre-guard (it's an
+    // object), enters JSON.stringify (which returns the literal `undefined`,
+    // not a string), and the post-guard fires. This is the primary
+    // documented path that reaches the `typeof result !== 'string'` branch
+    // today; sibling cases (toJSON returning function/symbol) reach the
+    // same branch via the same upstream cause, exercised below.
+    const sneaky = {
+      toJSON() {
+        return undefined;
+      },
+    };
+    expect(() => bigintSafeStringify(sneaky)).toThrow(
+      /JSON\.stringify returned non-string \(undefined\)/,
+    );
+  });
+
+  it('routes a toJSON()-returned function through the nested replacer guard (NOT the post-guard)', () => {
+    // Subtle: `toJSON()` returning a function reaches the REPLACER first,
+    // and our nested-data-corruption guard fires before JSON.stringify can
+    // collapse the function to `undefined`. Different code path from the
+    // toJSON-returns-undefined case (post-stringify guard) because the
+    // replacer's `typeof v === 'function'` check intercepts. Documents the
+    // routing: function/symbol returned from toJSON → nested guard;
+    // undefined returned from toJSON → post-stringify guard.
+    const fnRoot = {
+      toJSON() {
+        return () => 'never serialized';
+      },
+    };
+    expect(() => bigintSafeStringify(fnRoot)).toThrow(/non-serializable nested function/);
+  });
+
+  it('routes a toJSON()-returned symbol through the nested replacer guard', () => {
+    // Mirror of the function case — same routing, symbol cause.
+    const symRoot = {
+      toJSON() {
+        return Symbol('payload');
+      },
+    };
+    expect(() => bigintSafeStringify(symRoot)).toThrow(/non-serializable nested symbol/);
+  });
+
+  it('decorates the error when toJSON() itself throws (cause-rewrap branch)', () => {
+    // Different branch: a throwing toJSON propagates synchronously out of
+    // JSON.stringify and the catch at lines 75-82 rewraps it with the
+    // `[@concierge/tools]` prefix + the original cause attached. Locks the
+    // contract that THIS path stays distinct from the post-stringify guard.
+    const throwingRoot = {
+      toJSON() {
+        throw new Error('toJSON sentinel boom');
+      },
+    };
+    expect(() => bigintSafeStringify(throwingRoot)).toThrow(
+      /\[@concierge\/tools\] bigintSafeStringify: toJSON sentinel boom/,
+    );
+  });
 });

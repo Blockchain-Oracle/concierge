@@ -159,12 +159,13 @@ describe('createConciergeTools aggregation', () => {
     const asyncBad = (() =>
       Promise.reject(new Error('async boom'))) as unknown as ProviderToolFactory;
     expect(() => createConciergeTools(agentMainnet, [asyncBad])).toThrow(/returned a Promise/);
-    // Note: the `.catch(()=>{})` in createConciergeTools suppresses Node's
-    // unhandledRejection emission. A spy test for this is genuinely hard to
-    // write deterministically (vitest installs its own unhandledRejection
-    // listener; timing/race with `Promise.reject` makes the spy vacuously
-    // green). The suppression is verified by code inspection at use-site.
   });
+
+  // Note: the deeper `.catch(() => {})` unhandledRejection-suppression test
+  // lives in its own file (`createConciergeTools.unhandledRejection.test.ts`)
+  // because it touches Node `process` listeners, needs ambient global decls,
+  // and the load-bearing comment block pushes this file past biome's 400-LOC
+  // ceiling.
 
   it('hints at thenable-without-catch when a `.then`-only return falls through', () => {
     const makeBad = (): unknown => {

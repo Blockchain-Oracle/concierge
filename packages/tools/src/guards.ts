@@ -65,6 +65,12 @@ export function isZodSchema(value: unknown): value is z.ZodTypeAny {
  * returning scalars must wrap in `z.object({ value: ... })`. `.transform()`
  * / `.pipe()` chains have `_def.type === 'pipe'` — callers should branch
  * on `isZodPipe` first for a more specific error message.
+ *
+ * The `z.ZodRawShape` generic in the narrowing is erased — duck-typing
+ * cannot recover the actual property shape at runtime, only that the
+ * value is *some* `z.ZodObject`. (TypeScript is structural, not nominal;
+ * the generic is just unrefined here, not nominally typed.) Callers
+ * needing the precise field types should re-parse with the concrete schema.
  */
 export function isZodObject(value: unknown): value is z.ZodObject<z.ZodRawShape> {
   return isZodSchema(value) && getZodDefType(value) === 'object';
