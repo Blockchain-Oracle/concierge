@@ -23,31 +23,34 @@
   - `concurrency: { group: ci-${{ github.ref }}, cancel-in-progress: true }`
   - `permissions: { contents: read, pull-requests: read }` (explicit)
   - Per-job `timeout-minutes` (lint: 5, typecheck: 5, loc-cap: 2, test: 15)
-  - `env: { PNPM_VERSION: "10", NODE_VERSION: "22" }` (pinned to match `packageManager: pnpm@10.33.0` in `package.json`)
+  - `env: { NODE_VERSION: "22" }` (pinned). `PNPM_VERSION` was DROPPED 2026-06-09 — `pnpm/action-setup@v6+` refuses to start when both workflow `version:` AND `packageManager` are set (see `feedback_pnpm_action_setup_conflict.md`). The `packageManager: "pnpm@10.33.0"` field in `package.json` is the canonical source; the workflow reads it directly.
 - `.github/dependabot.yml` — NEW — weekly updates for npm + GitHub Actions
 - `CONTRIBUTING.md` — NEW — short contributor flow (clone, install, branch, commit, PR)
 
-The job matrix (placeholder shape; per-package shards activate as `@concierge/*` packages with real `test` scripts land in story-20+):
+The test job is flat (no matrix) in story-04. Three reviewers in PR #4 converged on this: a matrix-of-one is decorative ("matrix.package is referenced only in a step name; the actual command ignores it") and a future-trap ("adding [sdk, shared] later runs the same `pnpm -r` command 3×, giving the false impression of sharding").
+
+Per-package shards re-introduce in the first story where a real `@concierge/*` package has a `test` script (story-20+). Example future shape:
 ```yaml
 test:
   strategy:
     fail-fast: false
     matrix:
-      # Single shard today — no @concierge/* package has a test script yet.
-      # Story-20+ expands this list as real packages arrive
-      # (e.g. sdk, shared, providers-aave-v3-mantle, ...).
-      package: [_workspace_]
+      package: [sdk, shared, providers-aave-v3-mantle, ...]
+  steps:
+    ...
+    - run: pnpm --filter @concierge/${{ matrix.package }} run test --reporter=verbose --coverage
 ```
-The single shard runs `pnpm -r test` workspace-wide. Once the matrix expands, each shard runs `pnpm run --filter=@concierge/<pkg> test --reporter=verbose --coverage` and coverage uploads as an artifact.
+
+Today's test job is a single-shot `pnpm -r run test` with an explicit no-tests-wired-yet warning annotation — green is honest because nothing claims tests passed; it only claims "no tests exist yet to run." Per silent-failure-hunter PR #4: `--if-present` was DROPPED because it silently skips packages without test scripts (the existential silent-CI-failure mode).
 
 ---
 
 ## Acceptance criteria (BDD)
 
 ```
-Given .github/workflows/ci.yml exists with explicit lint + typecheck + loc-cap + test jobs
-When `yq '.jobs | keys' .github/workflows/ci.yml` runs
-Then output includes "lint", "typecheck", "loc-cap", "test"
+Given .github/workflows/ci.yml exists with explicit lint + typecheck + loc-cap + test-config + test + build jobs
+When `yq '.jobs | keys' .github/workflows/ci.yml` runs (or node-based YAML inspect — yq not strictly required)
+Then output includes "lint", "typecheck", "loc-cap", "test-config", "test", "build"
 
 Given the workflow uses pnpm + Node
 When grep checks the file
@@ -132,9 +135,8 @@ grep -q "contents: read" .github/workflows/ci.yml
 # workflow_dispatch enabled (manual re-runs)
 grep -q "workflow_dispatch:" .github/workflows/ci.yml
 
-# Test matrix runs per package
-grep -q "matrix:" .github/workflows/ci.yml
-grep -q "package:" .github/workflows/ci.yml
+# Test job present. Per-package matrix re-introduces in first-real-package story (~20+).
+grep -qE "^\s*test:" .github/workflows/ci.yml
 
 # Dependabot configured
 grep -q "package-ecosystem: \"npm\"" .github/dependabot.yml

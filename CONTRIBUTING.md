@@ -33,7 +33,7 @@ pnpm run test          # workspace-wide tests (no-op until packages with tests e
 3. **Branch:** `git checkout -b story/<slug>`
 4. **Tests first** for behavioral work; spec-driven for config work.
 5. **Implement** strictly within the story's file modification map. No half-built features; no hot-path mocks.
-6. **Conventional commit** — types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`. Scopes: `sdk`, `shared`, `ui`, `skill`, `providers`, `web`, `mcp`, `worker`, `contracts`, `docs`, `ci`, `deps`, `types`, `quality`, `scaffold`, `sprint`.
+6. **Conventional commit** — types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`. Scopes (matches the scope-enum that story-06 will enforce via commitlint): `sdk`, `shared`, `ui`, `skill`, `providers`, `web`, `mcp`, `worker`, `contracts`, `docs`, `ci`, `deps`.
 7. **Open PR:** `gh pr create --fill`. PR title should reference the story (`feat(scope): summary (story-XX)`).
 8. **Run the review fleet:** `/pr-review-toolkit:review-pr` — runs the 4 canonical reviewers (code-reviewer + silent-failure-hunter + type-design-analyzer + pr-test-analyzer) plus situational extras (simplification, dependency-safety, etc.) in parallel. Address blockers; reconcile any reviewer contradictions before applying fixes.
 9. **Merge when CI is green AND review is acceptable:** `gh pr merge --squash --delete-branch`.
@@ -45,6 +45,12 @@ pnpm run test          # workspace-wide tests (no-op until packages with tests e
 - **≤400 LOC per file.** Biome `noExcessiveLinesPerFile` is the CI authority; `scripts/check-file-loc.mjs` is the fast pre-commit guard. Split before 350.
 - **No silent failures.** Config/lifecycle errors raise loud exit codes; never default to "exit 0 to keep CI green."
 - **Pin exact versions** for tooling (`@biomejs/biome`, `husky`, `typescript`) — no `^` or `~`. Tooling drift is a real source of "works on my machine" PRs.
+
+## Dependabot PRs
+
+Dependabot opens grouped PRs weekly for npm and github-actions ecosystems (`/.github/dependabot.yml`). **github-actions PRs require human review before merge — do not enable auto-merge for them.** A compromised action tag (the tj-actions class of attack) ships into the workflow on the same `@v<major>` reference; the human review is the defense.
+
+npm-ecosystem PRs are lower-risk thanks to the lockfile + `pnpm.onlyBuiltDependencies: []` allowlist (blocks dep postinstall scripts), but still benefit from a quick eyeball pass.
 
 ## Where things are
 

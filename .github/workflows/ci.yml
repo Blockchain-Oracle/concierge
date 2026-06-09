@@ -1,16 +1,6 @@
 # CI — TypeScript pipeline.
-# Jobs (each a required-status-check candidate for branch protection):
-#   lint        — biome check (lint + format check + import sort)
-#   typecheck   — tsc -b --noEmit across the 7-project reference graph
-#   loc-cap     — defense-in-depth LOC walker against the live tree
-#   test-config — runs the enforcement smoke tests (LOC + tsconfig-strict)
-#   test        — workspace-wide test runner; matrix expands as @concierge/*
-#                 packages with real tests land in story-20+
-#   build       — workspace-wide build runner (stub today; real per-package
-#                 emit lands per owning story)
-#
-# Branch protection: rename a job here only if you also update the
-# protection rule — renaming silently bypasses the gate.
+# Branch protection: rename a job here only if you also update the protection
+# rule — renaming silently bypasses the gate.
 
 name: CI
 
@@ -30,7 +20,6 @@ permissions:
   pull-requests: read
 
 env:
-  PNPM_VERSION: "10"
   NODE_VERSION: "22"
 
 jobs:
@@ -40,13 +29,13 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v6
-        with:
-          version: ${{ env.PNPM_VERSION }}
       - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Validate workflow YAML (actionlint)
+        uses: raven-actions/actionlint@v2
       - run: pnpm run check
 
   typecheck:
@@ -55,8 +44,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v6
-        with:
-          version: ${{ env.PNPM_VERSION }}
       - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -70,14 +57,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v6
-        with:
-          version: ${{ env.PNPM_VERSION }}
       - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: node scripts/check-file-loc.mjs
+      - run: pnpm run loc:check
 
   test-config:
     runs-on: ubuntu-24.04
@@ -85,8 +70,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v6
-        with:
-          version: ${{ env.PNPM_VERSION }}
       - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -94,38 +77,38 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run test:config
 
+  # Single flat test job today. Per-package matrix re-introduces when
+  # @concierge/* packages with real `test` scripts arrive (story-20+).
+  # `pnpm -r run test` (no --if-present) — a package present in the workspace
+  # that lacks a `test` script must surface that as a workflow error, not a
+  # silent green. The temporary guard below explicitly logs the no-op state
+  # until real tests land.
   test:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        # Single placeholder shard. Per-package shards activate when
-        # @concierge/* packages with real `test` scripts land (story-20+).
-        # Example future shape: package: [sdk, shared, providers-aave-v3-mantle, ...]
-        package: [_workspace_]
     steps:
       - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v6
-        with:
-          version: ${{ env.PNPM_VERSION }}
       - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Run tests for ${{ matrix.package }}
-        run: pnpm -r run test --if-present
+      # `pnpm -r run test` recurses workspace packages. NO --if-present:
+      # per silent-failure-hunter on PR #4, --if-present silently skips
+      # packages without a test script — the existential silent-CI-failure
+      # mode. Without it, a workspace package that lacks `test` will fail
+      # loudly, which is the contract we want.
+      - run: pnpm -r run test
+      - name: Note vacuous-green state until story-20+
+        run: echo "::warning::No workspace package has a 'test' script yet — today's green is vacuous. Real tests + per-package matrix arrive in story-20+."
 
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    needs: [lint, typecheck]
     steps:
       - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v6
-        with:
-          version: ${{ env.PNPM_VERSION }}
       - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
