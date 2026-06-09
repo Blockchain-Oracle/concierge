@@ -1,0 +1,43 @@
+{
+  "name": "@concierge/tools",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./serializable": {
+      "types": "./dist/serializable.d.ts",
+      "import": "./dist/serializable.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "src/**/*.ts",
+    "!src/**/*.test.ts",
+    "!src/__tests__/**"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "prepack": "pnpm run build"
+  },
+  "dependencies": {
+    "@concierge/shared": "workspace:*"
+  },
+  "peerDependencies": {
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "tsup": "8.5.0",
+    "zod": "4.4.3"
+  }
+}
