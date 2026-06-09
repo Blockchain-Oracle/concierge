@@ -4,7 +4,7 @@ import { defineConfig } from 'tsup';
 // sourcemap on, clean before each build, target Node ≥ 22. Uses tsconfig.build.json
 // (composite: false) so the dts pipeline doesn't trip on project-reference strictness.
 export default defineConfig({
-  entry: ['src/index.ts'],
+  entry: ['src/index.ts', 'src/abi/index.ts'],
   format: ['esm'],
   dts: { resolve: true },
   sourcemap: true,
