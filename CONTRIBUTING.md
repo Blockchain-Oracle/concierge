@@ -58,8 +58,12 @@ npm-ecosystem PRs are lower-risk thanks to the lockfile + `pnpm.onlyBuiltDepende
 
 A few tooling versions live OUTSIDE the npm + github-actions ecosystems Dependabot watches. Bump them by hand every quarter (or when CI surfaces a regression):
 
-- **Solidity compiler** (`solc` version in `contracts/foundry.toml`) — currently `"0.8.26"`
-- **Foundry binary** (`with: version:` in `.github/workflows/contracts.yml`) — currently `v1.7.1`
+- **Node** (`NODE_VERSION` env in `.github/workflows/ci.yml` + `.github/workflows/contracts.yml`, `engines.node` in `package.json`) — currently `22`.
+- **pnpm** (`engines.pnpm` + `packageManager` in `package.json`) — currently `10.33.0`. (`pnpm/action-setup` reads `packageManager` directly; no separate workflow pin.)
+- **Python** (`actions/setup-python with: python-version` in `.github/workflows/ci.yml`) — currently `3.11`. Affects Slither runtime in the `test-config` smoke.
+- **Solidity compiler** (`solc` in `contracts/foundry.toml`) — currently `"0.8.26"`.
+- **EVM hardfork** (`evm_version` in `contracts/foundry.toml`) — currently `"shanghai"` (verified against Mantle Mainnet via direct PUSH0 RPC test). Bumps to `cancun` only after `cast`-verifying the specific Cancun opcodes (MCOPY/TLOAD/TSTORE/BLOBHASH) on Mantle.
+- **Foundry binary** (`with: version:` in `.github/workflows/contracts.yml`) — currently `v1.7.1`.
 - **Slither** (`with: slither-version:` in `.github/workflows/contracts.yml` + `pip install slither-analyzer==X.Y.Z` in `.github/workflows/ci.yml`) — currently `0.11.5`. Bump both lines together to keep CI's `test-config` smoke and the actual `contracts-security` job on the same version.
 - **OpenZeppelin Contracts / Aave V3 Origin / forge-std** (`forge install ... @vX.Y.Z` in `contracts/scripts/install-deps.sh`) — currently OZ `v5.6.1`, aave-v3-origin `v3.6.0`, forge-std `v1.16.1`.
 

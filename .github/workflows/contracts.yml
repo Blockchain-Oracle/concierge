@@ -46,12 +46,18 @@ jobs:
       - name: forge test -vvv
         run: forge test -vvv
       - name: forge coverage --report summary
-        # Tighten coverage gate against vacuous-green: assert that the
-        # Total row has a NON-ZERO denominator. forge on empty src/ emits
-        # `| Total | ... 0/0 |` and the old `\bTotal\b` grep passed it —
-        # caught by the post-merge silent-failure-hunter on PR #7.
+        # Coverage gate: floor on % Lines AND non-zero Lines denominator.
         # Read from file (not pipe) so grep -q + tee under pipefail can't
         # SIGPIPE-trigger a spurious 141.
+        #
+        # Post-merge silent-failure-hunter on PR #8 caught two gaps in the
+        # earlier `(0/0)` regex: (a) it anchored on the first `% (n/m)`
+        # cell only, so future contracts with covered Lines but zero
+        # Statements/Branches/Funcs passed vacuously; (b) the "deleted
+        # test, kept source" failure mode produced `0.00% (0/2)` —
+        # legitimate denominator but zero coverage. A `% Lines >= 80%`
+        # floor closes both: it requires both a non-zero denominator AND
+        # meaningful coverage on the metric that matters (Lines).
         run: |
           set -euo pipefail
           forge coverage --report summary | tee /tmp/forge-coverage.txt
@@ -59,8 +65,22 @@ jobs:
             echo "::error::forge coverage output shape changed — no Total row found"
             exit 1
           fi
-          if grep -qE "Total\s*\|\s*[0-9.]+%\s*\(0/0\)" /tmp/forge-coverage.txt; then
-            echo "::error::Coverage is vacuous (0/0 denominator) — src/ must contain analyzable source"
+          # Extract the `% Lines` cell from the Total row (1st `%` after Total).
+          lines_pct=$(grep -E "^\|\s*Total\s*\|" /tmp/forge-coverage.txt \
+            | grep -oE "[0-9.]+% \([0-9]+/[0-9]+\)" \
+            | head -n1)
+          # Parse numerator + denominator.
+          covered=$(echo "$lines_pct" | grep -oE "\([0-9]+/" | tr -d '(/')
+          total=$(echo "$lines_pct" | grep -oE "/[0-9]+\)" | tr -d '/)')
+          if [ -z "$total" ] || [ "$total" -eq 0 ]; then
+            echo "::error::Coverage is vacuous on Lines (denominator 0/0) — src/ must contain analyzable source"
+            exit 1
+          fi
+          # Compute % as integer (covered*100 / total), gate at >= 80.
+          pct=$(( covered * 100 / total ))
+          echo "Coverage: $covered/$total lines = ${pct}%"
+          if [ "$pct" -lt 80 ]; then
+            echo "::error::Coverage below 80% floor (got ${pct}%, need >= 80). Add tests or relax floor with rationale."
             exit 1
           fi
 

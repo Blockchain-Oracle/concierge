@@ -2,7 +2,7 @@
 pragma solidity 0.8.26;
 
 import { Test } from "forge-std/Test.sol";
-import { Placeholder } from "../src/Placeholder.sol";
+import { _Placeholder } from "../src/Placeholder.sol";
 
 /// @notice Toolchain smoke test. Validates that the forge-std remapping
 /// resolves, solc 0.8.26 + shanghai EVM compiles, basic cheatcodes
@@ -21,7 +21,7 @@ contract SmokeTest is Test {
     }
 
     function test_placeholderSentinel() public {
-        Placeholder p = new Placeholder();
-        assertEq(p.sentinel(), 1, "Placeholder.sentinel() reads constant");
+        _Placeholder p = new _Placeholder();
+        assertEq(p.sentinel(), 1, "_Placeholder.sentinel() reads constant");
     }
 }
