@@ -1,0 +1,25 @@
+#!/usr/bin/env sh
+# Pre-push: catches regressions that pre-commit alone misses. Runs the
+# LOC walker's own smoke test + a quick forge build if contracts/ has
+# changes vs the remote.
+
+set -e
+
+# Always: smoke-test the LOC walker (verifies it still behaves correctly
+# under the current code state — catches a silent-regression where
+# someone edits scripts/check-file-loc.mjs and breaks its semantics
+# without breaking any commit).
+node scripts/test-check-file-loc.mjs
+
+# Conditional: forge build if contracts/ has files differing vs the
+# remote tracking branch. Skips on fresh clones / detached HEADs.
+upstream=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null || true)
+if [ -n "$upstream" ] && git diff --quiet "$upstream" -- contracts/ 2>/dev/null; then
+  : # no contracts changes vs remote — skip forge build
+elif [ -n "$upstream" ]; then
+  if command -v forge >/dev/null 2>&1; then
+    (cd contracts && forge build)
+  else
+    echo "::warning::forge not on PATH — pre-push forge build skipped (CI runs it)"
+  fi
+fi

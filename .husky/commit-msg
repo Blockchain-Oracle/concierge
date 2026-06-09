@@ -1,0 +1,4 @@
+#!/usr/bin/env sh
+# Enforce Conventional Commits via commitlint. The $1 arg is the path
+# to the in-progress commit message file (set by git).
+pnpm exec commitlint --edit "$1"
