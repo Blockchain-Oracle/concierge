@@ -1,0 +1,24 @@
+{
+  "name": "concierge",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Autonomous AI agent for Mantle DeFi — composable primitive across web app + MCP server + Agent Skill + npm SDK",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Blockchain-Oracle/concierge.git"
+  },
+  "engines": {
+    "node": ">=22",
+    "pnpm": ">=10"
+  },
+  "packageManager": "pnpm@10.33.0",
+  "scripts": {
+    "check": "echo '[stub] biome check — wired in story-01' && exit 0",
+    "typecheck": "echo '[stub] tsc -b — wired in story-02' && exit 0",
+    "test": "echo '[stub] vitest run — wired per story' && exit 0",
+    "build": "echo '[stub] pnpm -r build — wired per story' && exit 0",
+    "dev": "echo '[stub] pnpm --filter ./apps/web dev — wired in story-100' && exit 0"
+  }
+}
