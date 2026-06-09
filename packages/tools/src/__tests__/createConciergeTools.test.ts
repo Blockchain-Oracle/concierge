@@ -17,6 +17,20 @@ import type {
   UICardId,
 } from '../types.ts';
 
+// Minimal local ambient declarations for the two Node globals the
+// unhandledRejection-suppression test touches. The package deliberately
+// avoids `@types/node` (it's framework-agnostic and consumed from
+// non-Node adapters too); declaring only the methods we actually call
+// keeps the typecheck honest without pulling the whole DOM-conflicting
+// Node typings in.
+declare const process: {
+  listeners(event: 'unhandledRejection'): Array<(reason: unknown) => void>;
+  removeAllListeners(event: 'unhandledRejection'): void;
+  on(event: 'unhandledRejection', listener: (reason: unknown) => void): void;
+  removeListener(event: 'unhandledRejection', listener: (reason: unknown) => void): void;
+};
+declare const setImmediate: (cb: () => void) => void;
+
 const echo = tool({
   name: 'echo',
   description: 'Returns the input string',
@@ -159,11 +173,39 @@ describe('createConciergeTools aggregation', () => {
     const asyncBad = (() =>
       Promise.reject(new Error('async boom'))) as unknown as ProviderToolFactory;
     expect(() => createConciergeTools(agentMainnet, [asyncBad])).toThrow(/returned a Promise/);
-    // Note: the `.catch(()=>{})` in createConciergeTools suppresses Node's
-    // unhandledRejection emission. A spy test for this is genuinely hard to
-    // write deterministically (vitest installs its own unhandledRejection
-    // listener; timing/race with `Promise.reject` makes the spy vacuously
-    // green). The suppression is verified by code inspection at use-site.
+  });
+
+  it('suppresses Node unhandledRejection for the leaked Promise (no orphan emission)', async () => {
+    // Honest test of the `.catch(() => {})` at createConciergeTools.ts:44.
+    // Strategy: temporarily snapshot + clear all `unhandledRejection`
+    // listeners (vitest installs one that converts the event into a test
+    // failure), install a spy that filters on OUR specific error message
+    // to avoid catching unrelated rejections from concurrent tests, trigger
+    // the failing factory, drain microtasks + one macrotask via setImmediate
+    // (Node fires `unhandledRejection` at the end of the microtask cycle if
+    // no handler attached during that cycle), then assert the spy was NOT
+    // called for our sentinel error. The synchronous `.catch` in
+    // createConciergeTools attaches a handler in the same cycle the Promise
+    // is created, so suppression must observe `count === 0`.
+    const SENTINEL = 'async boom — unhandledRejection suppression sentinel';
+    const originalListeners = process.listeners('unhandledRejection');
+    process.removeAllListeners('unhandledRejection');
+    let sentinelHits = 0;
+    const spy = (reason: unknown) => {
+      if (reason instanceof Error && reason.message === SENTINEL) sentinelHits++;
+    };
+    process.on('unhandledRejection', spy);
+    try {
+      const asyncBad = (() =>
+        Promise.reject(new Error(SENTINEL))) as unknown as ProviderToolFactory;
+      expect(() => createConciergeTools(agentMainnet, [asyncBad])).toThrow(/returned a Promise/);
+      await new Promise<void>((r) => setImmediate(r));
+      await new Promise<void>((r) => setImmediate(r));
+      expect(sentinelHits).toBe(0);
+    } finally {
+      process.removeListener('unhandledRejection', spy);
+      for (const listener of originalListeners) process.on('unhandledRejection', listener);
+    }
   });
 
   it('hints at thenable-without-catch when a `.then`-only return falls through', () => {

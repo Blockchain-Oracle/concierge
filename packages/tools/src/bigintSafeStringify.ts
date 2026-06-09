@@ -11,6 +11,24 @@
 
 import { isThenable } from './guards.ts';
 
+/**
+ * Recursive shape of values bigintSafeStringify can serialize losslessly.
+ * `bigint` is included (rewritten to decimal string by the replacer); `Map` /
+ * `Set` are included (rewritten to object / array). Symbol-keyed properties,
+ * function values, and undefined values follow JSON.stringify spec (dropped).
+ * The runtime guards stay as defense-in-depth for callers passing `unknown`.
+ */
+export type Serializable =
+  | null
+  | boolean
+  | number
+  | bigint
+  | string
+  | readonly Serializable[]
+  | { readonly [k: string]: Serializable }
+  | Map<string, Serializable>
+  | Set<Serializable>;
+
 export function bigintSafeStringify(value: unknown, space?: number | string): string {
   if (
     value === undefined ||

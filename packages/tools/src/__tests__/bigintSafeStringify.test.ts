@@ -84,4 +84,22 @@ describe('bigintSafeStringify', () => {
   it('leaves plain numbers + strings untouched', () => {
     expect(bigintSafeStringify({ n: 42, s: 'hi' })).toBe('{"n":42,"s":"hi"}');
   });
+
+  it('triggers the post-stringify guard when toJSON() returns undefined at the root', () => {
+    // The pre-guards reject undefined/function/symbol AT the root, but
+    // JSON.stringify's spec calls `toJSON()` on the value BEFORE the
+    // replacer runs (ECMA-262 §25.5.2 SerializeJSONProperty step 2). A root
+    // whose `toJSON` returns undefined passes our pre-guard (it's an
+    // object), enters JSON.stringify (which returns the literal `undefined`,
+    // not a string), and the post-guard fires. This is the ONLY currently
+    // documented path that reaches the `typeof result !== 'string'` branch.
+    const sneaky = {
+      toJSON() {
+        return undefined;
+      },
+    };
+    expect(() => bigintSafeStringify(sneaky)).toThrow(
+      /JSON\.stringify returned non-string \(undefined\)/,
+    );
+  });
 });
