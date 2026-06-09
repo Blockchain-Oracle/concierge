@@ -34,11 +34,11 @@ stories:
     merged_at: "2026-06-09T14:38:36Z"
   - id: story-03-foundry-init-and-remappings
     epic: "Epic E0 — Foundation"
-    status: PENDING
+    status: COMPLETE
     depends_on: [story-00-monorepo-scaffold]
     issue_url: ""
-    pr_url: ""
-    merged_at: ""
+    pr_url: "https://github.com/Blockchain-Oracle/concierge/pull/6"
+    merged_at: "2026-06-09T15:12:38Z"
   - id: story-04-ci-typescript-pipeline
     epic: "Epic E0 — Foundation"
     status: COMPLETE
