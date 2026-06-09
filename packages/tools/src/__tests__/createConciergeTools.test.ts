@@ -241,7 +241,7 @@ describe('createConciergeTools aggregation', () => {
     ).toThrow(/inputSchema must be a z\.ZodObject/);
   });
 
-  it('isolates a throwing supportsNetwork — error names the offending tool', () => {
+  it('attributes a throwing supportsNetwork — error names the offending tool', () => {
     const bad: ProviderToolFactory = () => [
       {
         ...echo,

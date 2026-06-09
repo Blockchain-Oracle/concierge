@@ -52,9 +52,9 @@ describe('bigintSafeStringify', () => {
   });
 
   it('catches empty-string-key Promise (value-identity check vs root, not key-string)', () => {
-    // Previous PR used `key !== ''` to skip the top-level call, which conflated
-    // root invocation with literal `''` keys. This payload would silently emit
-    // `{"":{}}` under the broken check. Key-path attribution is empty here.
+    // A key-string check (`key !== ''`) for skipping the top-level call would
+    // conflate root invocation with literal `''` keys — this payload would
+    // silently emit `{"":{}}` under it. Key-path attribution is empty here.
     expect(() => bigintSafeStringify({ '': Promise.resolve(1) })).toThrow(/nested.*at \./);
   });
 
@@ -93,8 +93,9 @@ describe('bigintSafeStringify', () => {
     // object), enters JSON.stringify (which returns the literal `undefined`,
     // not a string), and the post-guard fires. This is the primary
     // documented path that reaches the `typeof result !== 'string'` branch
-    // today; sibling cases (toJSON returning function/symbol) reach the
-    // same branch via the same upstream cause, exercised below.
+    // today; sibling cases (toJSON returning function/symbol) are
+    // intercepted EARLIER by the nested replacer guard — see the routing
+    // tests below.
     const sneaky = {
       toJSON() {
         return undefined;
@@ -148,6 +149,7 @@ describe('bigintSafeStringify', () => {
     } catch (e) {
       caught = e as Error;
     }
+    expect(caught).toBeInstanceOf(Error);
     expect(caught?.message).toMatch(
       /\[@concierge\/tools\] bigintSafeStringify: toJSON sentinel boom/,
     );

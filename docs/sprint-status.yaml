@@ -824,7 +824,6 @@ stories:
     issue_url: ""
     pr_url: "https://github.com/Blockchain-Oracle/concierge/pull/15"
     merged_at: "2026-06-09T21:43:00Z"
-    merged_at: ""
   - id: story-301-vercel-ai-adapter
     epic: "Epic E13 — Composable Primitive"
     status: PENDING
