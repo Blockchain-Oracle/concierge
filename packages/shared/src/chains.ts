@@ -50,11 +50,18 @@ export function chainFor(chainId: EvmChainId): Chain {
 
 // Shared input-type guard: used by chainFor + addressesFor to fail fast on
 // string-from-env / bigint-from-JSON-parse inputs before the value reaches
-// the chain-id branches.
+// the chain-id branches. Also rejects negatives, zero, NaN, Infinity, and
+// values outside the safe-integer range (a 21-digit-or-larger JSON literal
+// gets silently rounded by JSON.parse otherwise).
 export function assertNumericChainId(value: unknown, fnName: string): asserts value is number {
-  if (typeof value !== 'number' || !Number.isInteger(value)) {
+  if (
+    typeof value !== 'number' ||
+    !Number.isInteger(value) ||
+    value <= 0 ||
+    value > Number.MAX_SAFE_INTEGER
+  ) {
     throw new TypeError(
-      `[@concierge/shared] ${fnName}: chainId must be number, got ${typeof value} (${JSON.stringify(String(value))}). ` +
+      `[@concierge/shared] ${fnName}: chainId must be a positive safe integer, got ${typeof value} (${JSON.stringify(String(value))}). ` +
         'If reading from env / JSON / CLI, parse with Number() first.',
     );
   }

@@ -9,7 +9,6 @@
   },
   "exports": {
     ".": {
-      "development": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
@@ -17,12 +16,14 @@
   },
   "files": [
     "dist",
-    "src"
+    "src/**/*.ts",
+    "!src/**/*.test.ts"
   ],
   "scripts": {
     "build": "tsup",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
+    "prepare": "tsup",
     "prepack": "pnpm run build"
   },
   "peerDependencies": {

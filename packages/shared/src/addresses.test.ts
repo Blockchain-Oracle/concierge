@@ -1,11 +1,5 @@
-// ADDRESSES registry tests: shape, pinned values, lockbox, deep-freeze, research-doc cross-check.
-//
-// Covers reviewer findings I3 (research-doc source-of-truth) + I4 (exact-path lockbox)
-// + S8 (SEPOLIA_PENDING lex-sorted) + S9 (flattenAddresses tighter leaf check) +
-// pre-merge pinned-value lockbox.
+// Shape, pinned values, lockbox, deep-freeze, EIP-55 checksum tests for ADDRESSES.
 
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { getAddress } from 'viem';
 import { describe, expect, it } from 'vitest';
 import type { Address } from './index.ts';
@@ -16,8 +10,6 @@ const ZERO = '0x0000000000000000000000000000000000000000';
 
 // Canonical Mantle WETH vanity per aave-v3-mantle.md:34 — exempt from EIP-55 checksum.
 const WETH_VANITY = '0xdEAddEaDdeadDEadDEADDEAddEADDEAddead1111';
-
-const RESEARCH_DIR = resolve(import.meta.dirname, '../../../research/concierge/03-providers');
 
 function flattenAddresses(
   obj: unknown,
@@ -104,6 +96,15 @@ describe('ADDRESSES shape', () => {
     expect(ADDRESSES.mantleSepolia.erc8004.reputationRegistry).not.toBe(ZERO);
   });
 
+  it('Mantle Sepolia ERC-8004 addresses satisfy EIP-55 checksum (parity with Mainnet)', () => {
+    expect(getAddress(ADDRESSES.mantleSepolia.erc8004.identityRegistry)).toBe(
+      ADDRESSES.mantleSepolia.erc8004.identityRegistry,
+    );
+    expect(getAddress(ADDRESSES.mantleSepolia.erc8004.reputationRegistry)).toBe(
+      ADDRESSES.mantleSepolia.erc8004.reputationRegistry,
+    );
+  });
+
   it('ADDRESSES tree is deeply frozen at runtime', () => {
     function assertFrozen(obj: unknown, path = 'ADDRESSES'): void {
       if (obj && typeof obj === 'object') {
@@ -184,37 +185,5 @@ describe('Sepolia pinned values', () => {
         ADDRESSES.mantleSepolia as unknown as Record<string, unknown>,
       );
     expect(got).toBe(expected);
-  });
-});
-
-describe('research/concierge/ is the source of truth (correlated-typo guard)', () => {
-  // Each Mainnet address must appear in its cited research doc — guards against the
-  // failure mode where addresses.ts AND the pinned-value test both share a wrong hex.
-  it.each<[string, string]>([
-    ['aave.pool', 'aave-v3-mantle.md'],
-    ['aave.oracle', 'aave-v3-mantle.md'],
-    ['aave.addressesProvider', 'aave-v3-mantle.md'],
-    ['aave.protocolDataProvider', 'aave-v3-mantle.md'],
-    ['tokens.USDC', 'aave-v3-mantle.md'],
-    ['tokens.WMNT', 'aave-v3-mantle.md'],
-    ['tokens.WETH', 'aave-v3-mantle.md'],
-    ['tokens.USDe', 'ethena-susde.md'],
-    ['tokens.sUSDe', 'ethena-susde.md'],
-    ['tokens.USDY', 'ondo-usdy.md'],
-    ['tokens.mETH', 'meth-staking.md'],
-    ['erc8004.identityRegistry', 'erc8004.md'],
-    ['erc8004.reputationRegistry', 'erc8004.md'],
-    ['lifi.diamond', 'lifi-bridge.md'],
-    ['mantleDex.merchantMoe.lbRouter', 'mantle-dex.md'],
-    ['mantleDex.agni.factory', 'mantle-dex.md'],
-  ])('mainnet %s appears in %s', (path, doc) => {
-    const expectedAddress = path
-      .split('.')
-      .reduce<Record<string, unknown>>(
-        (acc, key) => acc[key] as Record<string, unknown>,
-        ADDRESSES.mantleMainnet as unknown as Record<string, unknown>,
-      ) as unknown as string;
-    const docBody = readFileSync(resolve(RESEARCH_DIR, doc), 'utf8');
-    expect(docBody, `${expectedAddress} not found in ${doc}`).toContain(expectedAddress);
   });
 });

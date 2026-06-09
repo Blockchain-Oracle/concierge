@@ -1,12 +1,8 @@
 // Type-level contracts for @concierge/shared public surface.
 //
 // Tested via tsc — vitest's expectTypeOf assertions are no-op at runtime, but
-// `pnpm typecheck` (CI gate) compiles this file. Canary test at the bottom
-// guards against the file silently dropping out of typecheck.
-//
-// Covers reviewer findings C3 (TickLoopPhase + ModelRoutingPhase split) +
-// C4 (AgentId branded bigint) + S6 (Hex + Address type-level coverage) +
-// S7 (canary) + S10 (toExtend replaces deprecated toMatchTypeOf) + S11 (SepoliaAddressPath).
+// `pnpm typecheck` (CI gate) compiles this file. The canary test at the bottom
+// uses a @ts-expect-error directive that fires only when tsc actually sees this file.
 
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import type {
@@ -93,14 +89,24 @@ describe('public union arity', () => {
     expectTypeOf<'tokens.USDC'>().toExtend<SepoliaAddressPath>();
     expectTypeOf<'erc8004.identityRegistry'>().toExtend<SepoliaAddressPath>();
   });
+
+  it('SepoliaAddressPath rejects non-existent paths (guards against widening to string)', () => {
+    expectTypeOf<'aave.nonexistent'>().not.toExtend<SepoliaAddressPath>();
+    expectTypeOf<'tokens.usdc'>().not.toExtend<SepoliaAddressPath>();
+    expectTypeOf<string>().not.toExtend<SepoliaAddressPath>();
+    expectTypeOf<''>().not.toExtend<SepoliaAddressPath>();
+  });
 });
 
 describe('typecheck wiring canary', () => {
-  it('tsc actually sees this file (guards against silent typecheck drop-out)', () => {
-    // If this file falls out of `tsc --noEmit`, every expectTypeOf above silently
-    // becomes a runtime no-op. A widened EvmChainId would still typecheck without
-    // this canary. The assertion below would fail compilation if the union widened.
-    expectTypeOf<EvmChainId>().not.toEqualTypeOf<5000 | 5003 | 1>();
+  it('tsc actually sees this file (load-bearing @ts-expect-error guard)', () => {
+    // If this file is dropped from `tsc --noEmit`, the @ts-expect-error below
+    // becomes a no-op directive — tsc reports "Unused @ts-expect-error" and CI
+    // typecheck fails. The previous canary used a tautological .not assertion
+    // that always passed regardless of whether tsc saw the file.
+    // @ts-expect-error -- 'foo' is not assignable to EvmChainId (load-bearing)
+    const wrong: EvmChainId = 'foo';
+    void wrong;
     expect(true).toBe(true);
   });
 });

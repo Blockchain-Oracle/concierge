@@ -52,7 +52,20 @@ export function agentId(raw: bigint): AgentId {
 
 /** Construct an AgentId from a 0x-prefixed hex string (e.g. an ERC-8004 receipt log). */
 export function agentIdFromHex(hex: `0x${string}`): AgentId {
-  return agentId(BigInt(hex));
+  if (typeof hex !== 'string' || !/^0x[0-9a-fA-F]+$/.test(hex)) {
+    throw new TypeError(
+      `[@concierge/shared] agentIdFromHex: expected 0x-prefixed hex string, got ${typeof hex} (${JSON.stringify(String(hex))})`,
+    );
+  }
+  try {
+    return agentId(BigInt(hex));
+  } catch (cause) {
+    if (cause instanceof RangeError) throw cause;
+    throw new TypeError(
+      `[@concierge/shared] agentIdFromHex: failed to parse ${JSON.stringify(hex)} as bigint`,
+      { cause },
+    );
+  }
 }
 
 /** Render an AgentId as a 0x-prefixed, 64-char-padded uint256 hex (canonical receipt form). */
@@ -60,8 +73,23 @@ export function agentIdToHex(id: AgentId): `0x${string}` {
   return `0x${id.toString(16).padStart(64, '0')}` as `0x${string}`;
 }
 
-/** Type guard for AgentId without throwing. Accepts any bigint in [0, 2^256). */
-export function isAgentId(raw: bigint): raw is AgentId {
+/**
+ * Render an AgentId as a JSON-safe decimal string. Use this at every boundary
+ * that calls JSON.stringify (MCP structuredContent, Vercel AI SDK tool parts,
+ * BullMQ job payloads, Next.js route handlers, Drizzle inserts). Raw bigint
+ * cannot be JSON-serialized — JSON.stringify throws TypeError for bigint.
+ */
+export function agentIdToJSON(id: AgentId): string {
+  return id.toString(10);
+}
+
+/** Parse an AgentId from a decimal-string JSON value (counterpart to agentIdToJSON). */
+export function agentIdFromJSON(value: string): AgentId {
+  return agentId(BigInt(value));
+}
+
+/** Type guard for AgentId without throwing. Accepts unknown input so JS↔TS boundaries can use it directly. */
+export function isAgentId(raw: unknown): raw is AgentId {
   return typeof raw === 'bigint' && raw >= 0n && raw < UINT256_MAX;
 }
 

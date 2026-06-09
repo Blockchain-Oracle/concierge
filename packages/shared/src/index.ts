@@ -17,4 +17,11 @@ export type {
   ProviderName,
   TickLoopPhase,
 } from './types.ts';
-export { agentId, agentIdFromHex, agentIdToHex, isAgentId } from './types.ts';
+export {
+  agentId,
+  agentIdFromHex,
+  agentIdFromJSON,
+  agentIdToHex,
+  agentIdToJSON,
+  isAgentId,
+} from './types.ts';

@@ -108,23 +108,21 @@ export const ADDRESSES = deepFreeze({
 /**
  * Resolve the addresses block for a given Mantle chain id.
  *
- * Collapsed from 3 overloads to a single generic conditional return — narrows
- * by literal at the call site (`addressesFor(5000).aave.pool` resolves directly
- * to the Mainnet shape) without per-chain overload duplication.
+ * Returns the union of both block shapes — the generic-conditional pattern was
+ * decorative (Mainnet and Sepolia are structurally identical today, so the
+ * narrowing didn't catch anything AND required an `as never` cast in the impl
+ * that could mask a branch-swap typo). When the shapes intentionally diverge
+ * (story-192 mock-deploy may add Sepolia-only fields), promote to overloads.
  *
  * Inputs are validated for type (string from env / bigint from JSON-parse fail
  * with a typed TypeError, not the generic "unsupported chain id" message).
  */
-export function addressesFor<C extends EvmChainId>(
-  chainId: C,
-): C extends 5000 ? typeof ADDRESSES.mantleMainnet : typeof ADDRESSES.mantleSepolia {
+export function addressesFor(
+  chainId: EvmChainId,
+): typeof ADDRESSES.mantleMainnet | typeof ADDRESSES.mantleSepolia {
   assertNumericChainId(chainId, 'addressesFor');
-  if (chainId === 5000) {
-    return ADDRESSES.mantleMainnet as never;
-  }
-  if (chainId === 5003) {
-    return ADDRESSES.mantleSepolia as never;
-  }
+  if (chainId === 5000) return ADDRESSES.mantleMainnet;
+  if (chainId === 5003) return ADDRESSES.mantleSepolia;
   throw new Error(
     `[@concierge/shared] addressesFor: unsupported Mantle chain id ${chainId satisfies never} (expected 5000 mainnet or 5003 sepolia)`,
   );
