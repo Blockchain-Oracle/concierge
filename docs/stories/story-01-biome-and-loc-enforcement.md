@@ -18,7 +18,7 @@
 
 ## File modification map
 
-- `biome.json` — NEW — root config with `lint`, `format`, `linter.rules.nursery.noExcessiveLinesPerFile { level: "error", options: { maxLines: 400 } }`, `linter.rules.complexity.noExcessiveLinesPerFunction { level: "warn", options: { maxLines: 50 } }`, ignore patterns for `**/abi/**`, `**/.next/**`, `**/dist/**`, `**/out/**`, `**/*.d.ts`, `**/coverage/**`, `**/.turbo/**`, `**/broadcast/**`, `**/.wrangler/**`
+- `biome.json` — NEW — root config (`"$schema": "https://biomejs.dev/schemas/2.4.16/schema.json"`, `"root": true`) with `formatter`, `linter`, `assist`, `linter.rules.nursery.noExcessiveLinesPerFile { level: "error", options: { maxLines: 400, skipBlankLines: false } }` (verified against Biome 2.4.16 configuration schema — still in `nursery` in 2.x), `linter.rules.complexity.noExcessiveLinesPerFunction { level: "warn", options: { maxLines: 50 } }`, **`files.includes` with `!` negation** (Biome 2.x dropped `files.ignore` in favour of include-glob negation): `["**", "!**/abi/**", "!**/.next/**", "!**/dist/**", "!**/out/**", "!**/*.d.ts", "!**/coverage/**", "!**/.turbo/**", "!**/broadcast/**", "!**/.wrangler/**", "!**/node_modules/**", "!pnpm-lock.yaml"]`
 - `package.json` — UPDATE — pin `@biomejs/biome` to a specific minor (per ADR-007: nursery rules can drift); add scripts `lint`, `format`, `check`, `loc:check`, `loc:test`
 - `scripts/check-file-loc.mjs` — NEW — defense-in-depth Node walker. Walks `apps/`, `packages/`, `scripts/`, `contracts/src/`, `contracts/test/`, `contracts/script/`. Counts significant lines (skips blanks + line-comment prefixes `//`, `#`, `/*`, `*`, `<!--`). Three exit codes: `0` all-pass, `1` violations (printed to stderr with path + count + delta), `2` config error (missing root dir, non-UTF-8 file — raises explicitly, never silently skips). **Named exclude sets** (NOT substring match — substring match silently mis-excludes `apps/foo/rebuild/widget.ts` because it contains `build`):
   - `EXCLUDE_FILENAMES = new Set([])` (none for TS — Python's `__init__.py` doesn't apply)
@@ -43,7 +43,7 @@ When `pnpm exec biome check <file>` runs
 Then it exits non-zero with the `noExcessiveLinesPerFile` rule firing
 
 Given the biome nursery rule for max lines is enabled at error level
-When `node -e "const c = require('./biome.json'); console.log(JSON.stringify(c.linter.rules.nursery))"` runs
+When `node --input-type=module -e "import fs from 'node:fs'; const c = JSON.parse(fs.readFileSync('./biome.json','utf8')); console.log(JSON.stringify(c.linter.rules.nursery))"` runs
 Then output contains `"noExcessiveLinesPerFile"` and `"level":"error"` and `"maxLines":400`
 
 Given the LOC defense-in-depth script exists
@@ -85,8 +85,9 @@ test -f scripts/check-file-loc.mjs
 test -f .husky/pre-commit
 
 # Biome config has the nursery rule at error level with maxLines 400
-node -e "
-  const c = require('./biome.json');
+node --input-type=module -e "
+  import fs from 'node:fs';
+  const c = JSON.parse(fs.readFileSync('./biome.json', 'utf8'));
   if (c.linter?.rules?.nursery?.noExcessiveLinesPerFile?.level !== 'error') process.exit(1);
   if (c.linter?.rules?.nursery?.noExcessiveLinesPerFile?.options?.maxLines !== 400) process.exit(1);
 "
@@ -118,8 +119,8 @@ test $? -eq 0
 
 ## Notes for coding agent
 
-- Per ADR-007: `noExcessiveLinesPerFile` is a Biome nursery rule. Pin Biome to a specific minor (e.g. `2.x.y` not `^2`) — nursery rules can move between minors.
-- Generated files (`**/abi/**`, `**/.next/**`, `**/dist/**`, etc.) MUST be in `files.ignore` — otherwise CI fails on auto-generated code.
+- Per ADR-007: `noExcessiveLinesPerFile` is a Biome **nursery** rule in 2.4.16 (verified against `node_modules/@biomejs/biome/configuration_schema.json` 2026-06-09 — rule is in `linter.rules.nursery`, NOT in `style` despite some out-of-date docs pages claiming otherwise). Pin Biome to an EXACT version (e.g. `"2.4.16"`, not `^2.4` or `~2.4.16`) — nursery rules can move between minors (promotions, renamings, removals).
+- Generated files (`**/abi/**`, `**/.next/**`, `**/dist/**`, etc.) MUST be excluded via `files.includes` negation (`!**/abi/**`) — **Biome 2.x dropped `files.ignore`** in favour of include-glob negation. Otherwise CI fails on auto-generated code.
 - `scripts/check-file-loc.mjs` is defense-in-depth — runs as a fast pre-commit guard before Biome loads. Biome's rule is the CI authority.
 - **Named exclude sets, NOT substring match.** Reference: `rapid-agents/scripts/check_max_lines.py:30-32`. Substring match silently mis-excludes paths like `apps/foo/rebuild/widget.ts` because they contain `build`. Use `Set` lookups + `path.split('/').includes(component)` for correctness.
 - **No silent failures.** Missing root dir = exit `2`, NOT exit `0`. Non-UTF-8 file = exit `2`, NOT silent skip. Pre-commit + git ls-files only emit existing paths — anything else is an upstream bug that must surface.

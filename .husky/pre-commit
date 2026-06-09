@@ -1,0 +1,6 @@
+#!/usr/bin/env sh
+# Pre-commit gate: Biome (lint + format check + import sort) + defense-in-depth LOC cap.
+# Staged-only diff handling lands in story-06 (.lintstagedrc). For now we run the full tree —
+# fast enough on a small repo, and prevents the "passes locally / fails in CI" gap.
+
+pnpm run check && node scripts/check-file-loc.mjs

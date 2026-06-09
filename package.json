@@ -15,10 +15,19 @@
   },
   "packageManager": "pnpm@10.33.0",
   "scripts": {
-    "check": "echo '[stub] biome check — wired in story-01' && exit 0",
+    "check": "biome check .",
+    "lint": "biome lint .",
+    "format": "biome format --write .",
+    "loc:check": "node scripts/check-file-loc.mjs",
+    "loc:test": "node scripts/test-check-file-loc.mjs",
     "typecheck": "echo '[stub] tsc -b — wired in story-02' && exit 0",
     "test": "echo '[stub] vitest run — wired per story' && exit 0",
     "build": "echo '[stub] pnpm -r build — wired per story' && exit 0",
-    "dev": "echo '[stub] pnpm --filter ./apps/web dev — wired in story-100' && exit 0"
+    "dev": "echo '[stub] pnpm --filter ./apps/web dev — wired in story-100' && exit 0",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.4.16",
+    "husky": "9.1.7"
   }
 }
