@@ -10,10 +10,13 @@
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
+    "noPropertyAccessFromIndexSignature": true,
     "noImplicitOverride": true,
     "noFallthroughCasesInSwitch": true,
     "noImplicitReturns": true,
     "useUnknownInCatchVariables": true,
+    "allowUnreachableCode": false,
+    "allowUnusedLabels": false,
 
     "verbatimModuleSyntax": true,
     "isolatedModules": true,
@@ -25,7 +28,6 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
 
-    "jsx": "preserve",
-    "incremental": true
+    "jsx": "preserve"
   }
 }
