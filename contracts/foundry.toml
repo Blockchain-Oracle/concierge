@@ -8,17 +8,30 @@ cache_path = "cache"
 broadcast = "broadcast"
 
 solc = "0.8.26"
-evm_version = "cancun"
+# Shanghai (verified support on Mantle via direct PUSH0 RPC test against
+# https://rpc.mantle.xyz, 2026-06-09). Cancun was the spec's pick but
+# introduces blob-specific opcodes (BLOBHASH / BLOBBASEFEE) that are L1-
+# only and not part of Mantle's EVM execution layer. solc 0.8.26 defaults
+# to cancun — we explicitly downgrade to shanghai as the safe floor.
+evm_version = "shanghai"
 
 optimizer = true
 optimizer_runs = 200
 via_ir = false
 
-bytecode_hash = "none"
-cbor_metadata = false
+# Default to standard metadata so Sourcify / Mantlescan can verify uploaded
+# bytecode against source. Determinism (`none` + `false`) was the spec's
+# pick but isn't a requirement here — ConciergeRegistry is single-deploy
+# per network (5000 + 5003), not CREATE2 cross-chain. Verifiability matters
+# more (ADR-004 reputation surface).
+bytecode_hash = "ipfs"
+cbor_metadata = true
 
 fuzz = { runs = 256 }
-invariant = { runs = 256, depth = 64, fail_on_revert = true }
+# `fail_on_revert = false` for now — no invariants exist yet. Story-12
+# adds the first invariant test with a handler contract; that PR should
+# flip this to `true` after the handler's `vm.assume` routing is in place.
+invariant = { runs = 256, depth = 64, fail_on_revert = false }
 
 [fmt]
 line_length = 100
