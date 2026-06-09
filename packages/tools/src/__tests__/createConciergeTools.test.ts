@@ -161,11 +161,8 @@ describe('createConciergeTools aggregation', () => {
     expect(() => createConciergeTools(agentMainnet, [asyncBad])).toThrow(/returned a Promise/);
   });
 
-  // Note: the deeper `.catch(() => {})` unhandledRejection-suppression test
-  // lives in its own file (`createConciergeTools.unhandledRejection.test.ts`)
-  // because it touches Node `process` listeners, needs ambient global decls,
-  // and the load-bearing comment block pushes this file past biome's 400-LOC
-  // ceiling.
+  // The `.catch(() => {})` unhandledRejection-suppression test lives in
+  // createConciergeTools.unhandledRejection.test.ts (Node globals + LOC cap).
 
   it('hints at thenable-without-catch when a `.then`-only return falls through', () => {
     const makeBad = (): unknown => {

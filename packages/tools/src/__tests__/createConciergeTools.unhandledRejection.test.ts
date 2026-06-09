@@ -7,9 +7,7 @@
 // 400-LOC cap (biome `noExcessiveLinesPerFile`).
 
 import { describe, expect, it } from 'vitest';
-import { z } from 'zod';
 import { createConciergeTools } from '../createConciergeTools.ts';
-import { tool } from '../tool.ts';
 import type { ConciergeAgentLike, ProviderToolFactory } from '../types.ts';
 
 // Minimal local ambient declarations for the two Node globals this test
@@ -24,36 +22,23 @@ declare const process: {
 };
 declare const setImmediate: (cb: () => void) => void;
 
-const echo = tool({
-  name: 'echo',
-  description: 'fixture',
-  inputSchema: z.object({ msg: z.string() }),
-  outputSchema: z.object({ echoed: z.string() }),
-  invoke: async ({ msg }) => ({ echoed: msg }),
-});
-void echo;
-
 describe('createConciergeTools — unhandledRejection suppression', () => {
   const agentMainnet: ConciergeAgentLike = { chainId: 5000 };
 
   it('suppresses Node unhandledRejection for the leaked Promise (no orphan emission)', async () => {
     // Honest test of the `.catch(() => {})` at createConciergeTools.ts:44.
-    // Strategy: snapshot listeners, install an object-identity-filtered spy
-    // FIRST (before removing the others — narrows the bare-window where any
-    // concurrent test's rejection would hit a zero-listener emit), then
-    // remove the originals, run the failing factory, drain microtasks +
-    // unhandledRejection's next-tick emission. The two `setImmediate` waits
-    // are load-bearing: the FIRST drains microtasks queued during the
-    // synchronous throw; the SECOND covers the next-tick on which Node
-    // actually fires `unhandledRejection` per the rejection-tracking
-    // algorithm — collapsing to one drain is a known flakiness source under
-    // heavy event-loop load. A positive-control assertion PROVES the
-    // harness can detect emission (regression-resistant: if the `.catch` is
-    // removed AND the test still passes, the positive control catches it).
-    //
-    // Object-identity sentinels (vs message-string) are robust against any
-    // concurrent test that happens to throw the same string — there's only
-    // one `SENTINEL_ERR` / `SENTINEL_CONTROL` reference in this process.
+    // Strategy: install an object-identity-filtered spy FIRST (narrows the
+    // bare-window where a concurrent rejection hits a zero-listener emit),
+    // then remove vitest's listeners, run the failing factory, and drain
+    // microtasks + unhandledRejection's next-tick emission. The two
+    // `setImmediate` waits are load-bearing: the first drains microtasks
+    // queued during the synchronous throw; the second covers the next tick
+    // on which Node actually fires `unhandledRejection` — collapsing to one
+    // drain is a known flakiness source under heavy event-loop load.
+    // Object-identity sentinels (vs message strings) can't collide with a
+    // concurrent test throwing the same text, and the positive control
+    // PROVES the harness can detect emission — if the `.catch` is removed
+    // and timing masks the leak, the control catches the vacuous pass.
     const SENTINEL_ERR = new Error('unhandledRejection suppression sentinel — DO NOT REUSE');
     const SENTINEL_CONTROL = new Error('unhandledRejection positive-control sentinel');
     const originalListeners = process.listeners('unhandledRejection').slice();
