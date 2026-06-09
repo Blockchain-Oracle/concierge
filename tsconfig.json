@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "files": [],
+  "references": [
+    { "path": "./packages/sdk" },
+    { "path": "./packages/shared" },
+    { "path": "./packages/ui" },
+    { "path": "./packages/skill" },
+    { "path": "./apps/web" },
+    { "path": "./apps/mcp" },
+    { "path": "./apps/worker" }
+  ]
+}
