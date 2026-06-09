@@ -5,14 +5,17 @@ import type { z } from 'zod';
 
 /**
  * Tightened Promises/A+ duck-type — requires BOTH `then` AND `catch` as
- * functions. Promises/A+ defines a thenable as anything with a `then`
- * method (§1.2 / §2.2), but the spec never requires `catch`; real Promises
- * always have `.catch` via `Promise.prototype`. Requiring both rules out
- * the legitimate-payload false positive `{ then: () => 'x' }` (LLM tool
- * output where `then` happens to be a function value) without rejecting
- * any real Promise. Property accesses are wrapped in try/catch so a
- * throwing getter (RxJS observables, MobX proxies) yields `false` rather
- * than propagating the getter's error past the serialization boundary.
+ * functions. Promises/A+ §1.2 defines a thenable as anything with a `then`
+ * method, but the spec never requires `catch`; real Promises always have
+ * `.catch` via `Promise.prototype`. Requiring both rules out the
+ * legitimate-payload false positive `{ then: () => 'x' }` (LLM tool output
+ * where `then` happens to be a function value) without rejecting any real
+ * Promise. Property accesses are wrapped in try/catch so a throwing getter
+ * (RxJS observables, MobX proxies) yields `false` rather than propagating
+ * past the serialization boundary. Note: the guard returns false on a
+ * throwing getter but can NOT cancel the getter's side effects (logs,
+ * metrics, network calls); callers passing untrusted Proxies should
+ * sanitize first.
  */
 export function isThenable(value: unknown): value is PromiseLike<unknown> {
   if (value === null || typeof value !== 'object') return false;
@@ -27,12 +30,21 @@ export function isThenable(value: unknown): value is PromiseLike<unknown> {
 /**
  * Private helper — safely read `_def.type` from a duck-typed Zod-like value.
  * Centralizes the Zod-internals cast so a Zod 5 rename touches one site.
+ * Wrapped in try/catch symmetric to `isThenable`: a Proxy/getter that throws
+ * during property access (MobX observables, RxJS proxies, malicious schemas)
+ * yields `undefined` instead of aborting the registry build with a confusing
+ * cross-library stack. The existing `[@concierge/tools] ... must be Zod`
+ * error then fires at the call site.
  */
 function getZodDefType(value: unknown): string | undefined {
   if (value === null || typeof value !== 'object') return undefined;
-  const def = (value as { _def?: { type?: unknown } })._def;
-  if (def === null || typeof def !== 'object') return undefined;
-  return typeof def.type === 'string' ? def.type : undefined;
+  try {
+    const def = (value as { _def?: { type?: unknown } })._def;
+    if (def === null || typeof def !== 'object') return undefined;
+    return typeof def.type === 'string' ? def.type : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**

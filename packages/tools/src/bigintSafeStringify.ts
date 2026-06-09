@@ -31,21 +31,22 @@ export function bigintSafeStringify(value: unknown, space?: number | string): st
   try {
     result = JSON.stringify(
       value,
-      (_key, v) => {
+      (key, v) => {
         if (typeof v === 'bigint') return v.toString();
         if (v instanceof Map) return Object.fromEntries(v);
         if (v instanceof Set) return Array.from(v);
         // Nested guard fires for everything except the synthetic top-level
         // wrapper call (where v === root). Empty-string keys are caught.
+        // The `at .${key}` suffix tells the user WHICH field to fix.
         if (v !== root) {
           if (typeof v === 'function' || typeof v === 'symbol' || isThenable(v)) {
             throw new TypeError(
-              `[@concierge/tools] bigintSafeStringify: non-serializable nested ${typeof v === 'object' ? 'thenable/Promise' : typeof v} (forgot to await?)`,
+              `[@concierge/tools] bigintSafeStringify: non-serializable nested ${typeof v === 'object' ? 'thenable/Promise' : typeof v} at .${String(key)} (forgot to await?)`,
             );
           }
           if (v instanceof WeakMap || v instanceof WeakSet) {
             throw new TypeError(
-              '[@concierge/tools] bigintSafeStringify: nested WeakMap/WeakSet is not serializable',
+              `[@concierge/tools] bigintSafeStringify: nested WeakMap/WeakSet at .${String(key)} is not serializable`,
             );
           }
         }
