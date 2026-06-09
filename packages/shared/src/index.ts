@@ -1,6 +1,6 @@
 // Barrel exports for @concierge/shared.
 
-export { ADDRESSES, addressesFor } from './addresses.ts';
+export { ADDRESSES, addressesFor, SEPOLIA_PENDING_ADDRESS_SLOTS } from './addresses.ts';
 export { chainFor, mantleMainnet, mantleSepolia } from './chains.ts';
 export type {
   ActionKind,
@@ -11,3 +11,4 @@ export type {
   ProviderName,
   TickPhase,
 } from './types.ts';
+export { agentId, isAgentId } from './types.ts';

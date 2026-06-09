@@ -3,7 +3,7 @@
 // Do NOT modify without re-running the verification pass against `https://rpc.mantle.xyz`.
 //
 // Sepolia (5003) values for non-ERC-8004 contracts are 0x000…000 placeholders;
-// story-190 fills them in after the Sepolia mock-deploy lands. The ERC-8004
+// story-192 fills them in after the Sepolia mock-deploy lands. The ERC-8004
 // Sepolia values ARE real (Mantle has a testnet deployment for ERC-8004).
 //
 // Source of truth per contract:
@@ -17,7 +17,19 @@ import type { Address, EvmChainId } from './types.ts';
 
 const ZERO: Address = '0x0000000000000000000000000000000000000000';
 
-export const ADDRESSES = {
+// Recursive Object.freeze so downstream packages cannot mutate the registry at runtime.
+// `as const` only narrows the type — without runtime freezing, a single
+// `(ADDRESSES.mantleMainnet.aave as any).pool = '0xdead…'` would silently re-route every
+// subsequent Aave call. The registry is meant to be immutable; enforce it.
+function deepFreeze<T>(value: T): T {
+  if (value && typeof value === 'object') {
+    for (const inner of Object.values(value as Record<string, unknown>)) deepFreeze(inner);
+    Object.freeze(value);
+  }
+  return value;
+}
+
+export const ADDRESSES = deepFreeze({
   mantleMainnet: {
     aave: {
       pool: '0x458F293454fE0d67EC0655f3672301301DD51422' as Address,
@@ -30,6 +42,9 @@ export const ADDRESSES = {
       USDe: '0x5d3a1Ff2b6BAb83b63cd9AD0787074081a52ef34' as Address,
       sUSDe: '0x211Cc4DD073734dA055fbF44a2b4667d5E5fE5d2' as Address,
       WMNT: '0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8' as Address,
+      // Canonical Mantle WETH vanity address per research/concierge/03-providers/aave-v3-mantle.md:34.
+      // It IS a real reserve in the Aave Mantle market — the `dead1111` pattern is intentional
+      // (deployed via CREATE2 to match Mantle's WETH9 vanity convention). Do not flag as placeholder.
       WETH: '0xdEAddEaDdeadDEadDEADDEAddEADDEAddead1111' as Address,
       USDY: '0x5bE26527e817998A7206475496fDE1E68957c5A6' as Address,
       mETH: '0xcDA86A272531e8640cD7F1a92c01839911B90bb0' as Address,
@@ -73,7 +88,7 @@ export const ADDRESSES = {
       mETH: ZERO,
     },
     erc8004: {
-      // Real Mantle Sepolia ERC-8004 deployment — verified live.
+      // Real Mantle Sepolia ERC-8004 deployment per research/concierge/03-providers/erc8004.md:14.
       identityRegistry: '0x8004A818BFB912233c491871b3d84c89A494BD9e' as Address,
       reputationRegistry: '0x8004B663056A597Dffe9eCcC1965A193B7388713' as Address,
     },
@@ -89,12 +104,48 @@ export const ADDRESSES = {
       },
     },
   },
-} as const;
+} as const);
 
-/** Helper: resolve the addresses block for a given Mantle chain id. */
-export function addressesFor(chainId: EvmChainId): (typeof ADDRESSES)[keyof typeof ADDRESSES] {
+/**
+ * Resolve the addresses block for a given Mantle chain id.
+ *
+ * Overloads narrow the return type so consumers get the exact block shape for each chain
+ * (instead of the collapsed `MainnetBlock | SepoliaBlock` union). The `satisfies never`
+ * in the throw branch makes the exhaustiveness check explicit — adding a third chain id
+ * to `EvmChainId` will become a compile error here, forcing the helper to handle it.
+ */
+export function addressesFor(chainId: 5000): typeof ADDRESSES.mantleMainnet;
+export function addressesFor(chainId: 5003): typeof ADDRESSES.mantleSepolia;
+export function addressesFor(
+  chainId: EvmChainId,
+): typeof ADDRESSES.mantleMainnet | typeof ADDRESSES.mantleSepolia;
+export function addressesFor(chainId: EvmChainId) {
   if (chainId === 5000) return ADDRESSES.mantleMainnet;
   if (chainId === 5003) return ADDRESSES.mantleSepolia;
-  // EvmChainId narrows to 5000 | 5003 at compile time; this is defense-in-depth.
-  throw new Error(`Unsupported chain id: ${chainId}`);
+  throw new Error(
+    `[@concierge/shared] addressesFor: unsupported chain id: ${chainId satisfies never}`,
+  );
 }
+
+/**
+ * Slot paths on `ADDRESSES.mantleSepolia` that intentionally hold the zero address until
+ * a later story populates them. Story-15 / story-192 will delete entries from this list
+ * as it lands real mock-deploy addresses — turning a future regression (someone reverting
+ * a populated address back to zero) into a test failure instead of a silent footgun.
+ */
+export const SEPOLIA_PENDING_ADDRESS_SLOTS = [
+  'aave.addressesProvider',
+  'aave.oracle',
+  'aave.pool',
+  'aave.protocolDataProvider',
+  'lifi.diamond',
+  'mantleDex.agni.factory',
+  'mantleDex.merchantMoe.lbRouter',
+  'tokens.USDC',
+  'tokens.USDY',
+  'tokens.USDe',
+  'tokens.WETH',
+  'tokens.WMNT',
+  'tokens.mETH',
+  'tokens.sUSDe',
+] as const;

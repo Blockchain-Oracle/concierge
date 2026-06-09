@@ -1,8 +1,9 @@
 // viem chain configs for Mantle Mainnet (5000) + Mantle Sepolia (5003).
 // viem ships the mainnet `mantle` chain; Sepolia is defined here.
 
-import { defineChain } from 'viem';
+import { type Chain, defineChain } from 'viem';
 import { mantle as mantleMainnet } from 'viem/chains';
+import type { EvmChainId } from './types.ts';
 
 export { mantleMainnet };
 
@@ -21,9 +22,15 @@ export const mantleSepolia = defineChain({
   testnet: true,
 });
 
-/** Helper: resolve the viem chain for a given Mantle chain id. */
-export function chainFor(chainId: 5000 | 5003) {
+/**
+ * Resolve the viem chain for a given Mantle chain id.
+ *
+ * Uses the shared `EvmChainId` type (not an inline literal) so that adding a third
+ * chain to the union forces this helper to handle it. The `satisfies never` throw
+ * is the exhaustiveness check.
+ */
+export function chainFor(chainId: EvmChainId): Chain {
   if (chainId === 5000) return mantleMainnet;
   if (chainId === 5003) return mantleSepolia;
-  throw new Error(`Unsupported chain id: ${chainId}`);
+  throw new Error(`[@concierge/shared] chainFor: unsupported chain id: ${chainId satisfies never}`);
 }
