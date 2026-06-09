@@ -88,9 +88,7 @@ describe('bigintSafeStringify', () => {
   it('triggers the post-stringify guard when toJSON() returns undefined at the root', () => {
     // The pre-guards reject undefined/function/symbol AT the root, but the
     // ECMA-262 `SerializeJSONProperty` algorithm invokes `toJSON()` on the
-    // value BEFORE the replacer runs (step 2 of the algorithm; the
-    // version-specific section number is omitted because it has shifted
-    // across spec editions — the algorithm name is the durable identifier).
+    // value BEFORE the replacer runs.
     // A root whose `toJSON` returns undefined passes our pre-guard (it's an
     // object), enters JSON.stringify (which returns the literal `undefined`,
     // not a string), and the post-guard fires. This is the primary
@@ -135,16 +133,24 @@ describe('bigintSafeStringify', () => {
 
   it('decorates the error when toJSON() itself throws (cause-rewrap branch)', () => {
     // Different branch: a throwing toJSON propagates synchronously out of
-    // JSON.stringify and the catch at lines 75-82 rewraps it with the
+    // JSON.stringify and the cause-rewrap catch decorates it with the
     // `[@concierge/tools]` prefix + the original cause attached. Locks the
     // contract that THIS path stays distinct from the post-stringify guard.
+    const boom = new Error('toJSON sentinel boom');
     const throwingRoot = {
       toJSON() {
-        throw new Error('toJSON sentinel boom');
+        throw boom;
       },
     };
-    expect(() => bigintSafeStringify(throwingRoot)).toThrow(
+    let caught: Error | undefined;
+    try {
+      bigintSafeStringify(throwingRoot);
+    } catch (e) {
+      caught = e as Error;
+    }
+    expect(caught?.message).toMatch(
       /\[@concierge\/tools\] bigintSafeStringify: toJSON sentinel boom/,
     );
+    expect(caught?.cause).toBe(boom);
   });
 });
