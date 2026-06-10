@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-/// @notice Event signature constants for ConciergeRegistry vm.expectEmit assertions.
-/// Centralises the event ABI so test files don't each need to redeclare them.
+/// @notice Raw topic-0 keccak256 constants for ConciergeRegistry events.
+/// @dev NOT used in vm.expectEmit tests — those use typed `emit IConciergeRegistry.XXX(...)`
+/// syntax which is compiler-checked and preferred. These constants are reserved for
+/// low-level log-inspection use cases (off-chain indexer fuzz assertions, story-13
+/// invariant handler). If IConciergeRegistry events change, update these constants.
 library Events {
     bytes32 internal constant AGENT_REGISTERED =
         keccak256("AgentRegistered(uint256,address,address,bytes32)");
