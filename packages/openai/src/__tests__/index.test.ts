@@ -168,9 +168,9 @@ describe('getOpenAITools — dispatch', () => {
       },
     });
     const toolkit = getOpenAITools(agent, [() => [recorder]]);
-    // Capture ONE rejection and assert instanceof + attribution + issues on
-    // the same instance: separate dispatches would each pass individually
-    // even if the rewrite replaced the ZodError consumers branch on.
+    // Capture ONE rejection and assert instanceof + attribution + issues
+    // together on the same instance, so a rewrite can't satisfy them
+    // piecemeal across properties of different rejections.
     const err: unknown = await toolkit.dispatch('recorder', { goal: 42 }).then(
       () => {
         throw new Error('expected dispatch to reject');
@@ -280,8 +280,8 @@ describe('toOpenAITool', () => {
     // The plain .pipe() is the SILENT failure mode the guard exists for:
     // z.toJSONSchema converts it as its OUTPUT (last) segment — advertising
     // what parse() *returns*, not what it *accepts* — so without the guard
-    // the model is handed a schema its arguments can never satisfy. (A
-    // .transform() merely throws; only the pipe ships a wrong schema.)
+    // the advertised schema may not match what parse() actually accepts.
+    // (A .transform() merely throws; only the pipe ships a wrong schema.)
     const pipedInput = tool({
       name: 'pipedInput',
       description: 'Pipes its input schema into a second schema.',

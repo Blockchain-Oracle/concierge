@@ -117,6 +117,8 @@ export function toOpenAITool(t: ConciergeTool): OpenAIFunctionTool {
   // The isZodObject guard makes a root `type: 'object'` certain today, but
   // that rests on z.toJSONSchema's emission behavior — guard loudly instead
   // of stamping the literal over a malformed root if a zod bump changes it.
+  // The spread below re-asserts the literal only to satisfy TypeScript's
+  // `type: 'object'` field; this guard guarantees it is a runtime no-op.
   if (parameters['type'] !== 'object') {
     throw new TypeError(
       `[@concierge/openai] toOpenAITool: expected a root type:"object" schema for tool "${t.name}", got ${JSON.stringify(parameters['type'])} — z.toJSONSchema emission may have changed; pin/check the zod version.`,
@@ -146,9 +148,9 @@ export function toOpenAITool(t: ConciergeTool): OpenAIFunctionTool {
  * applied, unknown keys stripped), the same invariant every other Concierge
  * adapter upholds. No framework sits in between here, so the adapter is the
  * one that must parse. `outputSchema` is deliberately NOT enforced on the
- * return value: Chat Completions has no return-shape slot, and dispatch
- * hands back the raw `invoke()` result (same policy as the langchain
- * sibling) — output validation belongs to the tool.
+ * return value (same policy as the langchain sibling): Chat Completions has
+ * no return-shape slot, and dispatch hands back the raw `invoke()` result —
+ * output validation belongs to the tool.
  *
  * Cancelling a model run does NOT cancel an in-flight tool call —
  * `ConciergeTool.invoke` takes no abort signal, so a started execution
