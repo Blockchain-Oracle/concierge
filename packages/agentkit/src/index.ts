@@ -190,9 +190,9 @@ export function getConciergeActionProvider(
     const consequence =
       overlap.length > 0
         ? `would silently rebind dispatch for: ${overlap.join(', ')}`
-        : `its actions would silently merge into this provider's getActions()`;
+        : `would silently merge its actions into every provider's getActions()`;
     throw new Error(
-      `[@concierge/agentkit] custom actions are already registered in this process and ${consequence}. AgentKit 0.10.x stores custom-action metadata on the shared CustomActionProvider class — create ONE provider per process.`,
+      `[@concierge/agentkit] a custom action provider is already registered in this process; registering another ${consequence}. AgentKit 0.10.x stores custom-action metadata on the shared CustomActionProvider class — create ONE provider per process.`,
     );
   }
   // Single cross-library type boundary, scoped to the ONE incompatible
@@ -208,10 +208,11 @@ export function getConciergeActionProvider(
     schema: a.schema as unknown as AgentKitSchema,
   })) satisfies AgentKitActionOptions;
   const provider = customActionProvider<WalletProvider>(options);
-  if (actions.length === 0) {
+  if (Reflect.getMetadata(ACTION_DECORATOR_KEY, CustomActionProvider) === undefined) {
     // A zero-action customActionProvider stamps no metadata upstream; leave
     // a sentinel empty Map so a later provider still trips the guard instead
-    // of union-leaking its actions into this one's getActions().
+    // of union-leaking its actions into this one's getActions(). Conditional
+    // so a future upstream that stamps its own is never clobbered.
     Reflect.defineMetadata(ACTION_DECORATOR_KEY, new Map(), CustomActionProvider);
   }
   return provider;
