@@ -5,7 +5,14 @@ import { ConciergeRegistryBase } from "./ConciergeRegistryBase.t.sol";
 import { ConciergeRegistry } from "../src/ConciergeRegistry.sol";
 import { ConciergeRegistryProxy } from "../src/ConciergeRegistryProxy.sol";
 import { IConciergeRegistry } from "../src/interfaces/IConciergeRegistry.sol";
-import { NotAgentOwner, InvalidOwner, AgentNotFound } from "../src/errors/ConciergeErrors.sol";
+import {
+    NotAgentOwner,
+    InvalidOwner,
+    SameOwner,
+    AgentNotFound,
+    UnexpectedValue,
+    OwnerAgentLimitReached
+} from "../src/errors/ConciergeErrors.sol";
 import { IAccessControl } from "@openzeppelin/contracts/access/IAccessControl.sol";
 import { Pausable } from "@openzeppelin/contracts/utils/Pausable.sol";
 
@@ -30,8 +37,13 @@ contract ConciergeRegistryAdminTest is ConciergeRegistryBase {
         assertFalse(registry.paused());
     }
 
+    function test_initialize_adminDoesNotHaveOperatorRole() public view {
+        assertFalse(registry.hasRole(registry.AGENT_OPERATOR_ROLE(), admin));
+    }
+
     function test_implConstructor_disablesInitializers() public {
-        vm.expectRevert();
+        // OZ v5 Initializable emits InvalidInitialization() when initializers are disabled
+        vm.expectRevert(bytes4(keccak256("InvalidInitialization()")));
         impl.initialize(admin);
     }
 
@@ -85,7 +97,7 @@ contract ConciergeRegistryAdminTest is ConciergeRegistryBase {
     function test_transferAgent_reverts_selfTransfer() public {
         uint256 id = _registerAlice();
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(InvalidOwner.selector, alice));
+        vm.expectRevert(abi.encodeWithSelector(SameOwner.selector, id, alice));
         registry.transferAgent(id, alice);
     }
 
@@ -93,6 +105,38 @@ contract ConciergeRegistryAdminTest is ConciergeRegistryBase {
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(AgentNotFound.selector, uint256(99)));
         registry.transferAgent(99, charlie);
+    }
+
+    function test_transferAgent_reverts_recipientAtCap() public {
+        uint256 cap = registry.MAX_AGENTS_PER_OWNER();
+        for (uint256 i = 0; i < cap; i++) {
+            vm.prank(operator);
+            registry.registerAgent(charlie, validator, keccak256(abi.encode(i)), policyData);
+        }
+        uint256 id = _registerAlice();
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(OwnerAgentLimitReached.selector, charlie));
+        registry.transferAgent(id, charlie);
+    }
+
+    function test_transferAgent_inactiveAgent_succeeds() public {
+        uint256 id = _registerAlice();
+        vm.prank(alice);
+        registry.setActive(id, false);
+        vm.prank(alice);
+        registry.transferAgent(id, charlie);
+        assertEq(registry.getAgent(id).owner, charlie);
+        assertFalse(registry.getAgent(id).active);
+    }
+
+    function test_transferAgent_prevOwner_rejected_after_transfer() public {
+        uint256 id = _registerAlice();
+        vm.prank(alice);
+        registry.transferAgent(id, charlie);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(NotAgentOwner.selector, id, alice));
+        registry.updateGoal(id, keccak256("x"));
     }
 
     function test_transferAgent_middleElementRemoval() public {
@@ -111,6 +155,24 @@ contract ConciergeRegistryAdminTest is ConciergeRegistryBase {
         assertTrue(aliceIds[0] == id1 || aliceIds[1] == id1, "id1 must remain");
         assertTrue(aliceIds[0] == id3 || aliceIds[1] == id3, "id3 must remain");
         assertEq(registry.agentsByOwner(charlie)[0], id2);
+    }
+
+    function test_transferAgent_tailElementRemoval() public {
+        vm.prank(operator);
+        uint256 id1 = registry.registerAgent(alice, validator, keccak256("g1"), policyData);
+        vm.prank(operator);
+        uint256 id2 = registry.registerAgent(alice, validator, keccak256("g2"), policyData);
+        vm.prank(operator);
+        uint256 id3 = registry.registerAgent(alice, validator, keccak256("g3"), policyData);
+
+        vm.prank(alice);
+        registry.transferAgent(id3, charlie);
+
+        uint256[] memory aliceIds = registry.agentsByOwner(alice);
+        assertEq(aliceIds.length, 2);
+        assertTrue(aliceIds[0] == id1 || aliceIds[1] == id1, "id1 must remain");
+        assertTrue(aliceIds[0] == id2 || aliceIds[1] == id2, "id2 must remain");
+        assertEq(registry.agentsByOwner(charlie)[0], id3);
     }
 
     function test_transferAgent_multipleTransfers_indexRemainsClean() public {
@@ -163,6 +225,10 @@ contract ConciergeRegistryAdminTest is ConciergeRegistryBase {
         vm.prank(alice);
         vm.expectRevert(Pausable.EnforcedPause.selector);
         registry.transferAgent(id, charlie);
+
+        vm.prank(alice);
+        vm.expectRevert(Pausable.EnforcedPause.selector);
+        registry.updateValidator(id, makeAddr("v2"));
     }
 
     function test_pause_doesNotBlockReads() public {
@@ -194,6 +260,19 @@ contract ConciergeRegistryAdminTest is ConciergeRegistryBase {
             )
         );
         registry.pause();
+    }
+
+    function test_unpause_reverts_noPauserRole() public {
+        bytes32 role = registry.PAUSER_ROLE();
+        vm.prank(pauser);
+        registry.pause();
+        vm.prank(bob);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, bob, role
+            )
+        );
+        registry.unpause();
     }
 
     // ─── Role access ───────────────────────────────────────────────────────
@@ -241,7 +320,21 @@ contract ConciergeRegistryAdminTest is ConciergeRegistryBase {
         assertEq(registry.getAgent(id2).owner, bob);
         assertTrue(registry.hasRole(registry.ADMIN_ROLE(), admin));
 
-        vm.expectRevert();
+        // Re-init must be blocked with typed error
+        vm.expectRevert(bytes4(keccak256("InvalidInitialization()")));
         registry.initialize(makeAddr("attacker"));
+
+        // Post-upgrade mutations must still work
+        vm.prank(alice);
+        registry.updateGoal(id1, keccak256("goal-v2-post-upgrade"));
+        assertEq(registry.getAgent(id1).goalHash, keccak256("goal-v2-post-upgrade"));
+    }
+
+    function test_upgradeToAndCall_reverts_ethValue() public {
+        ConciergeRegistry newImpl = new ConciergeRegistry();
+        vm.deal(admin, 1 ether);
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(UnexpectedValue.selector, uint256(1)));
+        registry.upgradeToAndCall{ value: 1 }(address(newImpl), "");
     }
 }

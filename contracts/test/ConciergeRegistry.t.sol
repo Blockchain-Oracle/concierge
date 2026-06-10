@@ -10,12 +10,16 @@ import {
     InvalidOwner,
     EmptyGoalHash,
     PolicyTooLarge,
-    AgentNotFound
+    AgentNotFound,
+    AgentAlreadyInState,
+    OwnerAgentLimitReached,
+    SameValidator
 } from "../src/errors/ConciergeErrors.sol";
 import { IAccessControl } from "@openzeppelin/contracts/access/IAccessControl.sol";
 
 /// @notice Core CRUD tests for ConciergeRegistry (registerAgent, updateGoal,
-/// updatePolicy, setActive, reads, fuzz). Admin/pause/upgrade: ConciergeRegistryAdmin.t.sol.
+/// updatePolicy, setActive, updateValidator, reads, fuzz).
+/// Admin/pause/upgrade: ConciergeRegistryAdmin.t.sol.
 contract ConciergeRegistryTest is ConciergeRegistryBase {
     // ─── registerAgent ─────────────────────────────────────────────────────
 
@@ -23,7 +27,7 @@ contract ConciergeRegistryTest is ConciergeRegistryBase {
         assertEq(_registerAlice(), 1);
     }
 
-    function test_registerAgent_incremensNextAgentId() public {
+    function test_registerAgent_incrementsNextAgentId() public {
         _registerAlice();
         vm.prank(operator);
         uint256 id2 = registry.registerAgent(bob, validator, goalHash, policyData);
@@ -43,7 +47,7 @@ contract ConciergeRegistryTest is ConciergeRegistryBase {
     }
 
     function test_registerAgent_emitsEvent() public {
-        vm.expectEmit(true, true, false, true);
+        vm.expectEmit(true, true, true, true);
         emit IConciergeRegistry.AgentRegistered(1, alice, validator, goalHash);
         vm.prank(operator);
         registry.registerAgent(alice, validator, goalHash, policyData);
@@ -88,6 +92,17 @@ contract ConciergeRegistryTest is ConciergeRegistryBase {
         vm.prank(operator);
         uint256 id = registry.registerAgent(alice, validator, goalHash, new bytes(4096));
         assertEq(registry.getAgent(id).policyData.length, 4096);
+    }
+
+    function test_registerAgent_reverts_ownerAgentLimitReached() public {
+        uint256 cap = registry.MAX_AGENTS_PER_OWNER();
+        for (uint256 i = 0; i < cap; i++) {
+            vm.prank(operator);
+            registry.registerAgent(alice, validator, keccak256(abi.encode(i)), policyData);
+        }
+        vm.prank(operator);
+        vm.expectRevert(abi.encodeWithSelector(OwnerAgentLimitReached.selector, alice));
+        registry.registerAgent(alice, validator, keccak256("over"), policyData);
     }
 
     // ─── updateGoal ────────────────────────────────────────────────────────
@@ -150,10 +165,11 @@ contract ConciergeRegistryTest is ConciergeRegistryBase {
 
     function test_updatePolicy_emitsPolicyUpdated() public {
         uint256 id = _registerAlice();
-        vm.expectEmit(true, false, false, false);
-        emit IConciergeRegistry.PolicyUpdated(id);
+        bytes memory newPolicy = abi.encode("v2");
+        vm.expectEmit(true, true, false, false);
+        emit IConciergeRegistry.PolicyUpdated(id, keccak256(newPolicy));
         vm.prank(alice);
-        registry.updatePolicy(id, abi.encode("v2"));
+        registry.updatePolicy(id, newPolicy);
     }
 
     function test_updatePolicy_reverts_notOwner() public {
@@ -188,6 +204,13 @@ contract ConciergeRegistryTest is ConciergeRegistryBase {
         assertEq(registry.getAgent(id).policyData, original);
     }
 
+    function test_updatePolicy_acceptsMaxPolicySize() public {
+        uint256 id = _registerAlice();
+        vm.prank(alice);
+        registry.updatePolicy(id, new bytes(4096));
+        assertEq(registry.getAgent(id).policyData.length, 4096);
+    }
+
     function test_updatePolicy_reverts_agentNotFound() public {
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(AgentNotFound.selector, uint256(99)));
@@ -212,11 +235,37 @@ contract ConciergeRegistryTest is ConciergeRegistryBase {
         assertTrue(registry.getAgent(id).active);
     }
 
-    function test_setActive_emitsActiveSet() public {
+    function test_setActive_emitsDeactivation() public {
         uint256 id = _registerAlice();
         vm.expectEmit(true, false, false, true);
-        emit IConciergeRegistry.ActiveSet(id, false);
+        emit IConciergeRegistry.ActiveSet(id, true, false);
         vm.prank(alice);
+        registry.setActive(id, false);
+    }
+
+    function test_setActive_emitsReactivation() public {
+        uint256 id = _registerAlice();
+        vm.prank(alice);
+        registry.setActive(id, false);
+        vm.expectEmit(true, false, false, true);
+        emit IConciergeRegistry.ActiveSet(id, false, true);
+        vm.prank(alice);
+        registry.setActive(id, true);
+    }
+
+    function test_setActive_reverts_alreadyActive() public {
+        uint256 id = _registerAlice();
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(AgentAlreadyInState.selector, id, true));
+        registry.setActive(id, true);
+    }
+
+    function test_setActive_reverts_alreadyInactive() public {
+        uint256 id = _registerAlice();
+        vm.prank(alice);
+        registry.setActive(id, false);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(AgentAlreadyInState.selector, id, false));
         registry.setActive(id, false);
     }
 
@@ -232,6 +281,64 @@ contract ConciergeRegistryTest is ConciergeRegistryBase {
         vm.expectRevert(abi.encodeWithSelector(AgentNotFound.selector, uint256(99)));
         registry.setActive(99, false);
     }
+
+    // ─── updateValidator ───────────────────────────────────────────────────
+
+    function test_updateValidator_succeeds_asOwner() public {
+        uint256 id = _registerAlice();
+        address newVal = makeAddr("newValidator");
+        vm.prank(alice);
+        registry.updateValidator(id, newVal);
+        assertEq(registry.getAgent(id).sessionKeyValidator, newVal);
+    }
+
+    function test_updateValidator_emitsEvent() public {
+        uint256 id = _registerAlice();
+        address newVal = makeAddr("newValidator");
+        vm.expectEmit(true, true, true, false);
+        emit IConciergeRegistry.ValidatorUpdated(id, validator, newVal);
+        vm.prank(alice);
+        registry.updateValidator(id, newVal);
+    }
+
+    function test_updateValidator_reverts_notOwner() public {
+        uint256 id = _registerAlice();
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(NotAgentOwner.selector, id, bob));
+        registry.updateValidator(id, makeAddr("v2"));
+    }
+
+    function test_updateValidator_reverts_zeroValidator() public {
+        uint256 id = _registerAlice();
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(InvalidValidator.selector, address(0)));
+        registry.updateValidator(id, address(0));
+    }
+
+    function test_updateValidator_worksOnInactiveAgent() public {
+        uint256 id = _registerAlice();
+        vm.prank(alice);
+        registry.setActive(id, false);
+        address newVal = makeAddr("v2");
+        vm.prank(alice);
+        registry.updateValidator(id, newVal);
+        assertEq(registry.getAgent(id).sessionKeyValidator, newVal);
+    }
+
+    function test_updateValidator_reverts_agentNotFound() public {
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(AgentNotFound.selector, uint256(99)));
+        registry.updateValidator(99, makeAddr("v2"));
+    }
+
+    function test_updateValidator_reverts_sameValidator() public {
+        uint256 id = _registerAlice();
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(SameValidator.selector, id, validator));
+        registry.updateValidator(id, validator);
+    }
+
+    // ─── reads ─────────────────────────────────────────────────────────────
 
     // getAgent never auto-reverts on inactive read
     function test_getAgent_returnsInactiveRecord() public {
@@ -253,16 +360,16 @@ contract ConciergeRegistryTest is ConciergeRegistryBase {
     // ─── Fuzz ──────────────────────────────────────────────────────────────
 
     function testFuzz_registerAgent_idAlwaysIncrements(
-        uint8 count
+        uint256 count
     ) public {
-        count = uint8(bound(count, 1, 50));
+        count = bound(count, 1, 50);
         for (uint256 i = 0; i < count; i++) {
             vm.prank(operator);
             uint256 id =
                 registry.registerAgent(alice, validator, keccak256(abi.encode(i)), policyData);
             assertEq(id, i + 1);
         }
-        assertEq(registry.nextAgentId(), uint256(count) + 1);
+        assertEq(registry.nextAgentId(), count + 1);
     }
 
     function testFuzz_updatePolicy_rejectsOversized(
