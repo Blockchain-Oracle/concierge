@@ -1,12 +1,14 @@
 // BDD coverage for the @concierge/agentkit adapter: ActionProvider shape via
 // the customActionProvider escape hatch (no decorators in our src), the
 // CustomActionProvider_ name prefix AgentKit stamps on every custom action,
-// stringified invoke delegation (bigint-safe + rejection passthrough), zod
-// validation at AgentKit's wrapper using OUR zod-4 schema (parsed-args
-// invariant: defaults applied, unknown keys stripped), multi-factory merging,
-// empty-registry default, registry error propagation, pipe/non-object schema
-// guards on toAgentKitAction, and the upstream shared-prototype last-wins
-// constraint (one provider per process).
+// stringified invoke delegation (bigint-safe + rejection passthrough +
+// serialization attribution), zod validation at AgentKit's wrapper using OUR
+// zod-4 schema (parsed-args invariant: defaults applied, unknown keys
+// stripped), chain gating, multi-factory merging, empty-registry default,
+// registry error propagation, and pipe/non-object schema guards on
+// toAgentKitAction. The shared-class registry hazard (one provider per
+// process: guard + upstream last-wins/union pins) lives in
+// registry-guard.test.ts.
 
 import {
   ACTION_DECORATOR_KEY,
@@ -50,8 +52,9 @@ const factory: ProviderToolFactory = () => [proposeAction, getPortfolio];
 // AgentKit's getActions only consults the wallet provider for actions whose
 // invoke takes (walletProvider, args) — ours are deliberately unary, so a
 // bare stub never gets touched. If a regression made our closures binary,
-// AgentKit would inject this stub as the tool's args and parsing would blow
-// up loudly in the routing tests below.
+// AgentKit would flag them as wallet-consuming (invoke.length === 2) and its
+// telemetry wrapper would call getName() on this bare stub, failing loudly
+// before schema.parse is ever reached.
 const walletStub = {} as WalletProvider;
 
 beforeAll(() => {
@@ -81,6 +84,7 @@ describe('getConciergeActionProvider', () => {
     const provider = getConciergeActionProvider(agent, [factory]);
     expect(provider).toBeInstanceOf(ActionProvider);
     expect(provider.supportsNetwork({ protocolFamily: 'evm' } as Network)).toBe(true);
+    expect(provider.supportsNetwork({ protocolFamily: 'svm' } as Network)).toBe(true);
   });
 
   it('exposes one action per registry tool under AgentKit\'s "CustomActionProvider_" prefix', () => {
@@ -94,9 +98,29 @@ describe('getConciergeActionProvider', () => {
     ]);
     for (const a of actions) {
       expect(typeof a.description).toBe('string');
-      expect(a.schema).toBeDefined();
       expect(typeof a.invoke).toBe('function');
     }
+    // Reference identity must survive the provider path end-to-end: the
+    // zod-3/zod-4 cast boundary is safe ONLY because AgentKit hands back the
+    // exact zod-4 schema object (downstream bridges JSON-Schema-convert it).
+    expect(actions.find((a) => a.name === 'CustomActionProvider_proposeAction')?.schema).toBe(
+      proposeActionInput,
+    );
+  });
+
+  it('chain-gated tools are absent from getActions (one registry snapshot)', () => {
+    const gated = tool({
+      name: 'gated',
+      description: 'Only supported on a different chain.',
+      inputSchema: z.object({}),
+      outputSchema: z.object({ ok: z.boolean() }),
+      supportsNetwork: (chainId) => chainId !== 5000,
+      invoke: async () => ({ ok: true }),
+    });
+    const provider = getConciergeActionProvider(agent, [() => [gated, getPortfolio]]);
+    expect(provider.getActions(walletStub).map((a) => a.name)).toEqual([
+      'CustomActionProvider_getPortfolio',
+    ]);
   });
 
   it('routes action invoke through schema.parse to ConciergeTool.invoke and resolves to a string', async () => {
@@ -193,6 +217,31 @@ describe('getConciergeActionProvider', () => {
     await expect(action.invoke({})).rejects.toBe(boom);
   });
 
+  it('attributes serialization failures to the tool by name and preserves the cause', async () => {
+    const unserializable = tool({
+      name: 'unserializable',
+      description: 'Returns a nested thenable (forgot to await).',
+      inputSchema: z.object({}),
+      outputSchema: z.object({ balance: z.custom<Promise<number>>() }),
+      invoke: async () => ({ balance: Promise.resolve(7) }),
+    });
+    const provider = getConciergeActionProvider(agent, [() => [unserializable]]);
+    const action = provider.getActions(walletStub)[0];
+    if (!action) throw new Error('unserializable missing');
+    // bigintSafeStringify's own error says WHERE (".balance") but not WHOSE
+    // — with many registered tools the adapter must add the tool name.
+    const err: unknown = await action.invoke({}).then(
+      () => {
+        throw new Error('expected invoke to reject');
+      },
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/tool "unserializable"/);
+    expect((err as Error).cause).toBeInstanceOf(Error);
+    expect(((err as Error).cause as Error).message).toMatch(/thenable/i);
+  });
+
   it('merges tools from multiple factories into one provider', () => {
     const extra = tool({
       name: 'extra',
@@ -230,37 +279,6 @@ describe('getConciergeActionProvider', () => {
   it('propagates registry validation errors (duplicate tool names) unchanged', () => {
     expect(() => getConciergeActionProvider(agent, [factory, factory])).toThrow(/proposeAction/);
   });
-
-  it('UPSTREAM CONSTRAINT: a second provider with the same tool names rebinds dispatch (last wins)', async () => {
-    // customActionProvider registers metadata on the SHARED
-    // CustomActionProvider class, and getActions resolves actions from that
-    // shared map AT CALL TIME — so provider A's getActions, called after a
-    // second provider registered the same name, dispatches to B's closure.
-    // (Actions snapshotted via getActions BEFORE B's registration keep A's
-    // closure.) This pins the upstream 0.10.x behavior the README warns
-    // about (one provider per process); if this test ever fails on an
-    // AgentKit bump, the README caveat can go.
-    const hits: string[] = [];
-    const mk = (label: string) =>
-      tool({
-        name: 'whoAmI',
-        description: 'Reports which provider owns dispatch.',
-        inputSchema: z.object({}),
-        outputSchema: z.object({ label: z.string() }),
-        invoke: async () => {
-          hits.push(label);
-          return { label };
-        },
-      });
-    const providerA = getConciergeActionProvider(agent, [() => [mk('A')]]);
-    const snapshotBefore = providerA.getActions(walletStub);
-    getConciergeActionProvider(agent, [() => [mk('B')]]);
-    const lookedUpAfter = providerA.getActions(walletStub);
-    if (!snapshotBefore[0] || !lookedUpAfter[0]) throw new Error('whoAmI missing');
-    await snapshotBefore[0].invoke({});
-    await lookedUpAfter[0].invoke({});
-    expect(hits).toEqual(['A', 'B']);
-  });
 });
 
 describe('toAgentKitAction', () => {
@@ -291,8 +309,20 @@ describe('toAgentKitAction', () => {
       outputSchema: z.object({ ok: z.boolean() }),
       invoke: async () => ({ ok: true }),
     });
-    expect(() => toAgentKitAction(piped)).toThrow(TypeError);
-    expect(() => toAgentKitAction(piped)).toThrow(/piped/);
+    // .transform() is a distinct fixture: today zod 4 models it as a pipe
+    // internally, but a future zod major could give transforms their own def
+    // type — this pins that BOTH spellings stay rejected.
+    const transformed = tool({
+      name: 'transformed',
+      description: 'Transforms its input schema.',
+      inputSchema: z.object({ goal: z.string() }).transform((v) => v),
+      outputSchema: z.object({ ok: z.boolean() }),
+      invoke: async () => ({ ok: true }),
+    });
+    for (const fixture of [piped, transformed]) {
+      expect(() => toAgentKitAction(fixture)).toThrow(TypeError);
+      expect(() => toAgentKitAction(fixture)).toThrow(new RegExp(fixture.name));
+    }
   });
 
   it('throws a TypeError on non-object input schemas', () => {

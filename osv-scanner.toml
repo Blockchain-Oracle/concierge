@@ -1,0 +1,13 @@
+# osv-scanner ignore list (read by .github/workflows/security.yml's
+# osv-scanner job). Entries here are vulnerabilities WITHOUT an upstream
+# patched release; everything fixable is fixed via pnpm.overrides in
+# package.json instead. Re-evaluate every entry on the next
+# @coinbase/agentkit version bump.
+
+[[IgnoredVulns]]
+id = "GHSA-3gc7-fjrx-p6mg"
+reason = "bigint-buffer toBigIntLE() buffer overflow — no patched release exists. Reached only via @coinbase/agentkit -> @solana/spl-token, a devDependency-only test harness for packages/agentkit; no Solana code path is ever executed in this repo (added 2026-06-10, PR #28)."
+
+[[IgnoredVulns]]
+id = "GHSA-848j-6mx2-7j84"
+reason = "elliptic risky cryptographic primitive — no patched release exists. Reached only via @coinbase/agentkit -> @privy-io/public-api -> ethers@5, a devDependency-only test harness for packages/agentkit; no signing is performed through this path in this repo (added 2026-06-10, PR #28)."
