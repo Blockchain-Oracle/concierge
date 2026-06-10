@@ -1,8 +1,10 @@
 // BDD coverage for the @concierge/langchain adapter: StructuredToolInterface
-// shape, JSON-stringified invoke delegation (incl. rejection passthrough +
-// unary call), zod input validation, schema reference identity, multi-factory
-// merging, empty-registry default, registry error propagation, and a
-// fakeModel + bindTools integration (model-issued tool call → ToolMessage).
+// shape, stringified invoke delegation (incl. rejection passthrough + unary
+// call), zod input validation + unknown-key stripping, schema reference
+// identity, multi-factory merging, empty-registry default, registry error
+// propagation, serialization safety (bigint / undefined / nested thenable),
+// single-tool toLangChainTool conversion, and fakeModel + bindTools
+// integrations (ToolCall → ToolMessage happy path + error propagation).
 
 import { type ConciergeAgentLike, type ProviderToolFactory, tool } from '@concierge/tools';
 import { HumanMessage } from '@langchain/core/messages';
@@ -63,7 +65,10 @@ describe('getLangChainTools', () => {
     const tools = getLangChainTools(agent, [factory]);
     const propose = tools.find((t) => t.name === 'proposeAction');
     if (!propose) throw new Error('proposeAction missing');
-    await expect(propose.invoke({ goal: 42 })).rejects.toThrow();
+    // Compiles without @ts-expect-error because StructuredToolInterface erases
+    // per-tool input generics — this test deliberately covers the RUNTIME
+    // validation that backstops the erased static typing.
+    await expect(propose.invoke({ goal: 42 })).rejects.toThrow(/string/i);
   });
 
   it('rejects with the original error when invoke rejects (no swallowing, no wrapping)', async () => {
@@ -116,6 +121,68 @@ describe('getLangChainTools', () => {
     const dup: ProviderToolFactory = () => [proposeAction];
     expect(() => getLangChainTools(agent, [dup, dup])).toThrow(/duplicate tool name/);
   });
+
+  it('serializes bigint outputs as decimal strings (wei amounts must not crash stringification)', async () => {
+    const weiTool = tool({
+      name: 'weiBalance',
+      description: 'Returns a wei-scale bigint balance.',
+      inputSchema: z.object({}),
+      outputSchema: z.object({ wei: z.bigint() }),
+      invoke: async () => ({ wei: 12345678901234567890n }),
+    });
+    const tools = getLangChainTools(agent, [() => [weiTool]]);
+    const lcWei = tools.find((t) => t.name === 'weiBalance');
+    if (!lcWei) throw new Error('weiBalance missing');
+    await expect(lcWei.invoke({})).resolves.toBe(JSON.stringify({ wei: '12345678901234567890' }));
+  });
+
+  it('rejects loudly when invoke returns undefined (never a silent empty-success ToolMessage)', async () => {
+    const buggy = tool({
+      name: 'buggy',
+      description: 'Returns undefined in violation of its outputSchema.',
+      inputSchema: z.object({}),
+      outputSchema: z.object({ ok: z.boolean() }),
+      invoke: async () => undefined as unknown as { ok: boolean },
+    });
+    const tools = getLangChainTools(agent, [() => [buggy]]);
+    const lcBuggy = tools.find((t) => t.name === 'buggy');
+    if (!lcBuggy) throw new Error('buggy missing');
+    await expect(lcBuggy.invoke({})).rejects.toThrow(/not serializable/);
+  });
+
+  it('rejects loudly on nested non-serializable values instead of silently emitting {}', async () => {
+    const forgotAwait = tool({
+      name: 'forgotAwait',
+      description: 'Leaks a pending promise into its output.',
+      inputSchema: z.object({}),
+      outputSchema: z.object({ tx: z.object({ hash: z.string() }) }),
+      invoke: async () =>
+        ({ tx: Promise.resolve({ hash: '0xabc' }) }) as unknown as { tx: { hash: string } },
+    });
+    const tools = getLangChainTools(agent, [() => [forgotAwait]]);
+    const lcForgot = tools.find((t) => t.name === 'forgotAwait');
+    if (!lcForgot) throw new Error('forgotAwait missing');
+    await expect(lcForgot.invoke({})).rejects.toThrow(/thenable.*forgot to await/);
+  });
+
+  it('strips unknown input keys before invoke (zod object default — hallucinated extras never reach providers)', async () => {
+    const received: unknown[] = [];
+    const recorder = tool({
+      name: 'recorder',
+      description: 'Records the parsed input it receives.',
+      inputSchema: z.object({ goal: z.string() }),
+      outputSchema: z.object({ ok: z.boolean() }),
+      invoke: async (args) => {
+        received.push(args);
+        return { ok: true };
+      },
+    });
+    const tools = getLangChainTools(agent, [() => [recorder]]);
+    const lcRecorder = tools.find((t) => t.name === 'recorder');
+    if (!lcRecorder) throw new Error('recorder missing');
+    await lcRecorder.invoke({ goal: 'hedge', slippage: 99 });
+    expect(received).toEqual([{ goal: 'hedge' }]);
+  });
 });
 
 describe('toLangChainTool', () => {
@@ -148,8 +215,29 @@ describe('bindTools integration', () => {
     const toolMessage = await propose.invoke(toolCall);
 
     expect(toolMessage.tool_call_id).toBe('call-1');
+    expect(toolMessage.name).toBe('proposeAction');
+    expect(toolMessage.status).toBe('success');
     expect(toolMessage.content).toBe(
       JSON.stringify({ summary: 'plan for maximize yield', riskScore: 2 }),
     );
+  });
+
+  it('propagates the original invoke error through the ToolCall invocation path (no error-status ToolMessage)', async () => {
+    const boom = new Error('borrow reverted: E-Mode not set');
+    const failing = tool({
+      name: 'failing',
+      description: 'Always rejects.',
+      inputSchema: z.object({}),
+      outputSchema: z.object({ ok: z.boolean() }),
+      invoke: async () => {
+        throw boom;
+      },
+    });
+    const tools = getLangChainTools(agent, [() => [failing]]);
+    const lcFailing = tools.find((t) => t.name === 'failing');
+    if (!lcFailing) throw new Error('failing missing');
+    await expect(
+      lcFailing.invoke({ name: 'failing', args: {}, id: 'call-2', type: 'tool_call' }),
+    ).rejects.toBe(boom);
   });
 });
