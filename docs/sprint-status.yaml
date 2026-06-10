@@ -73,11 +73,11 @@ stories:
   # ─────────────────────────────────────────────────────────────────
   - id: story-10-concierge-registry-base
     epic: "Epic E1 — Smart Contracts"
-    status: PENDING
+    status: COMPLETE
     depends_on: [story-03-foundry-init-and-remappings, story-05-ci-contracts-pipeline]
     issue_url: ""
-    pr_url: ""
-    merged_at: ""
+    pr_url: "https://github.com/Blockchain-Oracle/concierge/pull/37"
+    merged_at: "2026-06-10"
   - id: story-11-concierge-registry-tests-unit
     epic: "Epic E1 — Smart Contracts"
     status: PENDING
