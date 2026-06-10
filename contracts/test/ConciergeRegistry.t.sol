@@ -12,7 +12,8 @@ import {
     PolicyTooLarge,
     AgentNotFound,
     AgentAlreadyInState,
-    OwnerAgentLimitReached
+    OwnerAgentLimitReached,
+    SameValidator
 } from "../src/errors/ConciergeErrors.sol";
 import { IAccessControl } from "@openzeppelin/contracts/access/IAccessControl.sol";
 
@@ -314,13 +315,27 @@ contract ConciergeRegistryTest is ConciergeRegistryBase {
         registry.updateValidator(id, address(0));
     }
 
-    function test_updateValidator_reverts_agentInactive() public {
+    function test_updateValidator_worksOnInactiveAgent() public {
         uint256 id = _registerAlice();
         vm.prank(alice);
         registry.setActive(id, false);
+        address newVal = makeAddr("v2");
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(AgentInactive.selector, id));
-        registry.updateValidator(id, makeAddr("v2"));
+        registry.updateValidator(id, newVal);
+        assertEq(registry.getAgent(id).sessionKeyValidator, newVal);
+    }
+
+    function test_updateValidator_reverts_agentNotFound() public {
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(AgentNotFound.selector, uint256(99)));
+        registry.updateValidator(99, makeAddr("v2"));
+    }
+
+    function test_updateValidator_reverts_sameValidator() public {
+        uint256 id = _registerAlice();
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(SameValidator.selector, id, validator));
+        registry.updateValidator(id, validator);
     }
 
     // ─── reads ─────────────────────────────────────────────────────────────

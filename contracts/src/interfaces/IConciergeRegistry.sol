@@ -13,7 +13,8 @@ import {
     OwnerIndexCorrupted,
     AgentAlreadyInState,
     UnexpectedValue,
-    OwnerAgentLimitReached
+    OwnerAgentLimitReached,
+    SameValidator
 } from "../errors/ConciergeErrors.sol";
 
 /// @notice On-chain identity + policy store for Concierge agents (ADR-009).
@@ -97,7 +98,9 @@ interface IConciergeRegistry {
     ) external;
 
     /// @notice Replace the session-key validator. Caller must be the owner.
-    /// @dev Reverts with AgentInactive if the agent is deactivated.
+    /// @dev Available on both active and inactive agents — key rotation is a security
+    ///      operation that must be accessible even when the agent is deactivated.
+    ///      Reverts with SameValidator if newValidator equals the current validator.
     ///      Reverts with InvalidValidator if newValidator is address(0).
     function updateValidator(
         uint256 agentId,

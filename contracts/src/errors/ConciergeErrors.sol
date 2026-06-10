@@ -43,3 +43,7 @@ error UnexpectedValue(uint256 value);
 
 /// @param owner  Address that has reached the per-owner agent registration cap.
 error OwnerAgentLimitReached(address owner);
+
+/// @param agentId   Agent whose validator was re-submitted unchanged.
+/// @param validator The address that is already the validator.
+error SameValidator(uint256 agentId, address validator);

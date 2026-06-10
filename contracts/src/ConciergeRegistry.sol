@@ -27,7 +27,8 @@ import {
     OwnerIndexCorrupted,
     AgentAlreadyInState,
     UnexpectedValue,
-    OwnerAgentLimitReached
+    OwnerAgentLimitReached,
+    SameValidator
 } from "./errors/ConciergeErrors.sol";
 
 /// @notice On-chain identity + policy store for Concierge agents (ADR-009).
@@ -192,9 +193,11 @@ contract ConciergeRegistry is
 
         address prev = _agents[agentId].owner;
         if (newOwner == prev) revert SameOwner(agentId, newOwner);
+        if (_agentsByOwner[newOwner].length >= MAX_AGENTS_PER_OWNER) {
+            revert OwnerAgentLimitReached(newOwner);
+        }
 
         _agents[agentId].owner = newOwner;
-
         _removeFromOwnerIndex(prev, agentId);
         _agentsByOwner[newOwner].push(agentId);
 
@@ -208,10 +211,10 @@ contract ConciergeRegistry is
     ) external whenNotPaused nonReentrant {
         _requireRegistered(agentId);
         _requireOwner(agentId);
-        if (!_agents[agentId].active) revert AgentInactive(agentId);
         if (newValidator == address(0)) revert InvalidValidator(newValidator);
 
         address prev = _agents[agentId].sessionKeyValidator;
+        if (newValidator == prev) revert SameValidator(agentId, newValidator);
         _agents[agentId].sessionKeyValidator = newValidator;
         emit ValidatorUpdated(agentId, prev, newValidator);
     }

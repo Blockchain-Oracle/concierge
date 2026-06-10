@@ -10,7 +10,8 @@ import {
     InvalidOwner,
     SameOwner,
     AgentNotFound,
-    UnexpectedValue
+    UnexpectedValue,
+    OwnerAgentLimitReached
 } from "../src/errors/ConciergeErrors.sol";
 import { IAccessControl } from "@openzeppelin/contracts/access/IAccessControl.sol";
 import { Pausable } from "@openzeppelin/contracts/utils/Pausable.sol";
@@ -34,6 +35,10 @@ contract ConciergeRegistryAdminTest is ConciergeRegistryBase {
 
     function test_initialize_notPaused() public view {
         assertFalse(registry.paused());
+    }
+
+    function test_initialize_adminDoesNotHaveOperatorRole() public view {
+        assertFalse(registry.hasRole(registry.AGENT_OPERATOR_ROLE(), admin));
     }
 
     function test_implConstructor_disablesInitializers() public {
@@ -100,6 +105,28 @@ contract ConciergeRegistryAdminTest is ConciergeRegistryBase {
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(AgentNotFound.selector, uint256(99)));
         registry.transferAgent(99, charlie);
+    }
+
+    function test_transferAgent_reverts_recipientAtCap() public {
+        uint256 cap = registry.MAX_AGENTS_PER_OWNER();
+        for (uint256 i = 0; i < cap; i++) {
+            vm.prank(operator);
+            registry.registerAgent(charlie, validator, keccak256(abi.encode(i)), policyData);
+        }
+        uint256 id = _registerAlice();
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(OwnerAgentLimitReached.selector, charlie));
+        registry.transferAgent(id, charlie);
+    }
+
+    function test_transferAgent_inactiveAgent_succeeds() public {
+        uint256 id = _registerAlice();
+        vm.prank(alice);
+        registry.setActive(id, false);
+        vm.prank(alice);
+        registry.transferAgent(id, charlie);
+        assertEq(registry.getAgent(id).owner, charlie);
+        assertFalse(registry.getAgent(id).active);
     }
 
     function test_transferAgent_prevOwner_rejected_after_transfer() public {
