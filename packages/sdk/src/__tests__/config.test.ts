@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
-import { type ConciergeConfig, ConfigSchema, loadConfig } from './config.ts';
-import { ConfigError } from './errors.ts';
+import { describe, expect, it, vi } from 'vitest';
+import { type ConciergeConfig, ConfigSchema, loadConfig } from '../config.ts';
+import { ConfigError } from '../errors.ts';
 
 const VALID_ENV = {
   ANTHROPIC_API_KEY: 'sk-ant-test-xxxxxxxxxxxxxxxxxxxx',
@@ -28,8 +28,16 @@ describe('loadConfig — happy path (story-24)', () => {
     expect(config.mantleChainId).toBe(5000);
   });
 
-  it('accepts MANTLE_CHAIN_ID 5003 (Sepolia)', () => {
-    expect(loadConfig({ ...VALID_ENV, MANTLE_CHAIN_ID: '5003' }).mantleChainId).toBe(5003);
+  it('accepts MANTLE_CHAIN_ID 5003 (Sepolia) when MANTLE_RPC_URL is the Sepolia endpoint', () => {
+    // Sepolia chain ID requires a matching RPC URL — the superRefine guard rejects
+    // MANTLE_CHAIN_ID=5003 + the mainnet RPC default to prevent silent misconfiguration.
+    const config = loadConfig({
+      ...VALID_ENV,
+      MANTLE_CHAIN_ID: '5003',
+      MANTLE_RPC_URL: 'https://rpc.sepolia.mantle.xyz',
+    });
+    expect(config.mantleChainId).toBe(5003);
+    expect(config.mantleRpcUrl).toBe('https://rpc.sepolia.mantle.xyz');
   });
 
   it('optional vars are undefined when absent', () => {
@@ -49,6 +57,11 @@ describe('loadConfig — happy path (story-24)', () => {
     expect(config.zeroDevProjectId).toBe('zd-123');
     expect(config.lifiApiKey).toBe('lifi-abc');
   });
+
+  it('SENTRY_DSN valid URL is forwarded', () => {
+    const config = loadConfig({ ...VALID_ENV, SENTRY_DSN: 'https://abc@sentry.io/123' });
+    expect(config.sentryDsn).toBe('https://abc@sentry.io/123');
+  });
 });
 
 describe('loadConfig — defaults (story-24)', () => {
@@ -67,12 +80,20 @@ describe('loadConfig — defaults (story-24)', () => {
     expect(loadConfig({ ...rest }).nodeEnv).toBe('development');
   });
 
-  it('accepts no argument — uses process.env (will throw, but must not crash type-wise)', () => {
-    expect(() => loadConfig()).toThrow(ConfigError);
+  it('zero-arg form uses process.env — throws ConfigError when required vars absent', () => {
+    // Stub away a required var to guarantee the throw regardless of the developer
+    // environment or CI secrets. Without this, the test is flaky: any machine
+    // with a fully configured env would see loadConfig() succeed and the test fail.
+    vi.stubEnv('ANTHROPIC_API_KEY', '');
+    try {
+      expect(() => loadConfig()).toThrow(ConfigError);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
 
-describe('loadConfig — validation failures (story-24)', () => {
+describe('loadConfig — required field failures (story-24)', () => {
   it('missing ANTHROPIC_API_KEY throws ConfigError', () => {
     const { ANTHROPIC_API_KEY: _, ...rest } = VALID_ENV;
     expect(() => loadConfig({ ...rest })).toThrow(ConfigError);
@@ -88,8 +109,27 @@ describe('loadConfig — validation failures (story-24)', () => {
     expect(() => loadConfig({ ...rest })).toThrow(ConfigError);
   });
 
+  it('missing MANTLE_CHAIN_ID throws ConfigError', () => {
+    const { MANTLE_CHAIN_ID: _, ...rest } = VALID_ENV;
+    expect(() => loadConfig({ ...rest })).toThrow(ConfigError);
+  });
+
   it('MANTLE_CHAIN_ID 999 (invalid) throws ConfigError', () => {
     expect(() => loadConfig({ ...VALID_ENV, MANTLE_CHAIN_ID: '999' })).toThrow(ConfigError);
+  });
+
+  it('MANTLE_CHAIN_ID empty string throws ConfigError (coerces to 0, fails refine)', () => {
+    expect(() => loadConfig({ ...VALID_ENV, MANTLE_CHAIN_ID: '' })).toThrow(ConfigError);
+  });
+
+  it('MANTLE_CHAIN_ID non-numeric string throws ConfigError (coerces to NaN, fails refine)', () => {
+    expect(() => loadConfig({ ...VALID_ENV, MANTLE_CHAIN_ID: 'abc' })).toThrow(ConfigError);
+  });
+
+  it('MANTLE_CHAIN_ID=5003 with mainnet MANTLE_RPC_URL throws ConfigError (cross-field guard)', () => {
+    // Sepolia chain ID + mainnet RPC URL is a silent misconfiguration trap: the schema
+    // catches it explicitly rather than letting transactions route to the wrong chain.
+    expect(() => loadConfig({ ...VALID_ENV, MANTLE_CHAIN_ID: '5003' })).toThrow(ConfigError);
   });
 
   it('DATABASE_URL non-URL throws ConfigError', () => {
@@ -99,7 +139,9 @@ describe('loadConfig — validation failures (story-24)', () => {
   it('MANTLE_RPC_URL non-URL throws ConfigError', () => {
     expect(() => loadConfig({ ...VALID_ENV, MANTLE_RPC_URL: 'not-a-url' })).toThrow(ConfigError);
   });
+});
 
+describe('loadConfig — ANTHROPIC_API_KEY validation (story-24)', () => {
   it('ANTHROPIC_API_KEY without sk-ant- prefix throws ConfigError', () => {
     expect(() =>
       loadConfig({ ...VALID_ENV, ANTHROPIC_API_KEY: 'sk-openai-wrong-prefix-xx' }),
@@ -107,7 +149,6 @@ describe('loadConfig — validation failures (story-24)', () => {
   });
 
   it('ANTHROPIC_API_KEY correct prefix but too short (< 20 chars) throws ConfigError', () => {
-    // min(20) and regex are independent guards — test them separately
     expect(() => loadConfig({ ...VALID_ENV, ANTHROPIC_API_KEY: 'sk-ant-x' })).toThrow(ConfigError);
   });
 
@@ -122,7 +163,9 @@ describe('loadConfig — validation failures (story-24)', () => {
   it('NODE_ENV invalid value (e.g. "staging") throws ConfigError', () => {
     expect(() => loadConfig({ ...VALID_ENV, NODE_ENV: 'staging' })).toThrow(ConfigError);
   });
+});
 
+describe('loadConfig — optional field edge cases (story-24)', () => {
   it('SENTRY_DSN non-URL string throws ConfigError', () => {
     expect(() => loadConfig({ ...VALID_ENV, SENTRY_DSN: 'sentry-placeholder' })).toThrow(
       ConfigError,
@@ -133,12 +176,21 @@ describe('loadConfig — validation failures (story-24)', () => {
     expect(() => loadConfig({ ...VALID_ENV, SENTRY_DSN: '' })).not.toThrow();
     expect(loadConfig({ ...VALID_ENV, SENTRY_DSN: '' }).sentryDsn).toBeUndefined();
   });
+
+  it('SENTRY_DSN whitespace-only treated as absent — does NOT throw (k8s ConfigMap idiom)', () => {
+    // Docker / k8s ConfigMap may inject " " rather than "" when a value is blank.
+    // The trim() in the schema transform must cover this case, not just strict "".
+    expect(() => loadConfig({ ...VALID_ENV, SENTRY_DSN: '   ' })).not.toThrow();
+    expect(loadConfig({ ...VALID_ENV, SENTRY_DSN: '   ' }).sentryDsn).toBeUndefined();
+  });
+
+  it('ZERODEV_PROJECT_ID empty string throws ConfigError (blank credential rejected)', () => {
+    expect(() => loadConfig({ ...VALID_ENV, ZERODEV_PROJECT_ID: '' })).toThrow(ConfigError);
+  });
 });
 
 describe('loadConfig — ConfigError shape (story-24)', () => {
   it('thrown error has type "ConfigError" and includes field name in message', () => {
-    // The message must be immediately actionable without inspecting metadata —
-    // most loggers only capture err.message, not structured properties.
     const { DATABASE_URL: _, ...rest } = VALID_ENV;
     expect(() => loadConfig({ ...rest })).toThrow(ConfigError);
     try {
@@ -151,7 +203,7 @@ describe('loadConfig — ConfigError shape (story-24)', () => {
     }
   });
 
-  it('thrown error carries metadata with Zod issues array', () => {
+  it('thrown error carries typed metadata with Zod issues array', () => {
     const { DATABASE_URL: _, ...rest } = VALID_ENV;
     try {
       loadConfig({ ...rest });
@@ -160,8 +212,8 @@ describe('loadConfig — ConfigError shape (story-24)', () => {
       expect(err).toBeInstanceOf(ConfigError);
       const meta = (err as ConfigError).metadata;
       expect(meta).toBeDefined();
-      // biome-ignore lint/complexity/useLiteralKeys: noPropertyAccessFromIndexSignature forces bracket notation
-      expect(Array.isArray(meta?.['issues'])).toBe(true);
+      expect(Array.isArray(meta?.issues)).toBe(true);
+      expect(meta?.issues.length ?? 0).toBeGreaterThan(0);
     }
   });
 

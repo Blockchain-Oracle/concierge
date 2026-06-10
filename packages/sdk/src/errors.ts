@@ -154,12 +154,27 @@ export class ConciergeError extends Error {
         result['metadata'] = JSON.parse(
           JSON.stringify(this.metadata, (_key, v) => (typeof v === 'bigint' ? v.toString() : v)),
         );
-      } catch {
+      } catch (serializationErr) {
+        // A secondary throw from toJSON() is catastrophic in error-reporting paths.
+        // Log it so the bug is traceable, then fall back to a safe placeholder.
+        console.error(
+          `[@concierge/sdk] ConciergeError.toJSON: failed to serialize metadata for type "${this.type}":`,
+          serializationErr,
+        );
         result['metadata'] = '[unserializable metadata]';
       }
     }
     return result;
   }
+}
+
+/**
+ * Structured metadata carried by `ConfigError`. Typed explicitly so callers
+ * can access `err.metadata.issues` without a cast or type guard — the compiler
+ * enforces that the key exists and is the correct Zod shape.
+ */
+export interface ConfigErrorMetadata extends Record<string, unknown> {
+  issues: import('zod').ZodIssue[];
 }
 
 /**
@@ -172,7 +187,11 @@ export class ConciergeError extends Error {
  * uses `type` as the discriminator, so `err.type === 'ConfigError'` is correct.
  */
 export class ConfigError extends ConciergeError {
-  constructor(message: string, metadata?: Record<string, unknown>) {
-    super('ConfigError', message, undefined, metadata);
+  // Narrows the inherited `metadata?: Record<string, unknown>` to the concrete
+  // Zod-issues shape. `declare` is type-only — no class-field initializer emitted.
+  declare readonly metadata?: ConfigErrorMetadata;
+
+  constructor(message: string, metadata?: ConfigErrorMetadata, cause?: unknown) {
+    super('ConfigError', message, cause, metadata);
   }
 }

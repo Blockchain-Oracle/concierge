@@ -49,6 +49,7 @@ export {
   ConciergeError,
   type ConciergeErrorType,
   ConfigError,
+  type ConfigErrorMetadata,
   isConciergeErrorType,
 } from './errors.ts';
 export { ConciergeRegistry } from './registry.ts';

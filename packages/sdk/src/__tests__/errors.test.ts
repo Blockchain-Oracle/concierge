@@ -263,18 +263,24 @@ describe('ConfigError (story-23, ADR-019 adapted)', () => {
     expect(new ConfigError('x').type).toBe('ConfigError');
   });
 
-  it('carries metadata for Zod issues', () => {
-    const meta = { field: 'MANTLE_CHAIN_ID', expected: '5000|5003', received: '999' };
+  it('carries typed metadata with Zod issues array', () => {
+    // ConfigErrorMetadata requires { issues: ZodIssue[] } — arbitrary keys accepted
+    // because the interface extends Record<string, unknown>, but issues is required.
+    const meta = { issues: [] as import('zod').ZodIssue[] };
     const err = new ConfigError('invalid chain id', meta);
     expect(err.metadata).toEqual(meta);
+    expect(Array.isArray(err.metadata?.issues)).toBe(true);
   });
 
   it('toJSON() includes type+message+metadata, no name or cause', () => {
-    const err = new ConfigError('bad env', { missing: ['DATABASE_URL'] });
+    const err = new ConfigError('bad env', { issues: [] as import('zod').ZodIssue[] });
     const json = err.toJSON();
+    // biome-ignore lint/complexity/useLiteralKeys: noPropertyAccessFromIndexSignature forces bracket notation on Record<string, unknown>
     expect(json['type']).toBe('ConfigError');
+    // biome-ignore lint/complexity/useLiteralKeys: noPropertyAccessFromIndexSignature forces bracket notation on Record<string, unknown>
     expect(json['message']).toBe('bad env');
-    expect(json['metadata']).toEqual({ missing: ['DATABASE_URL'] });
+    // biome-ignore lint/complexity/useLiteralKeys: noPropertyAccessFromIndexSignature forces bracket notation on Record<string, unknown>
+    expect(json['metadata']).toEqual({ issues: [] });
     expect('name' in json).toBe(false);
     expect('cause' in json).toBe(false);
   });
