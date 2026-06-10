@@ -113,4 +113,38 @@ describe('ConciergeError (ADR-019)', () => {
     expect(isConciergeErrorType(undefined)).toBe(false);
     expect(isConciergeErrorType(42)).toBe(false);
   });
+
+  it('explicit undefined cause is treated as omitted — diverges from native Error', () => {
+    // Native: `new Error('m', { cause: undefined })` installs own `cause: undefined`.
+    // ConciergeError: `new ConciergeError(t, m, undefined)` is treated as 2-arg form.
+    // A caller passing `cause: someVar` where `someVar` might be `undefined` at runtime
+    // will silently not install the cause — this test pins that contract.
+    const err = new ConciergeError('RpcError', 'x', undefined);
+    expect('cause' in err).toBe(false);
+  });
+
+  it('name is non-writable, non-configurable, and non-enumerable', () => {
+    // Class-field `override readonly name = '...'` creates a writable, enumerable
+    // own property — inconsistent with native Error.prototype.name. This test pins
+    // that the defineProperty approach achieves the correct descriptor.
+    const err = new ConciergeError('RpcError', 'x');
+    expect(() => {
+      (err as { name: string }).name = 'Evil';
+    }).toThrow(TypeError);
+    const desc = Object.getOwnPropertyDescriptor(err, 'name')!;
+    expect(desc.writable).toBe(false);
+    expect(desc.configurable).toBe(false);
+    expect(desc.enumerable).toBe(false);
+    expect(Object.keys(err)).not.toContain('name');
+  });
+
+  it('type is enumerable — survives JSON.stringify so structured logs carry the discriminator', () => {
+    // `name` is non-enumerable (matches native Error); `type` is enumerable so it
+    // appears in log serialization output. This test pins both sides of the asymmetry.
+    const err = new ConciergeError('RpcError', 'x');
+    expect(Object.keys(err)).toContain('type');
+    const json = JSON.stringify(err);
+    expect(json).toContain('"type":"RpcError"');
+    expect(json).not.toContain('"name"');
+  });
 });

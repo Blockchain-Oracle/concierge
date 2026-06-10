@@ -79,6 +79,8 @@ describe('ConciergeRegistry.requireAddress (zero-address enforcement)', () => {
     const mainnet = ConciergeRegistry.mainnet();
     expect(() => mainnet.requireAddress(asPath('aave.poool'))).toThrow(TypeError);
     expect(() => mainnet.requireAddress(asPath('aave.poool'))).toThrow(/aave\.poool/);
+    expect(() => mainnet.requireAddress(asPath('aave.poool'))).toThrow(/\[@concierge\/sdk\]/);
+    expect(() => mainnet.requireAddress(asPath('aave.poool'))).toThrow(/chain 5000/);
     expect(() => mainnet.requireAddress(asPath('aave'))).toThrow(TypeError); // branch node, not a leaf
   });
 

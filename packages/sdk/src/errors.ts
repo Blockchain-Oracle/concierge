@@ -24,7 +24,12 @@ export const CONCIERGE_ERROR_TYPES = Object.freeze([
 
 export type ConciergeErrorType = (typeof CONCIERGE_ERROR_TYPES)[number];
 
-/** Narrows arbitrary values (env strings, JSON payloads) to the type union without casts. */
+/**
+ * Narrows arbitrary values (env strings, JSON payloads) to the type union without casts.
+ * The `as readonly unknown[]` cast is required because TS's `Array.includes` only accepts
+ * the element type — `string[]` rejects `unknown`. This is a known TS limitation; the cast
+ * is safe here because the array is frozen `as const`.
+ */
 export function isConciergeErrorType(value: unknown): value is ConciergeErrorType {
   return (CONCIERGE_ERROR_TYPES as readonly unknown[]).includes(value);
 }
@@ -39,10 +44,19 @@ export function isConciergeErrorType(value: unknown): value is ConciergeErrorTyp
  * causes (`null`, `0`, `''`) ARE installed. One deliberate divergence from
  * native: an explicit `new ConciergeError(t, m, undefined)` is treated as
  * omitted, whereas native `new Error(m, { cause: undefined })` installs an
- * own `cause: undefined`. `name` stays writable, matching native Error.
+ * own `cause: undefined`.
+ *
+ * Property descriptor strategy: `type` and `name` are sealed via
+ * `Object.defineProperty` in the constructor (not class field initializers)
+ * so their descriptors can be precisely controlled. `type` is enumerable
+ * (shows in `JSON.stringify` — the discriminator must survive log serialization).
+ * `name` is non-enumerable (matches native `Error.prototype.name` semantics).
  */
 export class ConciergeError extends Error {
-  override readonly name = 'ConciergeError';
+  // `declare` is type-only — no class-field initializer is emitted.
+  // The actual value is set by defineProperty in the constructor so we
+  // can control enumerable (false) and configurable (false) precisely.
+  declare readonly name: 'ConciergeError';
 
   // ErrorOptions installs `cause` at runtime; `declare` surfaces it on the
   // type without emitting an enumerable class field that would shadow it.
@@ -58,10 +72,20 @@ export class ConciergeError extends Error {
       );
     }
     this.type = type;
-    // TS `readonly` is compile-time only; without this a JS caller could
-    // reassign `err.type` after construction and bypass the guard above.
-    // `configurable: false` too — otherwise `Object.defineProperty(err,
-    // 'type', { value: 'X' })` would still slip past a non-writable slot.
+    // Seal `type`: TS `readonly` is compile-time only. `configurable: false`
+    // too — otherwise `Object.defineProperty(err, 'type', { value: 'X' })`
+    // would still slip past a non-writable slot. `type` stays enumerable so
+    // it appears in JSON.stringify output (log consumers need the discriminator).
     Object.defineProperty(this, 'type', { writable: false, configurable: false });
+    // Seal `name`: the class-field initializer would create a writable,
+    // configurable, enumerable own property — inconsistent with native
+    // Error.prototype.name (which lives on the prototype, non-enumerable).
+    // Setting enumerable:false keeps JSON.stringify(err) clean.
+    Object.defineProperty(this, 'name', {
+      value: 'ConciergeError',
+      writable: false,
+      configurable: false,
+      enumerable: false,
+    });
   }
 }

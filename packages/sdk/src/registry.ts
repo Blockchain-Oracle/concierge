@@ -59,6 +59,12 @@ export class ConciergeRegistry implements ConciergeAgentLike {
    * a network problem that is actually a typo.
    */
   requireAddress(path: AddressPath): Address {
+    // Optional chaining propagates `undefined` for any missing segment, so
+    // null/undefined mid-path → undefined leaf → ADDRESS_SHAPE check throws.
+    // Prototype-pollution paths like `__proto__.x` resolve via the prototype
+    // chain but yield non-Address values — also caught by the shape check.
+    // This safe traversal relies on `this.addresses` being deeply frozen
+    // (mutation would let an attacker plant an address-shaped leaf mid-path).
     const leaf = path
       .split('.')
       .reduce<unknown>(

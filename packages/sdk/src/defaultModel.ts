@@ -6,6 +6,14 @@ import { xai } from '@ai-sdk/xai';
 
 const DEFAULT_SPEC = 'anthropic:claude-sonnet-4-6';
 
+// Single source of truth: switch cases AND the unknown-provider error message
+// both derive from this list, so they cannot drift apart. Mirrors the
+// CONCIERGE_ERROR_TYPES pattern.
+// Note: apps/worker uses Claude Agent SDK and is Anthropic-only internally;
+// this helper is for SDK consumers who may plug in any provider.
+const SUPPORTED_PROVIDERS = Object.freeze(['anthropic', 'openai', 'google', 'xai'] as const);
+type SupportedProvider = (typeof SUPPORTED_PROVIDERS)[number];
+
 /**
  * Env-auto-detect model helper per ADR-016: `AI_MODEL="provider:model"`
  * selects the model without touching code; unset (or empty) falls back to
@@ -44,9 +52,20 @@ const NON_PRINTABLE_ASCII = /[^\x21-\x7E]/;
  * Deliberately one char wider than the guard (starts at 0x20, not 0x21):
  * a regular space is INVALID in a spec but perfectly readable in an error,
  * so it stays literal here.
+ * Uses `codePointAt` (not `charCodeAt`) so astral-plane chars (e.g. emoji)
+ * produce one escape entry instead of two surrogate halves.
  */
 function escapeInvisibles(s: string): string {
-  return s.replace(/[^\x20-\x7E]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
+  return [...s]
+    .map((c) => {
+      const cp = c.codePointAt(0)!;
+      return cp >= 0x20 && cp <= 0x7e ? c : `\\u${cp.toString(16).padStart(4, '0')}`;
+    })
+    .join('');
+}
+
+function isSupportedProvider(p: string): p is SupportedProvider {
+  return (SUPPORTED_PROVIDERS as readonly string[]).includes(p);
 }
 
 export function defaultModel(spec = process.env['AI_MODEL']): LanguageModelV3 {
@@ -69,6 +88,11 @@ export function defaultModel(spec = process.env['AI_MODEL']): LanguageModelV3 {
       `[@concierge/sdk] defaultModel: "provider:model" spec contains whitespace or non-printable characters — got "${escapeInvisibles(normalized)}". Check AI_MODEL for stray or invisible characters.`,
     );
   }
+  if (!isSupportedProvider(provider)) {
+    throw new Error(
+      `[@concierge/sdk] defaultModel: unknown provider "${provider}" — expected one of: ${SUPPORTED_PROVIDERS.join(', ')}.`,
+    );
+  }
   switch (provider) {
     case 'anthropic':
       return anthropic(model);
@@ -78,9 +102,5 @@ export function defaultModel(spec = process.env['AI_MODEL']): LanguageModelV3 {
       return google(model);
     case 'xai':
       return xai(model);
-    default:
-      throw new Error(
-        `[@concierge/sdk] defaultModel: unknown provider "${provider}" — expected one of: anthropic, openai, google, xai.`,
-      );
   }
 }
