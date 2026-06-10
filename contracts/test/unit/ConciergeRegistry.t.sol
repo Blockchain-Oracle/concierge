@@ -15,16 +15,15 @@ import {
     InvalidValidator,
     EmptyGoalHash,
     PolicyTooLarge,
-    AgentNotFound
+    SameValidator
 } from "../../src/errors/ConciergeErrors.sol";
 import { AgentFixtures } from "../helpers/AgentFixtures.sol";
-import { Events } from "../helpers/Events.sol";
 
-/// @notice Unit tests for ConciergeRegistry — happy paths, revert paths, role-gate,
-/// and pause-gate coverage as required by story-11. Uses AgentFixtures + Events helpers.
-contract ConciergeRegistryUnitTest is Test {
-    using AgentFixtures for ConciergeRegistry;
-
+/// @notice Story-11 unit tests — happy paths, revert paths, role-gate, pause-gate.
+/// Contract name contains "ConciergeRegistryTest" so forge --match-contract picks it up.
+/// Broader coverage (transferAgent index ops, upgrade gate, invariant) in
+/// ConciergeRegistry.t.sol and ConciergeRegistryAdmin.t.sol (story-10).
+contract ConciergeRegistryTestUnit is Test {
     ConciergeRegistry internal impl;
     ConciergeRegistry internal registry;
 
@@ -108,14 +107,10 @@ contract ConciergeRegistryUnitTest is Test {
     // ─── updateGoal ────────────────────────────────────────────────────────
 
     function test_updateGoal_HappyPath_StorageUpdatedAndEmits() public {
+        // Exercises AgentFixtures.registerTestAgent — the story-11 helper contract.
         vm.prank(operator);
-        uint256 id = registry.registerAgent(
-            alice,
-            validator,
-            AgentFixtures.makeGoalHash("v1"),
-            AgentFixtures.makePolicy(1 ether, true, false, false)
-        );
-        bytes32 newHash = AgentFixtures.makeGoalHash("v2");
+        uint256 id = AgentFixtures.registerTestAgent(registry, alice, validator, "goal-v1");
+        bytes32 newHash = AgentFixtures.makeGoalHash("goal-v2");
 
         vm.expectEmit(true, true, false, false);
         emit IConciergeRegistry.GoalUpdated(id, newHash);
@@ -145,16 +140,39 @@ contract ConciergeRegistryUnitTest is Test {
 
     // ─── updatePolicy ──────────────────────────────────────────────────────
 
-    function test_updatePolicy_Reverts_OnOversizedBytes() public {
+    function test_updatePolicy_HappyPath_StorageUpdatedAndEmits() public {
         vm.prank(operator);
         uint256 id = registry.registerAgent(alice, validator, keccak256("g"), "");
-        bytes memory original = registry.getAgent(id).policyData;
+        bytes memory newPolicy = AgentFixtures.makePolicy(2 ether, false, true, false);
 
+        vm.expectEmit(true, true, false, false);
+        emit IConciergeRegistry.PolicyUpdated(id, keccak256(newPolicy));
+
+        vm.prank(alice);
+        registry.updatePolicy(id, newPolicy);
+        assertEq(registry.getAgent(id).policyData, newPolicy);
+    }
+
+    function test_updatePolicy_Reverts_WhenCallerNotOwner() public {
+        vm.prank(operator);
+        uint256 id = registry.registerAgent(alice, validator, keccak256("g"), "");
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(NotAgentOwner.selector, id, bob));
+        registry.updatePolicy(id, abi.encode("v2"));
+    }
+
+    function test_updatePolicy_Reverts_OnOversizedBytes_StorageUnchanged() public {
+        vm.prank(operator);
+        uint256 id = registry.registerAgent(alice, validator, keccak256("g"), "");
+        bytes memory valid = AgentFixtures.makePolicy(1 ether, true, true, false);
+        vm.prank(alice);
+        registry.updatePolicy(id, valid); // prime with non-empty known value
+
+        bytes memory original = registry.getAgent(id).policyData;
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(PolicyTooLarge.selector, uint256(4097)));
         registry.updatePolicy(id, new bytes(4097));
-
-        assertEq(registry.getAgent(id).policyData, original);
+        assertEq(registry.getAgent(id).policyData, original); // original is non-empty: meaningful
     }
 
     // ─── setActive ─────────────────────────────────────────────────────────
@@ -171,6 +189,14 @@ contract ConciergeRegistryUnitTest is Test {
         vm.prank(alice);
         registry.setActive(id, true);
         assertTrue(registry.getAgent(id).active);
+    }
+
+    function test_setActive_Reverts_WhenCallerNotOwner() public {
+        vm.prank(operator);
+        uint256 id = registry.registerAgent(alice, validator, keccak256("g"), "");
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(NotAgentOwner.selector, id, bob));
+        registry.setActive(id, false);
     }
 
     // ─── transferAgent ─────────────────────────────────────────────────────
@@ -191,6 +217,53 @@ contract ConciergeRegistryUnitTest is Test {
         assertEq(registry.agentsByOwner(charlie)[0], id);
     }
 
+    function test_transferAgent_Reverts_WhenCallerNotOwner() public {
+        vm.prank(operator);
+        uint256 id = registry.registerAgent(alice, validator, keccak256("g"), "");
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(NotAgentOwner.selector, id, bob));
+        registry.transferAgent(id, charlie);
+    }
+
+    // ─── updateValidator ───────────────────────────────────────────────────
+
+    function test_updateValidator_HappyPath_StorageUpdatedAndEmits() public {
+        vm.prank(operator);
+        uint256 id = registry.registerAgent(alice, validator, keccak256("g"), "");
+        address newVal = makeAddr("newValidator");
+
+        vm.expectEmit(true, true, true, false);
+        emit IConciergeRegistry.ValidatorUpdated(id, validator, newVal);
+
+        vm.prank(alice);
+        registry.updateValidator(id, newVal);
+        assertEq(registry.getAgent(id).sessionKeyValidator, newVal);
+    }
+
+    function test_updateValidator_Reverts_WhenCallerNotOwner() public {
+        vm.prank(operator);
+        uint256 id = registry.registerAgent(alice, validator, keccak256("g"), "");
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(NotAgentOwner.selector, id, bob));
+        registry.updateValidator(id, makeAddr("v2"));
+    }
+
+    function test_updateValidator_Reverts_OnZeroValidator() public {
+        vm.prank(operator);
+        uint256 id = registry.registerAgent(alice, validator, keccak256("g"), "");
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(InvalidValidator.selector, address(0)));
+        registry.updateValidator(id, address(0));
+    }
+
+    function test_updateValidator_Reverts_OnSameValidator() public {
+        vm.prank(operator);
+        uint256 id = registry.registerAgent(alice, validator, keccak256("g"), "");
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(SameValidator.selector, id, validator));
+        registry.updateValidator(id, validator);
+    }
+
     // ─── Pause gate ─────────────────────────────────────────────────────────
 
     function test_pause_AllMutationsRevert() public {
@@ -209,11 +282,19 @@ contract ConciergeRegistryUnitTest is Test {
 
         vm.prank(alice);
         vm.expectRevert(Pausable.EnforcedPause.selector);
+        registry.updatePolicy(id, abi.encode("v2"));
+
+        vm.prank(alice);
+        vm.expectRevert(Pausable.EnforcedPause.selector);
         registry.setActive(id, false);
 
         vm.prank(alice);
         vm.expectRevert(Pausable.EnforcedPause.selector);
         registry.transferAgent(id, charlie);
+
+        vm.prank(alice);
+        vm.expectRevert(Pausable.EnforcedPause.selector);
+        registry.updateValidator(id, makeAddr("v2"));
     }
 
     function test_pause_ReadsStillWork() public {
