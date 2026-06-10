@@ -840,11 +840,11 @@ stories:
     merged_at: "2026-06-10T04:43:02Z"
   - id: story-303-openai-adapter
     epic: "Epic E13 — Composable Primitive"
-    status: PENDING
+    status: COMPLETE
     depends_on: [story-300-tools-registry]
     issue_url: ""
-    pr_url: ""
-    merged_at: ""
+    pr_url: "https://github.com/Blockchain-Oracle/concierge/pull/26"
+    merged_at: "2026-06-10T05:54:01Z"
   - id: story-304-agentkit-adapter
     epic: "Epic E13 — Composable Primitive"
     status: PENDING
