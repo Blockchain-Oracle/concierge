@@ -4,6 +4,12 @@
  * SILENTLY for sUSDe collateral outside E-Mode 1 — the SDK turns that silent
  * failure into a loud, typed one.
  *
+ * `ConfigError` covers startup / env-var validation failures (story-23 / story-24).
+ * Story-23 specced a full class hierarchy with `code` property (pre-rework design);
+ * ADR-019 (2026-06-09) chose a single base class + `type` discriminator instead.
+ * Only `ConfigError` survives as a subclass because story-24 needs `instanceof`
+ * detection at config-load time, before a `switch (err.type)` handler is wired up.
+ *
  * Exported as a runtime list (the union is derived from it) so plain-JS
  * callers — who don't get the compile-time union — can validate and so the
  * constructor can reject typo'd types loudly instead of letting a
@@ -13,6 +19,7 @@
  * widen the guard for every later construction.
  */
 export const CONCIERGE_ERROR_TYPES = Object.freeze([
+  'ConfigError',
   'EModeNotEnabled',
   'InsufficientLiquidity',
   'OracleUnavailable',
@@ -46,11 +53,18 @@ export function isConciergeErrorType(value: unknown): value is ConciergeErrorTyp
  * omitted, whereas native `new Error(m, { cause: undefined })` installs an
  * own `cause: undefined`.
  *
+ * `metadata` is optional structured context for telemetry (e.g. Zod issues
+ * from config validation, or DeFi call parameters). It IS enumerable so it
+ * surfaces in `JSON.stringify` output — unlike `cause`, metadata is safe for
+ * logs (callers must not put secrets in it).
+ *
  * Property descriptor strategy: `type` and `name` are sealed via
  * `Object.defineProperty` in the constructor (not class field initializers)
  * so their descriptors can be precisely controlled. `type` is enumerable
  * (shows in `JSON.stringify` — the discriminator must survive log serialization).
  * `name` is non-enumerable (matches native `Error.prototype.name` semantics).
+ * Subclasses inherit `name === 'ConciergeError'` — the `type` discriminator
+ * is the primary identifier, consistent with the ADR-019 Stripe/Anthropic blend.
  */
 export class ConciergeError extends Error {
   // `declare` is type-only — no class-field initializer is emitted.
@@ -63,8 +77,17 @@ export class ConciergeError extends Error {
   declare readonly cause?: unknown;
 
   readonly type: ConciergeErrorType;
+  // `declare` prevents the class-field initializer from emitting `metadata: undefined`
+  // as an own property when the arg is omitted — `'metadata' in err` should be false
+  // when no metadata was provided, matching the `cause` pattern.
+  declare readonly metadata?: Record<string, unknown>;
 
-  constructor(type: ConciergeErrorType, message: string, cause?: unknown) {
+  constructor(
+    type: ConciergeErrorType,
+    message: string,
+    cause?: unknown,
+    metadata?: Record<string, unknown>,
+  ) {
     super(message, cause === undefined ? undefined : { cause });
     if (!isConciergeErrorType(type)) {
       throw new TypeError(
@@ -72,6 +95,7 @@ export class ConciergeError extends Error {
       );
     }
     this.type = type;
+    if (metadata !== undefined) this.metadata = metadata;
     // Seal `type`: TS `readonly` is compile-time only. `configurable: false`
     // too — otherwise `Object.defineProperty(err, 'type', { value: 'X' })`
     // would still slip past a non-writable slot. `type` stays enumerable so
@@ -87,5 +111,48 @@ export class ConciergeError extends Error {
       configurable: false,
       enumerable: false,
     });
+  }
+
+  /**
+   * Wraps any caught value as a `ConciergeError` without double-wrapping.
+   * Use in `catch` blocks where the error type is unknown (e.g. viem reverts,
+   * third-party SDK throws). Defaults to `type: 'RpcError'` since most
+   * unexpected throws in the hot path are RPC-layer failures.
+   */
+  static fromUnknown(error: unknown, type: ConciergeErrorType = 'RpcError'): ConciergeError {
+    if (error instanceof ConciergeError) return error;
+    const message = error instanceof Error ? error.message : String(error);
+    return new ConciergeError(type, message, error);
+  }
+
+  /**
+   * Returns a plain object safe for structured logging. `cause` is intentionally
+   * omitted — it may carry raw calldata / RPC URLs. `metadata` is included
+   * because callers are responsible for not putting secrets in it.
+   */
+  toJSON(): Record<string, unknown> {
+    // `name` is non-enumerable on purpose (matches native Error semantics);
+    // omitting it here keeps JSON.stringify(err) clean for log consumers.
+    const result: Record<string, unknown> = {
+      type: this.type,
+      message: this.message,
+    };
+    if (this.metadata !== undefined) result['metadata'] = this.metadata;
+    return result;
+  }
+}
+
+/**
+ * Thrown by `loadConfig()` when required env vars are missing or invalid.
+ * Extends `ConciergeError` so handlers can use `instanceof ConfigError` for
+ * startup checks, and `err.type === 'ConfigError'` for `switch`-based handling.
+ * `metadata` carries the Zod validation issues for structured error reporting.
+ *
+ * Pre-rework story-23 called this `code: 'CONCIERGE_CONFIG_ERROR'`; ADR-019
+ * uses `type` as the discriminator, so `err.type === 'ConfigError'` is correct.
+ */
+export class ConfigError extends ConciergeError {
+  constructor(message: string, metadata?: Record<string, unknown>) {
+    super('ConfigError', message, undefined, metadata);
   }
 }

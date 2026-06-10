@@ -3,6 +3,7 @@ import {
   CONCIERGE_ERROR_TYPES,
   ConciergeError,
   type ConciergeErrorType,
+  ConfigError,
   isConciergeErrorType,
 } from '../errors.ts';
 
@@ -57,7 +58,7 @@ describe('ConciergeError (ADR-019)', () => {
   });
 
   it('constructs for every ADR-019 error type (runtime list drives the loop)', () => {
-    expect(CONCIERGE_ERROR_TYPES).toHaveLength(7);
+    expect(CONCIERGE_ERROR_TYPES).toHaveLength(8);
     for (const type of CONCIERGE_ERROR_TYPES) {
       expect(new ConciergeError(type, type).type).toBe(type);
     }
@@ -146,5 +147,80 @@ describe('ConciergeError (ADR-019)', () => {
     const json = JSON.stringify(err);
     expect(json).toContain('"type":"RpcError"');
     expect(json).not.toContain('"name"');
+  });
+
+  it('metadata is stored and enumerable when provided', () => {
+    const err = new ConciergeError('ConfigError', 'bad config', undefined, { field: 'chain' });
+    expect(err.metadata).toEqual({ field: 'chain' });
+    expect(Object.keys(err)).toContain('metadata');
+  });
+
+  it('metadata is absent when omitted — not installed as own property', () => {
+    const err = new ConciergeError('RpcError', 'x');
+    expect('metadata' in err).toBe(false);
+  });
+
+  it('toJSON() returns type+message+metadata, omits cause+name to prevent RPC payload leaks', () => {
+    const err = new ConciergeError('RpcError', 'rpc fail', new Error('raw'), { host: 'node1' });
+    const json = err.toJSON();
+    expect(json['type']).toBe('RpcError');
+    expect(json['message']).toBe('rpc fail');
+    expect(json['metadata']).toEqual({ host: 'node1' });
+    expect('cause' in json).toBe(false);
+    // name is non-enumerable by design — toJSON must not re-introduce it
+    expect('name' in json).toBe(false);
+  });
+
+  it('fromUnknown: wraps plain Error as ConciergeError without double-wrapping', () => {
+    const orig = new Error('ECONNREFUSED');
+    const wrapped = ConciergeError.fromUnknown(orig);
+    expect(wrapped).toBeInstanceOf(ConciergeError);
+    expect(wrapped.type).toBe('RpcError');
+    expect(wrapped.message).toBe('ECONNREFUSED');
+    expect(wrapped.cause).toBe(orig);
+    // already a ConciergeError — returned as-is
+    const already = new ConciergeError('OracleUnavailable', 'no price');
+    expect(ConciergeError.fromUnknown(already)).toBe(already);
+  });
+
+  it('fromUnknown: wraps non-Error values (strings, null) using String()', () => {
+    const s = ConciergeError.fromUnknown('timeout string');
+    expect(s.message).toBe('timeout string');
+    const n = ConciergeError.fromUnknown(null, 'OracleUnavailable');
+    expect(n.type).toBe('OracleUnavailable');
+    expect(n.message).toBe('null');
+  });
+});
+
+describe('ConfigError (story-23, ADR-019 adapted)', () => {
+  it('is instanceof both ConfigError and ConciergeError', () => {
+    const err = new ConfigError('missing ANTHROPIC_API_KEY');
+    expect(err).toBeInstanceOf(ConfigError);
+    expect(err).toBeInstanceOf(ConciergeError);
+    expect(err).toBeInstanceOf(Error);
+  });
+
+  it('type discriminator is "ConfigError"', () => {
+    expect(new ConfigError('x').type).toBe('ConfigError');
+  });
+
+  it('carries metadata for Zod issues', () => {
+    const meta = { field: 'MANTLE_CHAIN_ID', expected: '5000|5003', received: '999' };
+    const err = new ConfigError('invalid chain id', meta);
+    expect(err.metadata).toEqual(meta);
+  });
+
+  it('toJSON() includes type+message+metadata, no name or cause', () => {
+    const err = new ConfigError('bad env', { missing: ['DATABASE_URL'] });
+    const json = err.toJSON();
+    expect(json['type']).toBe('ConfigError');
+    expect(json['message']).toBe('bad env');
+    expect(json['metadata']).toEqual({ missing: ['DATABASE_URL'] });
+    expect('name' in json).toBe(false);
+    expect('cause' in json).toBe(false);
+  });
+
+  it('isConciergeErrorType recognises "ConfigError"', () => {
+    expect(isConciergeErrorType('ConfigError')).toBe(true);
   });
 });
