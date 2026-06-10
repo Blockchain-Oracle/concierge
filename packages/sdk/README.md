@@ -50,6 +50,9 @@ var, else `anthropic:claude-sonnet-4-6`.
   first model call, not when `defaultModel()` runs.
 - The spec splits on the **first** colon only, so model ids containing
   colons (OpenAI fine-tunes like `ft:gpt-5.1:org:custom`) pass through intact.
+- Surrounding whitespace is trimmed (trailing spaces in `.env` values are
+  common); **internal** whitespace throws instead of constructing a model id
+  that would only fail as a request-time 404.
 - Returns `LanguageModelV3` — the interface the installed `@ai-sdk/*` 3.x
   providers actually ship (`ai@6` accepts it everywhere a model is taken).
   ADR-016's sketch says `LanguageModelV2`; per SDK-DX-STUDY §A the pin
@@ -65,7 +68,13 @@ implement `ConciergeAgentLike`, so a registry can be passed directly to
 `createConciergeTools` or any adapter factory as the agent context.
 
 Sepolia's non-ERC-8004 addresses are zero placeholders until story-192's
-mock deploy lands (see `@concierge/shared`).
+mock deploy lands. The SDK re-exports `SEPOLIA_PENDING_ADDRESS_SLOTS` from
+`@concierge/shared` so consumers can guard programmatically — check it
+before using a Sepolia address rather than trusting prose:
+
+```ts
+import { SEPOLIA_PENDING_ADDRESS_SLOTS } from '@concierge/sdk';
+```
 
 ## `ConciergeError` — typed errors (ADR-019)
 
@@ -83,7 +92,11 @@ try {
 ```
 
 Types: `EModeNotEnabled` · `InsufficientLiquidity` · `OracleUnavailable` ·
-`AttestationFailed` · `UserRejected` · `NetworkUnsupported` · `RpcError`.
+`AttestationFailed` · `UserRejected` · `NetworkUnsupported` · `RpcError` —
+also exported at runtime as `CONCIERGE_ERROR_TYPES`. The constructor
+validates `type` against that list (loud `TypeError` for plain-JS typos),
+and `cause` keeps native `ErrorOptions` semantics: installed only when
+provided, non-enumerable, so `JSON.stringify(err)` never leaks a raw revert.
 
 ## What's re-exported
 

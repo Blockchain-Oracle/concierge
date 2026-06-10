@@ -7,6 +7,11 @@
 // package, and stubbing a fake runtime here is a banned hot-path mock. See
 // the deferral addendum in docs/stories/story-22-sdk-skeleton.md.
 
+// SEPOLIA_PENDING_ADDRESS_SLOTS is the programmatic guard for
+// `ConciergeRegistry.sepolia()`'s zero-address placeholders (pending
+// story-192's mock deploys) — SDK-only consumers must be able to detect a
+// pending slot without reading the README.
+export { SEPOLIA_PENDING_ADDRESS_SLOTS } from '@concierge/shared';
 export {
   bigintSafeStringify,
   CARD_SCHEMAS,
@@ -34,5 +39,5 @@ export {
 } from '@concierge/tools';
 export { getVercelAITools, toVercelAITool } from '@concierge/vercel-ai';
 export { defaultModel } from './defaultModel.ts';
-export { ConciergeError, type ConciergeErrorType } from './errors.ts';
+export { CONCIERGE_ERROR_TYPES, ConciergeError, type ConciergeErrorType } from './errors.ts';
 export { ConciergeRegistry } from './registry.ts';

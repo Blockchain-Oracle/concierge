@@ -18,7 +18,13 @@ const DEFAULT_SPEC = 'anthropic:claude-sonnet-4-6';
  * a missing key surfaces on the first call, not here.
  *
  * The spec splits on the FIRST colon only: model ids themselves may contain
- * colons (OpenAI fine-tune ids like `ft:gpt-5.1:org:custom`).
+ * colons (OpenAI fine-tune ids like `ft:gpt-5.1:org:custom`). Surrounding
+ * whitespace is trimmed (trailing spaces in `.env` values are common), but
+ * INTERNAL whitespace throws — `"anthropic: claude-…"` would otherwise build
+ * a model whose id starts with an invisible space and fail only as a
+ * request-time 404. Malformed specs throw a plain `Error` (not
+ * `ConciergeError`): a bad spec is programmer/config misuse at construction
+ * time, not one of ADR-019's runtime DeFi failures.
  *
  * Returns `LanguageModelV3` — the interface the installed @ai-sdk 3.x
  * provider factories actually ship (ADR-016 sketches `LanguageModelV2`;
@@ -26,7 +32,7 @@ const DEFAULT_SPEC = 'anthropic:claude-sonnet-4-6';
  * time, and `ai@6` accepts both).
  */
 export function defaultModel(spec = process.env['AI_MODEL']): LanguageModelV3 {
-  const normalized = spec || DEFAULT_SPEC;
+  const normalized = (spec || DEFAULT_SPEC).trim();
   const splitAt = normalized.indexOf(':');
   if (splitAt <= 0 || splitAt === normalized.length - 1) {
     throw new Error(
@@ -35,6 +41,11 @@ export function defaultModel(spec = process.env['AI_MODEL']): LanguageModelV3 {
   }
   const provider = normalized.slice(0, splitAt);
   const model = normalized.slice(splitAt + 1);
+  if (/\s/.test(provider) || /\s/.test(model)) {
+    throw new Error(
+      `[@concierge/sdk] defaultModel: "provider:model" spec contains whitespace — got "${normalized}". Check AI_MODEL for stray spaces.`,
+    );
+  }
   switch (provider) {
     case 'anthropic':
       return anthropic(model);

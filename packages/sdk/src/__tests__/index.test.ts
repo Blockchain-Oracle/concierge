@@ -28,6 +28,23 @@ describe('@concierge/sdk barrel', () => {
     expect(sdk.SerializablePortfolioCardSchema).toBeDefined();
     expect(sdk.SerializableReputationCardSchema).toBeDefined();
     expect(sdk.CARD_SCHEMAS).toBeDefined();
+    expect(typeof sdk.safeParseSerializableProposalCard).toBe('function');
+    expect(typeof sdk.safeParseSerializableTickCard).toBe('function');
+    expect(typeof sdk.safeParseSerializablePortfolioCard).toBe('function');
+    expect(typeof sdk.safeParseSerializableReputationCard).toBe('function');
+    expect(sdk.TICK_PHASE_VALUES).toBeDefined();
+  });
+
+  it('re-exports the Sepolia zero-address lockbox so consumers can guard programmatically', () => {
+    // ConciergeRegistry.sepolia() exposes pending 0x000…000 slots until
+    // story-192 deploys mocks; an SDK-only consumer needs a programmatic
+    // signal (not just README prose) before sending funds anywhere.
+    expect(Array.isArray(sdk.SEPOLIA_PENDING_ADDRESS_SLOTS)).toBe(true);
+    expect(sdk.SEPOLIA_PENDING_ADDRESS_SLOTS.length).toBeGreaterThan(0);
+  });
+
+  it('re-exports the runtime error-type list alongside the ConciergeError class', () => {
+    expect(sdk.CONCIERGE_ERROR_TYPES).toContain('EModeNotEnabled');
   });
 
   it('re-exports the @concierge/vercel-ai adapter surface', () => {

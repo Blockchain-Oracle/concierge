@@ -74,4 +74,28 @@ describe('defaultModel (ADR-016 env auto-detect)', () => {
   it('throws on a spec with an empty model segment', () => {
     expect(() => defaultModel('anthropic:')).toThrow(/provider:model/);
   });
+
+  it('throws on a spec with an empty provider segment (leading colon)', () => {
+    expect(() => defaultModel(':claude-sonnet-4-6')).toThrow(/provider:model/);
+  });
+
+  it('trims surrounding whitespace — trailing spaces in .env values are common', () => {
+    vi.stubEnv('AI_MODEL', ' openai:gpt-5.1 ');
+    expect(defaultModel().modelId).toBe('gpt-5.1');
+  });
+
+  it('throws on internal whitespace instead of constructing a wrong model id', () => {
+    // "anthropic: claude-…" would otherwise build modelId " claude-…" and
+    // fail only as a request-time 404 with an invisible-whitespace id.
+    expect(() => defaultModel('anthropic: claude-sonnet-4-6')).toThrow(/whitespace/);
+    expect(() => defaultModel('open ai:gpt-5.1')).toThrow(/whitespace/);
+  });
+
+  it('an explicit empty-string spec falls back to the DEFAULT, not the env var', () => {
+    // Pins the `spec || DEFAULT_SPEC` precedence: passing '' means "use the
+    // default", it does NOT re-read AI_MODEL. A refactor to `spec ?? env`
+    // would silently change this for `defaultModel(config.model ?? '')` callers.
+    vi.stubEnv('AI_MODEL', 'openai:gpt-5.1');
+    expect(defaultModel('').modelId).toBe('claude-sonnet-4-6');
+  });
 });
