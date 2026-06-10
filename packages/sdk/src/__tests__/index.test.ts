@@ -45,6 +45,7 @@ describe('@concierge/sdk barrel', () => {
 
   it('re-exports the runtime error-type list alongside the ConciergeError class', () => {
     expect(sdk.CONCIERGE_ERROR_TYPES).toContain('EModeNotEnabled');
+    expect(typeof sdk.isConciergeErrorType).toBe('function');
   });
 
   it('re-exports the @concierge/vercel-ai adapter surface', () => {

@@ -130,6 +130,13 @@ describe('SEPOLIA_PENDING_ADDRESS_SLOTS lockbox', () => {
     expect([...SEPOLIA_PENDING_ADDRESS_SLOTS]).toEqual(sorted);
   });
 
+  it('is frozen — `as const` is compile-time only', () => {
+    // The list IS the runtime lockbox guard (SDK requireAddress iterates it);
+    // an unfrozen array lets any consumer push/splice and widen or narrow the
+    // guard for every later check, the same way an unfrozen ADDRESSES could drift.
+    expect(Object.isFrozen(SEPOLIA_PENDING_ADDRESS_SLOTS)).toBe(true);
+  });
+
   it('every entry resolves to a real ADDRESSES.mantleSepolia leaf at runtime', () => {
     for (const path of SEPOLIA_PENDING_ADDRESS_SLOTS) {
       const value = path

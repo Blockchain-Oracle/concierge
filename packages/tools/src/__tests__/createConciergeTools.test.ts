@@ -57,8 +57,8 @@ describe('tool() type inference', () => {
 });
 
 describe('public type contracts', () => {
-  it('ConciergeAgentLike.chainId is EvmChainId (5000 | 5003) not bare number', () => {
-    expectTypeOf<ConciergeAgentLike>().toEqualTypeOf<{ chainId: EvmChainId }>();
+  it('ConciergeAgentLike.chainId is readonly EvmChainId (5000 | 5003) not bare number', () => {
+    expectTypeOf<ConciergeAgentLike>().toEqualTypeOf<{ readonly chainId: EvmChainId }>();
   });
 
   it('UICardId is the 4-arm union backed by SerializableXxxCardSchemas', () => {
@@ -86,6 +86,12 @@ describe('public type contracts', () => {
       'record',
       'simulate',
     ]);
+  });
+
+  it('TICK_PHASE_VALUES is frozen — `as const` is compile-time only', () => {
+    // The array feeds z.enum() AND downstream runtime guards; an unfrozen
+    // array lets any consumer push('rollback') and silently widen validation.
+    expect(Object.isFrozen(TICK_PHASE_VALUES)).toBe(true);
   });
 });
 

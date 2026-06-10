@@ -11,7 +11,7 @@
 // `ConciergeRegistry.sepolia()`'s zero-address placeholders (pending
 // story-192's mock deploys) — SDK-only consumers must be able to detect a
 // pending slot without reading the README.
-export { SEPOLIA_PENDING_ADDRESS_SLOTS } from '@concierge/shared';
+export { SEPOLIA_PENDING_ADDRESS_SLOTS, type SepoliaAddressPath } from '@concierge/shared';
 export {
   bigintSafeStringify,
   CARD_SCHEMAS,
@@ -39,5 +39,10 @@ export {
 } from '@concierge/tools';
 export { getVercelAITools, toVercelAITool } from '@concierge/vercel-ai';
 export { defaultModel } from './defaultModel.ts';
-export { CONCIERGE_ERROR_TYPES, ConciergeError, type ConciergeErrorType } from './errors.ts';
+export {
+  CONCIERGE_ERROR_TYPES,
+  ConciergeError,
+  type ConciergeErrorType,
+  isConciergeErrorType,
+} from './errors.ts';
 export { ConciergeRegistry } from './registry.ts';

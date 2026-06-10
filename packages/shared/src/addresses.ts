@@ -155,7 +155,7 @@ export type SepoliaAddressPath = LeafPath<typeof ADDRESSES.mantleSepolia>;
  * MUST stay lexically sorted (default JS Array.sort comparator) — the lockbox test
  * compares against `.sort()`. Asserted in index.test.ts.
  */
-export const SEPOLIA_PENDING_ADDRESS_SLOTS = [
+export const SEPOLIA_PENDING_ADDRESS_SLOTS = Object.freeze([
   'aave.addressesProvider',
   'aave.oracle',
   'aave.pool',
@@ -170,4 +170,4 @@ export const SEPOLIA_PENDING_ADDRESS_SLOTS = [
   'tokens.WMNT',
   'tokens.mETH',
   'tokens.sUSDe',
-] as const satisfies readonly SepoliaAddressPath[];
+] as const satisfies readonly SepoliaAddressPath[]);

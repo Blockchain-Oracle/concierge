@@ -34,13 +34,13 @@ export function safeParseSerializableProposalCard(
 // `satisfies` catches narrowing; the `_AssertNever` helper catches widening
 // (the previous `_widenFence: ... = null as never` form was a NO-OP — `never`
 // is assignable to any type, so widening slipped through silently).
-export const TICK_PHASE_VALUES = [
+export const TICK_PHASE_VALUES = Object.freeze([
   'plan',
   'simulate',
   'propose',
   'execute',
   'record',
-] as const satisfies readonly TickPhase[];
+] as const satisfies readonly TickPhase[]);
 type _AssertNever<T extends never> = T;
 type _NoWiden = _AssertNever<Exclude<TickPhase, (typeof TICK_PHASE_VALUES)[number]>>;
 type _Used = _NoWiden;
