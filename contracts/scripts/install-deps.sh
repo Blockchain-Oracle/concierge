@@ -10,6 +10,7 @@ cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.."
 
 forge install \
   OpenZeppelin/openzeppelin-contracts@v5.6.1 \
+  OpenZeppelin/openzeppelin-contracts-upgradeable@v5.1.0 \
   aave-dao/aave-v3-origin@v3.6.0 \
   foundry-rs/forge-std@v1.16.1 \
   --no-git \
@@ -19,11 +20,11 @@ forge install \
 # on re-run can leave 1/3 at stale tag while exiting 0. Assert each lib
 # directory exists explicitly — a missing dir fails the script loudly
 # rather than reporting vacuous success.
-for lib in openzeppelin-contracts aave-v3-origin forge-std; do
+for lib in openzeppelin-contracts openzeppelin-contracts-upgradeable aave-v3-origin forge-std; do
   if [[ ! -d "lib/$lib" ]]; then
     echo "check-deps: lib/$lib missing after install — forge install may have partial-failed" >&2
     exit 1
   fi
 done
 
-echo "Foundry deps installed (OZ v5.6.1 + aave-v3-origin v3.6.0 + forge-std v1.16.1)."
+echo "Foundry deps installed (OZ v5.6.1 + OZ-upgradeable v5.1.0 + aave-v3-origin v3.6.0 + forge-std v1.16.1)."
