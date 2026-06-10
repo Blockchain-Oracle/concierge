@@ -161,7 +161,7 @@ stories:
     merged_at: "2026-06-09T20:08:00Z"
   - id: story-22-sdk-skeleton
     epic: "Epic E2 — Shared SDK Core"
-    status: PENDING
+    status: COMPLETE
     # depends_on synced 2026-06-10 with the story file's ⚠️ 2026-06-09 UPDATE
     # (adds story-300) + the meta package's actual runtime dep on the
     # vercel-ai adapter it re-exports (story-301).
@@ -172,8 +172,8 @@ stories:
         story-301-vercel-ai-adapter,
       ]
     issue_url: ""
-    pr_url: ""
-    merged_at: ""
+    pr_url: "https://github.com/Blockchain-Oracle/concierge/pull/30"
+    merged_at: "2026-06-10T19:18:37Z"
   - id: story-23-sdk-error-types
     epic: "Epic E2 — Shared SDK Core"
     status: PENDING
