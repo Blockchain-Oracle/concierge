@@ -171,6 +171,21 @@ describe('ConciergeError (ADR-019)', () => {
     expect('name' in json).toBe(false);
   });
 
+  it('toJSON() with no metadata omits the key entirely — not undefined', () => {
+    const json = new ConciergeError('RpcError', 'x').toJSON();
+    expect('metadata' in json).toBe(false);
+  });
+
+  it('JSON.stringify(err) delegates to toJSON() — cause never appears in wire output', () => {
+    const err = new ConciergeError('RpcError', 'rpc fail', new Error('raw'), { host: 'node1' });
+    const wire = JSON.parse(JSON.stringify(err)) as Record<string, unknown>;
+    expect(wire['type']).toBe('RpcError');
+    expect(wire['message']).toBe('rpc fail');
+    expect(wire['metadata']).toEqual({ host: 'node1' });
+    expect('cause' in wire).toBe(false);
+    expect('name' in wire).toBe(false);
+  });
+
   it('fromUnknown: wraps plain Error as ConciergeError without double-wrapping', () => {
     const orig = new Error('ECONNREFUSED');
     const wrapped = ConciergeError.fromUnknown(orig);
@@ -189,6 +204,12 @@ describe('ConciergeError (ADR-019)', () => {
     const n = ConciergeError.fromUnknown(null, 'OracleUnavailable');
     expect(n.type).toBe('OracleUnavailable');
     expect(n.message).toBe('null');
+  });
+
+  it('fromUnknown: propagates constructor TypeError for an invalid type argument', () => {
+    expect(() =>
+      ConciergeError.fromUnknown(new Error('x'), 'BadType' as ConciergeErrorType),
+    ).toThrow(TypeError);
   });
 });
 
