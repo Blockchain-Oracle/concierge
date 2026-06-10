@@ -20,10 +20,14 @@ import {
     AgentInactive,
     InvalidValidator,
     InvalidOwner,
+    SameOwner,
     EmptyGoalHash,
     PolicyTooLarge,
     AgentNotFound,
-    OwnerIndexCorrupted
+    OwnerIndexCorrupted,
+    AgentAlreadyInState,
+    UnexpectedValue,
+    OwnerAgentLimitReached
 } from "./errors/ConciergeErrors.sol";
 
 /// @notice On-chain identity + policy store for Concierge agents (ADR-009).
@@ -32,8 +36,9 @@ import {
 ///
 /// Role model:
 ///   ADMIN_ROLE          — grant/revoke all other roles, authorise upgrades
-///   AGENT_OPERATOR_ROLE — call registerAgent
-///   PAUSER_ROLE         — pause / unpause mutations
+///   AGENT_OPERATOR_ROLE — call registerAgent (must be granted post-deploy;
+///                         not auto-granted to admin at initialize)
+///   PAUSER_ROLE         — pause / unpause mutations (auto-granted to admin)
 ///
 /// Agent state machine:
 ///   activatedAt == 0              → never registered (default mapping slot)
@@ -45,6 +50,7 @@ import {
 ///   nextAgentId starts at 1; 0 is the sentinel "unregistered" value
 ///   policyData.length ≤ 4096 at write time
 ///   owner is never address(0) (enforced at register + transfer)
+///   _agentsByOwner[owner].length ≤ MAX_AGENTS_PER_OWNER (DoS cap)
 contract ConciergeRegistry is
     IConciergeRegistry,
     AccessControlUpgradeable,
@@ -55,6 +61,7 @@ contract ConciergeRegistry is
     // ─── Constants ─────────────────────────────────────────────────────────
 
     uint256 public constant MAX_POLICY_SIZE = 4096;
+    uint256 public constant MAX_AGENTS_PER_OWNER = 100;
 
     bytes32 public constant ADMIN_ROLE = DEFAULT_ADMIN_ROLE;
     bytes32 public constant AGENT_OPERATOR_ROLE = keccak256("AGENT_OPERATOR_ROLE");
@@ -68,7 +75,7 @@ contract ConciergeRegistry is
 
     /// owner → set of agentIds. Maintained alongside _agents so agentsByOwner
     /// doesn't require a full scan. Removal on transfer is O(n) in the owner's
-    /// agent count — acceptable given per-owner scale (< 100 agents typical).
+    /// agent count — bounded by MAX_AGENTS_PER_OWNER (100).
     mapping(address owner => uint256[]) private _agentsByOwner;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
@@ -81,6 +88,8 @@ contract ConciergeRegistry is
     /// @notice One-time initializer called via the proxy's constructor data.
     /// @param admin  Address that receives DEFAULT_ADMIN_ROLE + PAUSER_ROLE.
     ///               Must be non-zero; address(0) would make the proxy ungovernable.
+    ///               AGENT_OPERATOR_ROLE is NOT granted here — grant it separately
+    ///               after deployment via grantRole(AGENT_OPERATOR_ROLE, operator).
     function initialize(
         address admin
     ) external initializer {
@@ -109,15 +118,18 @@ contract ConciergeRegistry is
         if (validator == address(0)) revert InvalidValidator(validator);
         if (goalHash == bytes32(0)) revert EmptyGoalHash();
         if (policyData.length > MAX_POLICY_SIZE) revert PolicyTooLarge(policyData.length);
+        if (_agentsByOwner[owner].length >= MAX_AGENTS_PER_OWNER) {
+            revert OwnerAgentLimitReached(owner);
+        }
 
         agentId = nextAgentId++;
         _agents[agentId] = AgentRecord({
             owner: owner,
+            active: true,
             sessionKeyValidator: validator,
             goalHash: goalHash,
             policyData: policyData,
-            activatedAt: block.timestamp,
-            active: true
+            activatedAt: block.timestamp
         });
         _agentsByOwner[owner].push(agentId);
 
@@ -128,7 +140,7 @@ contract ConciergeRegistry is
     function updateGoal(
         uint256 agentId,
         bytes32 newGoalHash
-    ) external whenNotPaused {
+    ) external whenNotPaused nonReentrant {
         _requireRegistered(agentId);
         _requireOwner(agentId);
         if (!_agents[agentId].active) revert AgentInactive(agentId);
@@ -144,39 +156,42 @@ contract ConciergeRegistry is
     function updatePolicy(
         uint256 agentId,
         bytes calldata newPolicy
-    ) external whenNotPaused {
+    ) external whenNotPaused nonReentrant {
         _requireRegistered(agentId);
         _requireOwner(agentId);
         if (!_agents[agentId].active) revert AgentInactive(agentId);
         if (newPolicy.length > MAX_POLICY_SIZE) revert PolicyTooLarge(newPolicy.length);
 
         _agents[agentId].policyData = newPolicy;
-        emit PolicyUpdated(agentId);
+        emit PolicyUpdated(agentId, keccak256(newPolicy));
     }
 
     /// @inheritdoc IConciergeRegistry
     function setActive(
         uint256 agentId,
         bool active
-    ) external whenNotPaused {
+    ) external whenNotPaused nonReentrant {
         _requireRegistered(agentId);
         _requireOwner(agentId);
 
+        bool prev = _agents[agentId].active;
+        if (prev == active) revert AgentAlreadyInState(agentId, active);
+
         _agents[agentId].active = active;
-        emit ActiveSet(agentId, active);
+        emit ActiveSet(agentId, prev, active);
     }
 
     /// @inheritdoc IConciergeRegistry
     function transferAgent(
         uint256 agentId,
         address newOwner
-    ) external whenNotPaused {
+    ) external whenNotPaused nonReentrant {
         if (newOwner == address(0)) revert InvalidOwner(newOwner);
         _requireRegistered(agentId);
         _requireOwner(agentId);
 
         address prev = _agents[agentId].owner;
-        if (newOwner == prev) revert InvalidOwner(newOwner);
+        if (newOwner == prev) revert SameOwner(agentId, newOwner);
 
         _agents[agentId].owner = newOwner;
 
@@ -184,6 +199,21 @@ contract ConciergeRegistry is
         _agentsByOwner[newOwner].push(agentId);
 
         emit AgentTransferred(agentId, prev, newOwner);
+    }
+
+    /// @inheritdoc IConciergeRegistry
+    function updateValidator(
+        uint256 agentId,
+        address newValidator
+    ) external whenNotPaused nonReentrant {
+        _requireRegistered(agentId);
+        _requireOwner(agentId);
+        if (!_agents[agentId].active) revert AgentInactive(agentId);
+        if (newValidator == address(0)) revert InvalidValidator(newValidator);
+
+        address prev = _agents[agentId].sessionKeyValidator;
+        _agents[agentId].sessionKeyValidator = newValidator;
+        emit ValidatorUpdated(agentId, prev, newValidator);
     }
 
     /// @inheritdoc IConciergeRegistry
@@ -212,6 +242,24 @@ contract ConciergeRegistry is
     ) external view returns (uint256[] memory) {
         return _agentsByOwner[owner];
     }
+
+    // ─── UUPS overrides ────────────────────────────────────────────────────
+
+    /// @dev Rejects ETH sent with an upgrade call — this registry is non-financial.
+    function upgradeToAndCall(
+        address newImpl,
+        bytes memory data
+    ) public payable override {
+        if (msg.value != 0) revert UnexpectedValue(msg.value);
+        super.upgradeToAndCall(newImpl, data);
+    }
+
+    /// @dev UUPS upgrade gate — only DEFAULT_ADMIN_ROLE may trigger upgrades.
+    ///      Intentionally not paused-gated: upgrades are the remediation mechanism
+    ///      for bugs that caused a pause, and must remain available while frozen.
+    function _authorizeUpgrade(
+        address
+    ) internal override onlyRole(DEFAULT_ADMIN_ROLE) { }
 
     // ─── Internal helpers ──────────────────────────────────────────────────
 
@@ -244,11 +292,6 @@ contract ConciergeRegistry is
         }
         revert OwnerIndexCorrupted(owner, agentId);
     }
-
-    /// @dev UUPS upgrade gate — only DEFAULT_ADMIN_ROLE may trigger upgrades.
-    function _authorizeUpgrade(
-        address
-    ) internal override onlyRole(DEFAULT_ADMIN_ROLE) { }
 
     // ─── Storage gap ───────────────────────────────────────────────────────
 

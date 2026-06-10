@@ -17,6 +17,10 @@ error InvalidValidator(address validator);
 /// @param owner  The zero address rejected as owner or newOwner.
 error InvalidOwner(address owner);
 
+/// @param agentId  Agent whose ownership was transferred to itself.
+/// @param owner    The address that is already the owner.
+error SameOwner(uint256 agentId, address owner);
+
 /// Thrown when goalHash is bytes32(0) — the hash of an empty goal.
 error EmptyGoalHash();
 
@@ -29,3 +33,13 @@ error AgentNotFound(uint256 agentId);
 /// Thrown by _removeFromOwnerIndex when the ID is absent from the owner's index —
 /// indicates an invariant violation (index diverged from storage).
 error OwnerIndexCorrupted(address owner, uint256 agentId);
+
+/// @param agentId  Agent whose active flag is already at the requested state.
+/// @param state    The no-op value that was submitted.
+error AgentAlreadyInState(uint256 agentId, bool state);
+
+/// @param value  Non-zero ETH value sent to a non-payable operation.
+error UnexpectedValue(uint256 value);
+
+/// @param owner  Address that has reached the per-owner agent registration cap.
+error OwnerAgentLimitReached(address owner);
