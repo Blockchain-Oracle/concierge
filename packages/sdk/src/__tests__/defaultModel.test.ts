@@ -89,6 +89,42 @@ describe('defaultModel (ADR-016 env auto-detect)', () => {
     // fail only as a request-time 404 with an invisible-whitespace id.
     expect(() => defaultModel('anthropic: claude-sonnet-4-6')).toThrow(/whitespace/);
     expect(() => defaultModel('open ai:gpt-5.1')).toThrow(/whitespace/);
+    expect(() => defaultModel('anthropic:\tclaude-sonnet-4-6')).toThrow(/whitespace/);
+  });
+
+  it('throws on invisible non-printable characters, escaping them in the message', () => {
+    // Zero-width space (U+200B) survives /\s/ AND .trim() — a model id
+    // copy-pasted from rendered docs would look character-for-character
+    // correct in the eventual 404. The guard must reject it and the error
+    // must make the invisible character visible.
+    expect(() => defaultModel('anthropic:claude\u200b-sonnet-4-6')).toThrow(/\\u200b/);
+    expect(() => defaultModel('anthropic:\u00a0claude-sonnet-4-6')).toThrow(/\\u00a0/);
+  });
+
+  it('rejects invisibles in the PROVIDER segment too, not just the model segment', () => {
+    expect(() => defaultModel('anthro\u200bpic:claude-sonnet-4-6')).toThrow(/\\u200b/);
+  });
+
+  it('escapes invisibles in the FORMAT error too \u2014 a ZWSP-only spec must not render as got ""', () => {
+    // U+200B survives .trim(), so a ZWSP-only spec does NOT fall back to the
+    // default; it has no colon and hits the malformed-spec branch. Without
+    // escaping there, the error renders as `got ""` \u2014 maximally confusing,
+    // because an actually-empty spec falls back and never produces it.
+    expect(() => defaultModel('\u200b')).toThrow(/\\u200b/);
+  });
+
+  it('an NBSP-only spec falls back to the default \u2014 NBSP IS stripped by .trim()', () => {
+    // Companion to the ZWSP case: the two invisibles behave differently by
+    // design (trim strips Unicode whitespace, which includes NBSP but not ZWSP).
+    expect(defaultModel('\u00a0').modelId).toBe('claude-sonnet-4-6');
+  });
+
+  it('treats a whitespace-only spec as unset, consistent with the empty string', () => {
+    // AI_MODEL=" " in a quoted .env line must behave like AI_MODEL="" (fall
+    // back to the default), not crash at startup with a confusing `got ""`.
+    vi.stubEnv('AI_MODEL', '   ');
+    expect(defaultModel().modelId).toBe('claude-sonnet-4-6');
+    expect(defaultModel(' \t ').modelId).toBe('claude-sonnet-4-6');
   });
 
   it('an explicit empty-string spec falls back to the DEFAULT, not the env var', () => {

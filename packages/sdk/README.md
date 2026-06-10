@@ -50,9 +50,12 @@ var, else `anthropic:claude-sonnet-4-6`.
   first model call, not when `defaultModel()` runs.
 - The spec splits on the **first** colon only, so model ids containing
   colons (OpenAI fine-tunes like `ft:gpt-5.1:org:custom`) pass through intact.
-- Surrounding whitespace is trimmed (trailing spaces in `.env` values are
-  common); **internal** whitespace throws instead of constructing a model id
-  that would only fail as a request-time 404.
+- Surrounding whitespace is trimmed and a whitespace-only spec falls back to
+  the default (quoted-blank `.env` lines behave like unset); any **internal**
+  character outside printable ASCII throws instead of constructing a model id
+  that would only fail as a request-time 404 — including invisibles like
+  U+200B that survive `.trim()`, which the error message escapes as `\u200b`
+  so you can actually see them.
 - Returns `LanguageModelV3` — the interface the installed `@ai-sdk/*` 3.x
   providers actually ship (`ai@6` accepts it everywhere a model is taken).
   ADR-016's sketch says `LanguageModelV2`; per SDK-DX-STUDY §A the pin
@@ -68,12 +71,27 @@ implement `ConciergeAgentLike`, so a registry can be passed directly to
 `createConciergeTools` or any adapter factory as the agent context.
 
 Sepolia's non-ERC-8004 addresses are zero placeholders until story-192's
-mock deploy lands. The SDK re-exports `SEPOLIA_PENDING_ADDRESS_SLOTS` from
-`@concierge/shared` so consumers can guard programmatically — check it
-before using a Sepolia address rather than trusting prose:
+mock deploy lands. Two programmatic guards, so nothing depends on prose:
+
+- **`registry.requireAddress(path)`** — resolves a dot-path (e.g.
+  `'aave.pool'`, typed as `AddressPath`) to a deployed address, throwing
+  `ConciergeError('NetworkUnsupported')` for a zero-address placeholder
+  instead of letting a provider `eth_call` `0x000…000` (opaque ABI-decode
+  failure) or send funds there (burned). A path that doesn't resolve to an
+  address-shaped leaf (plain-JS typo like `'aave.poool'` or `'aave.pool.0'`)
+  throws a plain `TypeError` instead — caller misuse, deliberately distinct
+  from the typed network error so `switch (err.type)` handlers never chase a
+  network problem that is actually a typo. Prefer it over reading `addresses`
+  directly whenever the address is about to be called or funded.
+- **`SEPOLIA_PENDING_ADDRESS_SLOTS`** (re-exported from `@concierge/shared`,
+  frozen) — the full list of pending paths, for consumers that want to
+  enumerate or pre-check.
 
 ```ts
-import { SEPOLIA_PENDING_ADDRESS_SLOTS } from '@concierge/sdk';
+import { ConciergeRegistry, SEPOLIA_PENDING_ADDRESS_SLOTS } from '@concierge/sdk';
+
+ConciergeRegistry.mainnet().requireAddress('aave.pool'); // 0x458F…1422
+ConciergeRegistry.sepolia().requireAddress('aave.pool'); // throws NetworkUnsupported
 ```
 
 ## `ConciergeError` — typed errors (ADR-019)
@@ -93,10 +111,13 @@ try {
 
 Types: `EModeNotEnabled` · `InsufficientLiquidity` · `OracleUnavailable` ·
 `AttestationFailed` · `UserRejected` · `NetworkUnsupported` · `RpcError` —
-also exported at runtime as `CONCIERGE_ERROR_TYPES`. The constructor
-validates `type` against that list (loud `TypeError` for plain-JS typos),
-and `cause` keeps native `ErrorOptions` semantics: installed only when
-provided, non-enumerable, so `JSON.stringify(err)` never leaks a raw revert.
+also exported at runtime as `CONCIERGE_ERROR_TYPES` (frozen), with an
+`isConciergeErrorType(value)` narrowing helper for untyped inputs. The
+constructor validates `type` against that list (loud `TypeError` for
+plain-JS typos) and makes `type` non-writable after construction, and
+`cause` keeps native `ErrorOptions` semantics: installed only when provided
+(falsy-but-defined causes like `null` ARE installed), non-enumerable, so
+`JSON.stringify(err)` never leaks a raw revert.
 
 ## What's re-exported
 

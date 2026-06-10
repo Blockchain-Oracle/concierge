@@ -28,7 +28,7 @@ export interface ConciergeTool<
 
 /** Minimum agent shape `createConciergeTools` needs for chain-gated filtering. */
 export interface ConciergeAgentLike {
-  chainId: EvmChainId;
+  readonly chainId: EvmChainId;
 }
 
 /**

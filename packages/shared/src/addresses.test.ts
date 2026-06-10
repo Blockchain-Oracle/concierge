@@ -3,7 +3,7 @@
 import { getAddress } from 'viem';
 import { describe, expect, it } from 'vitest';
 import type { Address } from './index.ts';
-import { ADDRESSES, SEPOLIA_PENDING_ADDRESS_SLOTS } from './index.ts';
+import { ADDRESSES, SEPOLIA_PENDING_ADDRESS_SLOTS, ZERO_ADDRESS } from './index.ts';
 
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 const ZERO = '0x0000000000000000000000000000000000000000';
@@ -128,6 +128,20 @@ describe('SEPOLIA_PENDING_ADDRESS_SLOTS lockbox', () => {
   it('is lex-sorted (canonical diff-stable order)', () => {
     const sorted = [...SEPOLIA_PENDING_ADDRESS_SLOTS].sort();
     expect([...SEPOLIA_PENDING_ADDRESS_SLOTS]).toEqual(sorted);
+  });
+
+  it('ZERO_ADDRESS is exported and is the canonical 40-zero placeholder', () => {
+    // Consumers (SDK requireAddress) compare against this exact string; a
+    // privately re-typed copy with a one-character typo would silently
+    // disable every zero-address guard downstream.
+    expect(ZERO_ADDRESS).toBe(ZERO);
+  });
+
+  it('is frozen — `as const` is compile-time only', () => {
+    // The list IS the runtime lockbox guard (SDK requireAddress iterates it);
+    // an unfrozen array lets any consumer push/splice and widen or narrow the
+    // guard for every later check, the same way an unfrozen ADDRESSES could drift.
+    expect(Object.isFrozen(SEPOLIA_PENDING_ADDRESS_SLOTS)).toBe(true);
   });
 
   it('every entry resolves to a real ADDRESSES.mantleSepolia leaf at runtime', () => {

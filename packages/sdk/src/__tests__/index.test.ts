@@ -43,8 +43,17 @@ describe('@concierge/sdk barrel', () => {
     expect(sdk.SEPOLIA_PENDING_ADDRESS_SLOTS.length).toBeGreaterThan(0);
   });
 
+  it('re-exports the address path types so requireAddress is usable without casts', () => {
+    // Compile-time pin: if either type re-export drops from the barrel,
+    // these annotations stop compiling.
+    const pending: sdk.SepoliaAddressPath = 'aave.pool';
+    const both: sdk.AddressPath = 'aave.pool';
+    expect(pending).toBe(both);
+  });
+
   it('re-exports the runtime error-type list alongside the ConciergeError class', () => {
     expect(sdk.CONCIERGE_ERROR_TYPES).toContain('EModeNotEnabled');
+    expect(typeof sdk.isConciergeErrorType).toBe('function');
   });
 
   it('re-exports the @concierge/vercel-ai adapter surface', () => {

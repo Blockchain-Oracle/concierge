@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { CONCIERGE_ERROR_TYPES, ConciergeError, type ConciergeErrorType } from '../errors.ts';
+import {
+  CONCIERGE_ERROR_TYPES,
+  ConciergeError,
+  type ConciergeErrorType,
+  isConciergeErrorType,
+} from '../errors.ts';
 
 describe('ConciergeError (ADR-019)', () => {
   it('is an Error subclass with name "ConciergeError"', () => {
@@ -56,5 +61,56 @@ describe('ConciergeError (ADR-019)', () => {
     for (const type of CONCIERGE_ERROR_TYPES) {
       expect(new ConciergeError(type, type).type).toBe(type);
     }
+  });
+
+  it.each([
+    [null],
+    [0],
+    [''],
+  ])('installs the falsy-but-defined cause %p — only undefined means "omitted"', (cause) => {
+    // The discriminator is `cause === undefined`, NOT truthiness: a provider
+    // that rejects with null must not have its cause silently dropped. A
+    // refactor to `cause ? { cause } : undefined` would break exactly this.
+    const err = new ConciergeError('RpcError', 'falsy cause', cause);
+    expect('cause' in err).toBe(true);
+    expect(err.cause).toBe(cause);
+  });
+
+  it('CONCIERGE_ERROR_TYPES is frozen — it IS the constructor runtime guard', () => {
+    // `as const` is compile-time only; an unfrozen array lets any consumer
+    // push('Whatever') and silently widen the guard for every later construction.
+    expect(Object.isFrozen(CONCIERGE_ERROR_TYPES)).toBe(true);
+  });
+
+  it('push() onto the frozen list throws TypeError — loud in strict AND sloppy mode', () => {
+    // Index assignment on a frozen array no-ops silently in sloppy mode, but
+    // push() throws in both modes (non-writable length), so the widening
+    // attack fails loudly even from a sloppy-mode consumer.
+    expect(() => (CONCIERGE_ERROR_TYPES as unknown as string[]).push('Whatever')).toThrow(
+      TypeError,
+    );
+  });
+
+  it('type is non-writable after construction — the guard cannot be bypassed by reassignment', () => {
+    const err = new ConciergeError('RpcError', 'x');
+    expect(() => {
+      (err as { type: string }).type = 'Whatever';
+    }).toThrow(TypeError);
+    expect(err.type).toBe('RpcError');
+  });
+
+  it('type is non-configurable too — defineProperty cannot bypass the guard either', () => {
+    // { writable: false } alone leaves configurable: true, so
+    // Object.defineProperty(err, 'type', { value: 'X' }) would still succeed.
+    const err = new ConciergeError('RpcError', 'x');
+    expect(() => Object.defineProperty(err, 'type', { value: 'Whatever' })).toThrow(TypeError);
+    expect(err.type).toBe('RpcError');
+  });
+
+  it('isConciergeErrorType narrows arbitrary values without casts', () => {
+    expect(isConciergeErrorType('EModeNotEnabled')).toBe(true);
+    expect(isConciergeErrorType('RpcFailure')).toBe(false);
+    expect(isConciergeErrorType(undefined)).toBe(false);
+    expect(isConciergeErrorType(42)).toBe(false);
   });
 });

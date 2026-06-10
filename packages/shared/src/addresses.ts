@@ -16,7 +16,13 @@
 import { assertNumericChainId } from './chains.ts';
 import type { Address, EvmChainId } from './types.ts';
 
-const ZERO: Address = '0x0000000000000000000000000000000000000000';
+/**
+ * Canonical zero-address placeholder. Exported so downstream guards (e.g. the
+ * SDK's `requireAddress`) compare against THIS string instead of re-typing
+ * their own copy — a one-character drift would silently disable every
+ * zero-address check downstream.
+ */
+export const ZERO_ADDRESS: Address = '0x0000000000000000000000000000000000000000';
 
 // Recursive Object.freeze so downstream packages cannot mutate the registry at runtime.
 // `as const` only narrows the type — without runtime freezing, a single
@@ -71,20 +77,20 @@ export const ADDRESSES = deepFreeze({
       // Aave V3 has NO Sepolia deployment per research/concierge/03-providers/aave-v3-mantle.md.
       // Concierge mocks Aave on Sepolia via story-14 (MockAavePool) + story-16 (MockAaveOracle).
       // Addresses below are filled in by story-192 (Sepolia playground deploy).
-      pool: ZERO,
-      oracle: ZERO,
-      addressesProvider: ZERO,
-      protocolDataProvider: ZERO,
+      pool: ZERO_ADDRESS,
+      oracle: ZERO_ADDRESS,
+      addressesProvider: ZERO_ADDRESS,
+      protocolDataProvider: ZERO_ADDRESS,
     },
     tokens: {
       // Mock token addresses land in story-15 (MockERC20s for sUSDe/USDC/USDY/mETH).
-      USDC: ZERO,
-      USDe: ZERO,
-      sUSDe: ZERO,
-      WMNT: ZERO,
-      WETH: ZERO,
-      USDY: ZERO,
-      mETH: ZERO,
+      USDC: ZERO_ADDRESS,
+      USDe: ZERO_ADDRESS,
+      sUSDe: ZERO_ADDRESS,
+      WMNT: ZERO_ADDRESS,
+      WETH: ZERO_ADDRESS,
+      USDY: ZERO_ADDRESS,
+      mETH: ZERO_ADDRESS,
     },
     erc8004: {
       // Real Mantle Sepolia ERC-8004 deployment per research/concierge/03-providers/erc8004.md:14.
@@ -92,14 +98,14 @@ export const ADDRESSES = deepFreeze({
       reputationRegistry: '0x8004B663056A597Dffe9eCcC1965A193B7388713' as Address,
     },
     lifi: {
-      diamond: ZERO,
+      diamond: ZERO_ADDRESS,
     },
     mantleDex: {
       merchantMoe: {
-        lbRouter: ZERO,
+        lbRouter: ZERO_ADDRESS,
       },
       agni: {
-        factory: ZERO,
+        factory: ZERO_ADDRESS,
       },
     },
   },
@@ -147,6 +153,15 @@ type LeafPath<T> = T extends Address
 export type SepoliaAddressPath = LeafPath<typeof ADDRESSES.mantleSepolia>;
 
 /**
+ * Dot-paths valid on BOTH chains — the intersection self-maintains: today the
+ * two shapes are structurally identical, but the moment one chain grows a
+ * chain-only slot (story-192 may add Sepolia-only mock fields), that path
+ * drops out of this union and cross-chain lookups fail at compile time
+ * instead of at runtime.
+ */
+export type AddressPath = LeafPath<typeof ADDRESSES.mantleMainnet> & SepoliaAddressPath;
+
+/**
  * Slot paths on `ADDRESSES.mantleSepolia` that intentionally hold the zero address until
  * a later story populates them. Story-15 / story-192 will delete entries from this list
  * as it lands real mock-deploy addresses — turning a future regression (someone reverting
@@ -155,7 +170,7 @@ export type SepoliaAddressPath = LeafPath<typeof ADDRESSES.mantleSepolia>;
  * MUST stay lexically sorted (default JS Array.sort comparator) — the lockbox test
  * compares against `.sort()`. Asserted in index.test.ts.
  */
-export const SEPOLIA_PENDING_ADDRESS_SLOTS = [
+export const SEPOLIA_PENDING_ADDRESS_SLOTS = Object.freeze([
   'aave.addressesProvider',
   'aave.oracle',
   'aave.pool',
@@ -170,4 +185,4 @@ export const SEPOLIA_PENDING_ADDRESS_SLOTS = [
   'tokens.WMNT',
   'tokens.mETH',
   'tokens.sUSDe',
-] as const satisfies readonly SepoliaAddressPath[];
+] as const satisfies readonly SepoliaAddressPath[]);

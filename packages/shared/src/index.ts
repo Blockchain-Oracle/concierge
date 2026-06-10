@@ -2,9 +2,11 @@
 
 export {
   ADDRESSES,
+  type AddressPath,
   addressesFor,
   SEPOLIA_PENDING_ADDRESS_SLOTS,
   type SepoliaAddressPath,
+  ZERO_ADDRESS,
 } from './addresses.ts';
 export { assertNumericChainId, chainFor, mantleMainnet, mantleSepolia } from './chains.ts';
 export type {
