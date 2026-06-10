@@ -7,6 +7,7 @@
     { "path": "./packages/tools" },
     { "path": "./packages/vercel-ai" },
     { "path": "./packages/langchain" },
+    { "path": "./packages/openai" },
     { "path": "./packages/ui" },
     { "path": "./packages/skill" },
     { "path": "./apps/web" },
