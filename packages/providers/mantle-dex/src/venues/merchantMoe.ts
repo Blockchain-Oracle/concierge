@@ -39,7 +39,10 @@ export function createMerchantMoeVenue(
       if (amountOut === undefined || amountOut === 0n) return null;
       return { venue: 'merchantMoe', amountOut };
     } catch (err) {
-      if (err instanceof ContractFunctionRevertedError) return null;
+      // readContract wraps reverts in ContractFunctionExecutionError; walk() finds the inner revert.
+      if (err instanceof BaseError && err.walk((e) => e instanceof ContractFunctionRevertedError)) {
+        return null;
+      }
       throw err;
     }
   }

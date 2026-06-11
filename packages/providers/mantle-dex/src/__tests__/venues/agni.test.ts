@@ -1,7 +1,7 @@
 // Unit tests for createAgniVenue — focuses on stable-pair fee ordering without a fork.
 
 import type { Address } from '@concierge/shared';
-import { ContractFunctionRevertedError } from 'viem';
+import { ContractFunctionExecutionError, ContractFunctionRevertedError } from 'viem';
 import { describe, expect, it, vi } from 'vitest';
 import { createAgniVenue } from '../../venues/agni.ts';
 
@@ -56,6 +56,22 @@ describe('createAgniVenue — quote fee ordering', () => {
         }),
       ),
     };
+    const venue = createAgniVenue(publicClient as never, undefined, SWAP_ROUTER, QUOTER);
+    const result = await venue.quote({ tokenIn: USDC, tokenOut: WMNT, amountIn: 1_000_000n });
+    expect(result).toBeNull();
+  });
+
+  it('returns null when viem wraps revert in ContractFunctionExecutionError (fork behaviour)', async () => {
+    const inner = new ContractFunctionRevertedError({
+      abi: [],
+      functionName: 'quoteExactInputSingle',
+      message: 'no pool',
+    });
+    const outer = new ContractFunctionExecutionError(inner, {
+      abi: [],
+      functionName: 'quoteExactInputSingle',
+    });
+    const publicClient = { readContract: vi.fn().mockRejectedValue(outer) };
     const venue = createAgniVenue(publicClient as never, undefined, SWAP_ROUTER, QUOTER);
     const result = await venue.quote({ tokenIn: USDC, tokenOut: WMNT, amountIn: 1_000_000n });
     expect(result).toBeNull();
