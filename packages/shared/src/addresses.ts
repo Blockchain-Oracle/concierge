@@ -145,7 +145,7 @@ export function addressesFor(
  * of silently passing the lockbox test until story-192 trips on a stale path.
  */
 type LeafPath<T> = T extends Address
-  ? ''
+  ? '' // Base case: Address is a leaf — collapse to '' so the parent emits the key without a trailing dot.
   : T extends Record<string, unknown>
     ? {
         [K in keyof T & string]: LeafPath<T[K]> extends '' ? K : `${K}.${LeafPath<T[K]>}`;
@@ -159,10 +159,10 @@ export type MainnetAddressPath = LeafPath<typeof ADDRESSES.mantleMainnet>;
 export type SepoliaAddressPath = LeafPath<typeof ADDRESSES.mantleSepolia>;
 
 /**
- * Dot-paths valid on BOTH chains — the intersection self-maintains: when one
- * chain grows a chain-only slot (e.g. `conciergeRegistry` on Sepolia), that
- * path drops out of this union and cross-chain lookups fail at compile time
- * instead of at runtime.
+ * Dot-paths valid on BOTH chains — the intersection self-maintains: when a
+ * chain-specific slot exists on only one network, it is absent from the other
+ * chain's LeafPath and therefore absent from this intersection. Cross-chain
+ * lookups then fail at compile time instead of at runtime.
  */
 export type AddressPath = LeafPath<typeof ADDRESSES.mantleMainnet> & SepoliaAddressPath;
 

@@ -77,8 +77,10 @@ function castCall(addr, sig, args = []) {
     encoding: 'utf8',
   });
   if (result.error) {
-    console.error(`  cast call error (${sig}): ${result.error.message}`);
-    return null;
+    // Spawn errors (binary not found, ENOMEM) are fatal — all checks would fail; abort immediately.
+    console.error(`SMOKE FAIL: Cannot invoke cast — ${result.error.message}`);
+    console.error('  Ensure Foundry is installed: https://getfoundry.sh');
+    process.exit(1);
   }
   if (result.status !== 0) {
     console.error(`  cast call failed (${sig}): ${(result.stderr ?? '').trim()}`);
@@ -122,6 +124,7 @@ try {
 
 let passed = 0;
 let failed = 0;
+let skipped = 0;
 
 function assert(label, result, expected) {
   if (result === null) {
@@ -172,7 +175,8 @@ if (addrs.aavePool && addrs.aaveProvider) {
     (result) => result === addrs.aaveProvider.toLowerCase(),
   );
 } else {
-  console.warn('  ⚠  SKIP  Aave Pool check — addresses not parsed');
+  console.warn('  ⚠  SKIP  Aave Pool check — addresses not parsed from addresses.ts');
+  skipped++;
 }
 
 // 4. ERC-8004 Identity Registry: name() == "AgentIdentity" (sanity-check external dep wiring)
@@ -184,9 +188,12 @@ if (addrs.identityRegistry) {
     'agentidentity',
   );
 } else {
-  console.warn('  ⚠  SKIP  ERC-8004 Identity check — address not parsed');
+  console.warn('  ⚠  SKIP  ERC-8004 Identity check — address not parsed from addresses.ts');
+  skipped++;
 }
 
 // --- Summary ---
-console.log(`\n${passed + failed} check(s): ${passed} passed, ${failed} failed\n`);
-if (failed > 0) process.exit(1);
+const total = passed + failed + skipped;
+console.log(`\n${total} check(s): ${passed} passed, ${failed} failed, ${skipped} skipped\n`);
+// Skips mean the deploy was not fully verified — treat as failure.
+if (failed > 0 || skipped > 0) process.exit(1);

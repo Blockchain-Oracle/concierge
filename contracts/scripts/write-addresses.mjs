@@ -133,7 +133,13 @@ if (missing.length > 0) {
 
 // --- Locate block boundaries in addresses.ts ---
 
-const fullContent = readFileSync(addressesPath, 'utf8');
+let fullContent;
+try {
+  fullContent = readFileSync(addressesPath, 'utf8');
+} catch (err) {
+  console.error(`Cannot read addresses file at ${addressesPath}: ${err.message}`);
+  process.exit(1);
+}
 const MAINNET_MARKER = 'mantleMainnet: {';
 const SEPOLIA_MARKER = 'mantleSepolia: {';
 
@@ -209,18 +215,21 @@ for (const { contractName, fieldName, pendingPath, addr } of updates) {
       // MAINNET_PENDING_ADDRESS_SLOTS lives in the suffix (after the mantleSepolia block).
       const before = updatedSuffix;
       updatedSuffix = updatedSuffix.replace(slotRe, '');
-      if (updatedSuffix === before) {
+      // Only warn on path-mismatch — not on idempotent re-runs where the slot was already removed.
+      // If the address field did not change (next === updatedBlock means no replacement occurred),
+      // the slot was already absent and the warn would fire on every re-run, training operators to ignore it.
+      if (updatedSuffix === before && next !== block) {
         console.warn(
-          `  ⚠  Lockbox slot '${pendingPath}' not found in ${PENDING_SLOTS_CONST} — already removed or path changed?`,
+          `  ⚠  Lockbox slot '${pendingPath}' not found in ${PENDING_SLOTS_CONST} — path may have changed?`,
         );
       }
     } else {
       // SEPOLIA_PENDING_ADDRESS_SLOTS is within the sepoliaBlock (runs to EOF).
       const before = updatedBlock;
       updatedBlock = updatedBlock.replace(slotRe, '');
-      if (updatedBlock === before) {
+      if (updatedBlock === before && next !== block) {
         console.warn(
-          `  ⚠  Lockbox slot '${pendingPath}' not found in ${PENDING_SLOTS_CONST} — already removed or path changed?`,
+          `  ⚠  Lockbox slot '${pendingPath}' not found in ${PENDING_SLOTS_CONST} — path may have changed?`,
         );
       }
     }
@@ -252,14 +261,19 @@ if (content === fullContent) {
     execSync('pnpm --filter @concierge/shared run test', { cwd: REPO_ROOT, stdio: 'inherit' });
     console.log('typecheck + test passed ✓');
   } catch (err) {
-    console.error(`typecheck/test FAILED — reverting addresses.ts: ${err.message}`);
+    console.error(
+      `typecheck/test FAILED — reverting addresses.ts.\n` +
+        `  Fix the errors above, then re-run: node contracts/scripts/write-addresses.mjs --network ${network}`,
+    );
     try {
       const revertTmp = `${addressesPath}.tmp`;
       writeFileSync(revertTmp, fullContent, 'utf8');
       renameSync(revertTmp, addressesPath);
     } catch (revertErr) {
-      console.error('FATAL: revert also failed. Restore addresses.ts from git manually.');
-      console.error(revertErr);
+      console.error(
+        `FATAL: revert of ${addressesPath} also failed: ${revertErr.message}\n` +
+          '  Manually restore with: git checkout packages/shared/src/addresses.ts',
+      );
     }
     process.exit(1);
   }

@@ -15,6 +15,9 @@
 # Required env vars: MANTLE_RPC_URL, OPS_PRIVATE_KEY, MANTLESCAN_API_KEY
 set -euo pipefail
 
+# Top-level failure banner: any set -e exit (broadcast, write, smoke) prints this before aborting.
+trap 'echo "" >&2; echo "DEPLOY FAILED — see error above." >&2' ERR
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTRACTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$CONTRACTS_DIR/.." && pwd)"
@@ -96,7 +99,15 @@ CI_CONCLUSION=$(gh run list \
   CI_CONCLUSION="unknown-skip"
 }
 
-if [[ "$CI_CONCLUSION" != "success" && "$CI_CONCLUSION" != "unknown-skip" ]]; then
+if [[ -z "$CI_CONCLUSION" || "$CI_CONCLUSION" == "null" ]]; then
+  echo "WARNING: No CI runs found for main — cannot verify green CI." >&2
+  read -rp "No CI runs found. Type YES to continue anyway (or anything else to abort): " ci_confirm
+  if [[ "$ci_confirm" != "YES" ]]; then
+    echo "Aborted." >&2
+    exit 1
+  fi
+  CI_CONCLUSION="unknown-skip"
+elif [[ "$CI_CONCLUSION" != "success" && "$CI_CONCLUSION" != "unknown-skip" ]]; then
   echo "WARNING: Most recent CI run on main is '${CI_CONCLUSION}' — not green." >&2
   read -rp "CI is not green. Type YES to continue anyway (or anything else to abort): " ci_confirm
   if [[ "$ci_confirm" != "YES" ]]; then
