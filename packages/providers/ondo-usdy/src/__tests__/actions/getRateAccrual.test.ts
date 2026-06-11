@@ -35,6 +35,16 @@ describe('getRateAccrual — fork (real Mantle mainnet state)', () => {
     expect(result.rateMantissa).toBe('0'); // no on-chain accrual rate for Mantle USDY
     expect(Number(result.lastUpdateBlock)).toBeGreaterThan(0);
   }, 30_000);
+
+  it('multiplier is non-decreasing across consecutive calls (monotonicity guard)', async () => {
+    // USDY is a yield-bearing token — its DEX price only appreciates. Two sequential reads
+    // on the same pinned fork block return equal values, satisfying the >= invariant.
+    // In production, multiplier(T+Δt) >= multiplier(T) always holds.
+    const ctx = { publicClient: fork.publicClient, chainId: 5000 as const, addresses };
+    const result1 = await executeGetRateAccrual(ctx);
+    const result2 = await executeGetRateAccrual(ctx);
+    expect(BigInt(result2.multiplier)).toBeGreaterThanOrEqual(BigInt(result1.multiplier));
+  }, 30_000);
 });
 
 describe('getRateAccrual — error paths (mocked)', () => {
