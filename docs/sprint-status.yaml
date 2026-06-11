@@ -115,11 +115,11 @@ stories:
     merged_at: ""
   - id: story-16-mock-aave-oracle
     epic: "Epic E1 — Smart Contracts"
-    status: PENDING
+    status: COMPLETE
     depends_on: [story-03-foundry-init-and-remappings]
     issue_url: ""
-    pr_url: ""
-    merged_at: ""
+    pr_url: "https://github.com/Blockchain-Oracle/concierge/pull/45"
+    merged_at: "2026-06-11"
   - id: story-17-helper-config
     epic: "Epic E1 — Smart Contracts"
     status: PENDING
