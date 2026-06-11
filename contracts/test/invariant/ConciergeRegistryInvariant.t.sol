@@ -94,9 +94,7 @@ contract ConciergeRegistryInvariantTest is Test {
         for (uint256 a = 0; a < _actors.length; a++) {
             uint256[] memory owned = registry.agentsByOwner(_actors[a]);
             for (uint256 k = 0; k < owned.length; k++) {
-                assertEq(
-                    registry.getAgent(owned[k]).owner, _actors[a], "stale reverse-index entry"
-                );
+                assertEq(registry.getAgent(owned[k]).owner, _actors[a], "stale reverse-index entry");
             }
         }
     }
@@ -136,9 +134,7 @@ contract ConciergeRegistryInvariantTest is Test {
         uint256 nextId = registry.nextAgentId();
         for (uint256 i = 1; i < nextId; i++) {
             assertNotEq(
-                registry.getAgent(i).sessionKeyValidator,
-                address(0),
-                "sessionKeyValidator is zero"
+                registry.getAgent(i).sessionKeyValidator, address(0), "sessionKeyValidator is zero"
             );
         }
     }
