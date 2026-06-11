@@ -13,7 +13,6 @@ import {
     OwnerAgentLimitReached,
     InvalidOwner
 } from "../../src/errors/ConciergeErrors.sol";
-import { AgentFixtures } from "../helpers/AgentFixtures.sol";
 
 /// forge-config: default.fuzz.runs = 1024
 
@@ -41,14 +40,19 @@ contract ConciergeRegistryFuzzTest is Test {
 
     // ─── Goal hash dimension ────────────────────────────────────────────────
 
-    /// Any non-zero bytes32 must register successfully.
+    /// Any non-zero bytes32 must register successfully and fully initialise the record.
     function testFuzz_RegisterAgent_AcceptsAllNonZeroGoalHashes(
         bytes32 hash
     ) public {
         vm.assume(hash != bytes32(0));
         vm.prank(operator);
         uint256 id = registry.registerAgent(alice, validator, hash, "");
-        assertEq(registry.getAgent(id).goalHash, hash);
+        IConciergeRegistry.AgentRecord memory rec = registry.getAgent(id);
+        assertEq(rec.goalHash, hash);
+        assertEq(rec.owner, alice);
+        assertEq(rec.sessionKeyValidator, validator);
+        assertTrue(rec.active);
+        assertEq(rec.policyData.length, 0);
     }
 
     /// Zero hash must always revert with EmptyGoalHash, regardless of other inputs.

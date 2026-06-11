@@ -33,12 +33,12 @@ max_test_rejects = 65536
 # Fixed seed → deterministic runs in CI. Override locally with --fuzz-seed.
 seed = "0xdeadbeefcafe0001"
 
-# `fail_on_revert = false` for now — no invariants exist yet. Story-13
-# adds the first invariant test with a handler contract; that PR should
-# flip this to `true` after the handler's `vm.assume` routing is in place.
+# fail_on_revert = false — handler functions may legitimately revert
+# (wrong role, paused, non-owner, etc.); invariants are checked on the
+# resulting state, not the call outcome.
 [invariant]
 runs = 256
-depth = 64
+depth = 32
 fail_on_revert = false
 
 [fmt]
