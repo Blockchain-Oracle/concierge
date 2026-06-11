@@ -31,7 +31,7 @@ async function setupBorrower(anvilAccountIdx: number) {
 
   await mintToken(anvil, mocks.usdc, addr, 500_000_000n);
 
-  await walletClient.writeContract({
+  const approveHash = await walletClient.writeContract({
     address: mocks.usdc,
     abi: erc20Abi,
     functionName: 'approve',
@@ -39,7 +39,8 @@ async function setupBorrower(anvilAccountIdx: number) {
     account: addr,
     chain,
   });
-  await walletClient.writeContract({
+  await publicClient.waitForTransactionReceipt({ hash: approveHash });
+  const supplyHash = await walletClient.writeContract({
     address: mocks.pool,
     abi: poolAbi,
     functionName: 'supply',
@@ -47,7 +48,8 @@ async function setupBorrower(anvilAccountIdx: number) {
     account: addr,
     chain,
   });
-  await walletClient.writeContract({
+  await publicClient.waitForTransactionReceipt({ hash: supplyHash });
+  const borrowHash = await walletClient.writeContract({
     address: mocks.pool,
     abi: poolAbi,
     functionName: 'borrow',
@@ -55,6 +57,7 @@ async function setupBorrower(anvilAccountIdx: number) {
     account: addr,
     chain,
   });
+  await publicClient.waitForTransactionReceipt({ hash: borrowHash });
 
   const { createWalletClient, http } = await import('viem');
   // Use the Anvil account address directly — Anvil has it unlocked for eth_sendTransaction.

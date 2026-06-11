@@ -46,7 +46,7 @@ describe('getUserAccountData', () => {
     const { walletClient, publicClient, chain } = anvil;
 
     await mintToken(anvil, mocks.usdc, addr, 200_000_000n);
-    await walletClient.writeContract({
+    const hfApproveHash = await walletClient.writeContract({
       address: mocks.usdc,
       abi: erc20Abi,
       functionName: 'approve',
@@ -54,7 +54,8 @@ describe('getUserAccountData', () => {
       account: addr,
       chain,
     });
-    await walletClient.writeContract({
+    await publicClient.waitForTransactionReceipt({ hash: hfApproveHash });
+    const hfSupplyHash = await walletClient.writeContract({
       address: mocks.pool,
       abi: poolAbi,
       functionName: 'supply',
@@ -62,7 +63,8 @@ describe('getUserAccountData', () => {
       account: addr,
       chain,
     });
-    await walletClient.writeContract({
+    await publicClient.waitForTransactionReceipt({ hash: hfSupplyHash });
+    const hfBorrowHash = await walletClient.writeContract({
       address: mocks.pool,
       abi: poolAbi,
       functionName: 'borrow',
@@ -70,6 +72,7 @@ describe('getUserAccountData', () => {
       account: addr,
       chain,
     });
+    await publicClient.waitForTransactionReceipt({ hash: hfBorrowHash });
 
     const data = await getUserAccountData(publicClient, mocks.pool, addr);
     // HF = (collateral × LT / 10000) / debt = 200e8 × 8000 / 10000 / 100e8 = 1.6
@@ -105,7 +108,7 @@ describe('maxSafeBorrow', () => {
     const { walletClient, publicClient, chain } = anvil;
 
     await mintToken(anvil, mocks.usdc, addr, 300_000_000n);
-    await walletClient.writeContract({
+    const msApproveHash = await walletClient.writeContract({
       address: mocks.usdc,
       abi: erc20Abi,
       functionName: 'approve',
@@ -113,7 +116,8 @@ describe('maxSafeBorrow', () => {
       account: addr,
       chain,
     });
-    await walletClient.writeContract({
+    await publicClient.waitForTransactionReceipt({ hash: msApproveHash });
+    const msSupplyHash = await walletClient.writeContract({
       address: mocks.pool,
       abi: poolAbi,
       functionName: 'supply',
@@ -121,6 +125,7 @@ describe('maxSafeBorrow', () => {
       account: addr,
       chain,
     });
+    await publicClient.waitForTransactionReceipt({ hash: msSupplyHash });
 
     const safeBorrow = await maxSafeBorrow({
       publicClient,

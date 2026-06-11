@@ -28,7 +28,7 @@ async function makeWithdrawer(anvilAccountIdx: number, withDebt = false) {
   const { walletClient, publicClient, chain } = anvil;
 
   await mintToken(anvil, mocks.usdc, addr, 500_000_000n);
-  await walletClient.writeContract({
+  const approveHash = await walletClient.writeContract({
     address: mocks.usdc,
     abi: erc20Abi,
     functionName: 'approve',
@@ -36,7 +36,8 @@ async function makeWithdrawer(anvilAccountIdx: number, withDebt = false) {
     account: addr,
     chain,
   });
-  await walletClient.writeContract({
+  await publicClient.waitForTransactionReceipt({ hash: approveHash });
+  const supplyHash = await walletClient.writeContract({
     address: mocks.pool,
     abi: poolAbi,
     functionName: 'supply',
@@ -44,10 +45,11 @@ async function makeWithdrawer(anvilAccountIdx: number, withDebt = false) {
     account: addr,
     chain,
   });
+  await publicClient.waitForTransactionReceipt({ hash: supplyHash });
 
   if (withDebt) {
     // Borrow 140 USDC → HF = (200 × 0.80) / 140 ≈ 1.14 < 1.5
-    await walletClient.writeContract({
+    const borrowHash = await walletClient.writeContract({
       address: mocks.pool,
       abi: poolAbi,
       functionName: 'borrow',
@@ -55,6 +57,7 @@ async function makeWithdrawer(anvilAccountIdx: number, withDebt = false) {
       account: addr,
       chain,
     });
+    await publicClient.waitForTransactionReceipt({ hash: borrowHash });
   }
 
   const wc = createWalletClient({
@@ -139,7 +142,7 @@ describe('withdraw action', () => {
     const { walletClient, publicClient, chain } = anvil;
 
     await mintToken(anvil, mocks.usdc, addr, 500_000_000n);
-    await walletClient.writeContract({
+    const inlineApproveHash = await walletClient.writeContract({
       address: mocks.usdc,
       abi: erc20Abi,
       functionName: 'approve',
@@ -147,7 +150,8 @@ describe('withdraw action', () => {
       account: addr,
       chain,
     });
-    await walletClient.writeContract({
+    await publicClient.waitForTransactionReceipt({ hash: inlineApproveHash });
+    const inlineSupplyHash = await walletClient.writeContract({
       address: mocks.pool,
       abi: poolAbi,
       functionName: 'supply',
@@ -155,8 +159,9 @@ describe('withdraw action', () => {
       account: addr,
       chain,
     });
+    await publicClient.waitForTransactionReceipt({ hash: inlineSupplyHash });
     // Borrow small amount (HF = (200 × 0.80) / 10 = 16.0 > 1.5)
-    await walletClient.writeContract({
+    const inlineBorrowHash = await walletClient.writeContract({
       address: mocks.pool,
       abi: poolAbi,
       functionName: 'borrow',
@@ -164,6 +169,7 @@ describe('withdraw action', () => {
       account: addr,
       chain,
     });
+    await publicClient.waitForTransactionReceipt({ hash: inlineBorrowHash });
 
     const wc = createWalletClient({
       transport: http(`http://127.0.0.1:${anvil.port}`),
