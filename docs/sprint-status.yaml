@@ -244,11 +244,11 @@ stories:
     merged_at: "2026-06-11"
   - id: story-37-ondo-usdy-tests
     epic: "Epic E3 — Action Providers"
-    status: PENDING
+    status: COMPLETE
     depends_on: [story-36-ondo-usdy-provider]
     issue_url: ""
-    pr_url: ""
-    merged_at: ""
+    pr_url: "https://github.com/Blockchain-Oracle/concierge/pull/68"
+    merged_at: "2026-06-11"
   - id: story-38-meth-staking-provider
     epic: "Epic E3 — Action Providers"
     status: PENDING
