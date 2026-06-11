@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-import {Script, console2} from "forge-std/Script.sol";
+import { Script, console2 } from "forge-std/Script.sol";
 
-import {HelperConfig, NetworkConfig} from "./HelperConfig.s.sol";
-import {ConciergeRegistry} from "../src/ConciergeRegistry.sol";
-import {ConciergeRegistryProxy} from "../src/ConciergeRegistryProxy.sol";
+import { HelperConfig, NetworkConfig } from "./HelperConfig.s.sol";
+import { ConciergeRegistry } from "../src/ConciergeRegistry.sol";
+import { ConciergeRegistryProxy } from "../src/ConciergeRegistryProxy.sol";
 
 /// @notice One-shot deploy script for Mantle Sepolia and Mainnet.
 ///
@@ -29,9 +29,16 @@ import {ConciergeRegistryProxy} from "../src/ConciergeRegistryProxy.sol";
 /// api-sepolia.mantlescan.xyz (chain 5003) automatically.
 contract DeployAll is Script {
     function run() external {
-        // In forge script context, msg.sender == tx.origin == the broadcaster EOA.
-        address deployer = msg.sender;
-        require(deployer.balance >= 0.1 ether, "DeployAll: deployer balance < 0.1 MNT, top up first");
+        // tx.origin is the broadcaster EOA in both --broadcast and vm.startBroadcast() contexts.
+        // msg.sender inside an external call within broadcast is the script contract, not the EOA.
+        address deployer = tx.origin;
+        require(
+            deployer.balance >= 0.1 ether, "DeployAll: deployer balance < 0.1 MNT, top up first"
+        );
+
+        // Chain guard: only Mantle Mainnet (5000) and Mantle Sepolia (5003) are supported.
+        uint256 chainId = block.chainid;
+        require(chainId == 5000 || chainId == 5003, "DeployAll: unsupported chain");
 
         // HelperConfig must be created BEFORE broadcast so it is not itself broadcast.
         HelperConfig helperConfig = new HelperConfig();
@@ -49,7 +56,7 @@ contract DeployAll is Script {
 
         vm.stopBroadcast();
 
-        // Structured log lines for write-addresses.mjs to parse from stdout/run logs.
+        // Informational logs — addresses are sourced from broadcast artifact by write-addresses.mjs.
         console2.log("DEPLOYED aavePool %s", cfg.aavePool);
         console2.log("DEPLOYED aaveOracle %s", cfg.aaveOracle);
         console2.log("DEPLOYED sUSDe %s", cfg.sUSDe);

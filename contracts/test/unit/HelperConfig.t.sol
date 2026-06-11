@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-import {Test} from "forge-std/Test.sol";
+import { Test } from "forge-std/Test.sol";
 
-import {HelperConfig, NetworkConfig, UnsupportedChain} from "../../script/HelperConfig.s.sol";
-import {SepoliaSeedPrices} from "../../script/lib/SepoliaSeedPrices.sol";
+import { HelperConfig, NetworkConfig, UnsupportedChain } from "../../script/HelperConfig.s.sol";
+import { SepoliaSeedPrices } from "../../script/lib/SepoliaSeedPrices.sol";
 import {
     AAVE_V3_POOL_MAINNET,
     AAVE_V3_ORACLE_MAINNET,
@@ -23,7 +23,7 @@ import {
     ERC8004_REPUTATION_SEPOLIA,
     EMODE_STABLECOIN_CATEGORY
 } from "../../script/lib/Addresses.sol";
-import {MockAaveOracle} from "../../src/mocks/MockAaveOracle.sol";
+import { MockAaveOracle } from "../../src/mocks/MockAaveOracle.sol";
 
 contract HelperConfigTest is Test {
     HelperConfig internal config;
@@ -39,8 +39,14 @@ contract HelperConfigTest is Test {
         NetworkConfig memory cfg = config.getConfig();
         assertEq(cfg.aavePool, AAVE_V3_POOL_MAINNET, "aavePool");
         assertEq(cfg.aaveOracle, AAVE_V3_ORACLE_MAINNET, "aaveOracle");
-        assertEq(cfg.aaveAddressesProvider, AAVE_V3_ADDRESSES_PROVIDER_MAINNET, "aaveAddressesProvider");
-        assertEq(cfg.aaveProtocolDataProvider, AAVE_V3_PROTOCOL_DATA_PROVIDER_MAINNET, "aaveProtocolDataProvider");
+        assertEq(
+            cfg.aaveAddressesProvider, AAVE_V3_ADDRESSES_PROVIDER_MAINNET, "aaveAddressesProvider"
+        );
+        assertEq(
+            cfg.aaveProtocolDataProvider,
+            AAVE_V3_PROTOCOL_DATA_PROVIDER_MAINNET,
+            "aaveProtocolDataProvider"
+        );
         assertEq(cfg.sUSDe, SUSDE_MAINNET, "sUSDe");
         assertEq(cfg.USDC, USDC_MAINNET, "USDC");
         assertEq(cfg.USDe, USDE_MAINNET, "USDe");
@@ -77,7 +83,9 @@ contract HelperConfigTest is Test {
     function test_HelperConfig_Sepolia_ProvidersAreZero() public {
         vm.chainId(5003);
         NetworkConfig memory cfg = config.getConfig();
-        assertEq(cfg.aaveAddressesProvider, address(0), "Sepolia: no addresses provider (mock stack)");
+        assertEq(
+            cfg.aaveAddressesProvider, address(0), "Sepolia: no addresses provider (mock stack)"
+        );
         assertEq(cfg.aaveProtocolDataProvider, address(0), "Sepolia: no data provider (mock stack)");
     }
 
@@ -97,12 +105,15 @@ contract HelperConfigTest is Test {
         vm.chainId(5003);
         // HelperConfig uses tx.origin to identify the deployer (correct in broadcast context).
         // In a Foundry test, tx.origin == the forge-std default sender address.
-        address expectedDeployer = tx.origin;
+        address deployer = tx.origin;
         NetworkConfig memory cfg = config.getConfig();
         MockAaveOracle oracle = MockAaveOracle(cfg.aaveOracle);
-        address deployer = expectedDeployer;
-        assertTrue(oracle.hasRole(oracle.DEFAULT_ADMIN_ROLE(), deployer), "deployer has DEFAULT_ADMIN_ROLE");
-        assertTrue(oracle.hasRole(oracle.ORACLE_ADMIN_ROLE(), deployer), "deployer has ORACLE_ADMIN_ROLE");
+        assertTrue(
+            oracle.hasRole(oracle.DEFAULT_ADMIN_ROLE(), deployer), "deployer has DEFAULT_ADMIN_ROLE"
+        );
+        assertTrue(
+            oracle.hasRole(oracle.ORACLE_ADMIN_ROLE(), deployer), "deployer has ORACLE_ADMIN_ROLE"
+        );
         // HelperConfig must NOT retain admin after handoff
         assertFalse(
             oracle.hasRole(oracle.DEFAULT_ADMIN_ROLE(), address(config)),

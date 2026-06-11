@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-import {Test} from "forge-std/Test.sol";
-import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
+import { Test } from "forge-std/Test.sol";
+import { IAccessControl } from "@openzeppelin/contracts/access/IAccessControl.sol";
 
 import {
     MockAaveOracle,
@@ -87,7 +87,9 @@ contract MockAaveOracleTest is Test {
     function test_SetAssetPrice_RolesGated() public {
         vm.expectRevert(
             abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector, alice, oracle.ORACLE_ADMIN_ROLE()
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                alice,
+                oracle.ORACLE_ADMIN_ROLE()
             )
         );
         vm.prank(alice);
@@ -159,7 +161,9 @@ contract MockAaveOracleTest is Test {
         address[] memory sources = new address[](0);
         vm.expectRevert(
             abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector, alice, oracle.ORACLE_ADMIN_ROLE()
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                alice,
+                oracle.ORACLE_ADMIN_ROLE()
             )
         );
         vm.prank(alice);
@@ -169,7 +173,9 @@ contract MockAaveOracleTest is Test {
     function test_SetFallbackOracle_RolesGated() public {
         vm.expectRevert(
             abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector, alice, oracle.ORACLE_ADMIN_ROLE()
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                alice,
+                oracle.ORACLE_ADMIN_ROLE()
             )
         );
         vm.prank(alice);

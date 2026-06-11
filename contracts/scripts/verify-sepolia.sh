@@ -48,21 +48,34 @@ for entry in "${CONTRACTS[@]}"; do
   NAME=$(echo "$entry" | awk '{print $1}')
   ADDR=$(echo "$entry" | awk '{print $2}')
 
-  echo -n "  $NAME ($ADDR) … "
+  echo "  $NAME ($ADDR) …"
 
-  # forge verify-contract handles rate-limiting and retries internally
+  # Capture stderr so failures are diagnosable; print it only on error.
+  # ConciergeRegistryProxy has a non-trivial constructor — pass --guess-constructor-args
+  # so forge can recover the ABI-encoded init calldata from the broadcast artifact.
+  EXTRA_FLAGS=()
+  if [[ "$NAME" == "ConciergeRegistryProxy" ]]; then
+    EXTRA_FLAGS+=(--guess-constructor-args)
+  fi
+
+  STDERR_OUT=$(mktemp)
   if forge verify-contract \
       --chain 5003 \
       --rpc-url "$MANTLE_SEPOLIA_RPC_URL" \
       --etherscan-api-key "$MANTLESCAN_SEPOLIA_API_KEY" \
       --verifier-url "https://api-sepolia.mantlescan.xyz/api" \
       --watch \
-      "$ADDR" "$NAME" 2>/dev/null; then
-    echo "OK"
+      "${EXTRA_FLAGS[@]}" \
+      "$ADDR" "$NAME" 2>"$STDERR_OUT"; then
+    echo "    OK"
   else
-    echo "FAILED (will retry manually)"
+    echo "    FAILED"
+    echo "    --- forge stderr ---"
+    cat "$STDERR_OUT"
+    echo "    ---"
     FAILED=$((FAILED + 1))
   fi
+  rm -f "$STDERR_OUT"
 done
 
 if [[ $FAILED -gt 0 ]]; then

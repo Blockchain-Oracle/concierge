@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-import {Test} from "forge-std/Test.sol";
+import { Test } from "forge-std/Test.sol";
 
-import {DataTypes} from "@aave/protocol/libraries/types/DataTypes.sol";
-import {MockAavePool} from "../../src/mocks/MockAavePool.sol";
-import {MockAavePoolLib} from "../../src/mocks/MockAavePoolLib.sol";
-import {MockAaveOracle} from "../../src/mocks/MockAaveOracle.sol";
+import { DataTypes } from "@aave/protocol/libraries/types/DataTypes.sol";
+import { MockAavePool } from "../../src/mocks/MockAavePool.sol";
+import { MockAavePoolLib } from "../../src/mocks/MockAavePoolLib.sol";
+import { MockAaveOracle } from "../../src/mocks/MockAaveOracle.sol";
 import {
     InsufficientCollateralLTV,
     WouldBreakHealthFactor,
@@ -48,12 +48,22 @@ contract MockAavePoolTest is Test {
         oracle.setAssetPrice(USDY, 100_000_000);
         oracle.setAssetPrice(mETH, 300_000_000_000); // $3000
         // sUSDe: LTV=0 in general mode (E-Mode trap), active, NOT borrowing-enabled, eMode cat 1
-        pool.mockInitReserve(sUSDe, 18, makeAddr("aSUSDe"), makeAddr("dSUSDe"), 200, 0, 0, 0, false, 1);
-        pool.mockInitReserve(USDC, 6, makeAddr("aUSDC"), makeAddr("dUSDC"), 400, 500, 7500, 8000, true, 1);
-        pool.mockInitReserve(USDe, 18, makeAddr("aUSDe"), makeAddr("dUSDe"), 350, 400, 7500, 8000, true, 1);
-        pool.mockInitReserve(USDY, 18, makeAddr("aUSDY"), makeAddr("dUSDY"), 350, 400, 7500, 8000, true, 1);
+        pool.mockInitReserve(
+            sUSDe, 18, makeAddr("aSUSDe"), makeAddr("dSUSDe"), 200, 0, 0, 0, false, 1
+        );
+        pool.mockInitReserve(
+            USDC, 6, makeAddr("aUSDC"), makeAddr("dUSDC"), 400, 500, 7500, 8000, true, 1
+        );
+        pool.mockInitReserve(
+            USDe, 18, makeAddr("aUSDe"), makeAddr("dUSDe"), 350, 400, 7500, 8000, true, 1
+        );
+        pool.mockInitReserve(
+            USDY, 18, makeAddr("aUSDY"), makeAddr("dUSDY"), 350, 400, 7500, 8000, true, 1
+        );
         // mETH is NOT in E-Mode 1 — eModeCategoryId=0 ensures its LTV/LT is unaffected by eMode
-        pool.mockInitReserve(mETH, 18, makeAddr("amETH"), makeAddr("dmETH"), 250, 350, 7000, 7500, true, 0);
+        pool.mockInitReserve(
+            mETH, 18, makeAddr("amETH"), makeAddr("dmETH"), 250, 350, 7000, 7500, true, 0
+        );
         // E-Mode 1: "sUSDe Stablecoins" (verified from Mantle Mainnet)
         pool.mockSetEmodeCategory(1, EMODE1_LTV, EMODE1_LT, EMODE1_BONUS, "sUSDe Stablecoins");
         vm.stopPrank();
@@ -220,7 +230,9 @@ contract MockAavePoolTest is Test {
         pool.mockSetReserveData(USDC, 600, 700);
         DataTypes.ReserveDataLegacy memory rd = pool.getReserveData(USDC);
         assertEq(rd.currentLiquidityRate, (600 * MockAavePoolLib.RAY) / 10_000, "new supplyRate");
-        assertEq(rd.currentVariableBorrowRate, (700 * MockAavePoolLib.RAY) / 10_000, "new borrowRate");
+        assertEq(
+            rd.currentVariableBorrowRate, (700 * MockAavePoolLib.RAY) / 10_000, "new borrowRate"
+        );
     }
 
     // ─── getReserveConfigurationData ─────────────────────────────────────────

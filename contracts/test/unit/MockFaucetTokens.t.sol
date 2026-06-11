@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-import {Test} from "forge-std/Test.sol";
-import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
+import { Test } from "forge-std/Test.sol";
+import { IAccessControl } from "@openzeppelin/contracts/access/IAccessControl.sol";
 
-import {MockSUSDe} from "../../src/mocks/MockSUSDe.sol";
-import {MockUSDC} from "../../src/mocks/MockUSDC.sol";
-import {MockUSDY} from "../../src/mocks/MockUSDY.sol";
-import {MockMETH} from "../../src/mocks/MockMETH.sol";
+import { MockSUSDe } from "../../src/mocks/MockSUSDe.sol";
+import { MockUSDC } from "../../src/mocks/MockUSDC.sol";
+import { MockUSDY } from "../../src/mocks/MockUSDY.sol";
+import { MockMETH } from "../../src/mocks/MockMETH.sol";
 import {
     MockFaucetToken,
     FaucetCooldownActive,
@@ -184,7 +184,9 @@ contract MockTokenTest is Test {
 
     function test_mint_NonAdminReverts() public {
         vm.expectRevert(
-            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, alice, susde.MINTER_ROLE())
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, alice, susde.MINTER_ROLE()
+            )
         );
         vm.prank(alice);
         susde.mint(alice, 100e18);

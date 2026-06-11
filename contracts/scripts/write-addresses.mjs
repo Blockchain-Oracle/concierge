@@ -13,6 +13,10 @@ import { execSync } from 'node:child_process';
  * Each field is updated with a targeted replacement that matches the
  * field name + its current value (ZERO_ADDRESS or an existing 0x address),
  * so the script is idempotent and safe to re-run on updated deployments.
+ *
+ * The replacement is scoped to the mantleSepolia block only — both
+ * mantleMainnet and mantleSepolia share field names (pool, oracle, USDC, …)
+ * and a global regex would silently clobber 8 audited Mainnet addresses.
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -74,42 +78,56 @@ const CONTRACT_FIELD_MAP = [
   ['ConciergeRegistryProxy', 'conciergeRegistry'],
 ];
 
+let missingRequired = false;
 const updates = CONTRACT_FIELD_MAP.flatMap(([contractName, fieldName]) => {
   const addr = deployed[contractName];
   if (!addr) {
-    console.warn(`  ⚠ ${contractName} not found in broadcast artifact — skipping`);
+    console.error(`  ✗ ${contractName} not found in broadcast artifact`);
+    missingRequired = true;
     return [];
   }
   return [{ contractName, fieldName, addr }];
 });
 
-if (updates.length === 0) {
-  console.error('No matching contracts found in broadcast artifact. Aborting.');
+if (missingRequired) {
+  console.error('One or more required contracts missing from broadcast artifact. Aborting.');
   process.exit(1);
 }
 
-// --- Update addresses.ts with targeted field replacements ---
+// --- Update addresses.ts — scoped to mantleSepolia block only ---
 
-let content = readFileSync(addressesPath, 'utf8');
-const original = content;
+const fullContent = readFileSync(addressesPath, 'utf8');
+const SEPOLIA_MARKER = 'mantleSepolia: {';
+const sepoliaStart = fullContent.indexOf(SEPOLIA_MARKER);
+if (sepoliaStart === -1) {
+  console.error(`Cannot locate '${SEPOLIA_MARKER}' in ${addressesPath}. Aborting.`);
+  process.exit(1);
+}
+
+const prefix = fullContent.slice(0, sepoliaStart);
+let sepoliaBlock = fullContent.slice(sepoliaStart);
 
 // ADDRESS_RE matches: `ZERO_ADDRESS` or `'0xABCD…1234' as Address`
 const ADDRESS_RE = `(ZERO_ADDRESS|'0x[a-fA-F0-9]{40}'(?:\\s+as\\s+Address)?)`;
 
 for (const { contractName, fieldName, addr } of updates) {
   // Anchored pattern: match the field name followed by a colon, then the current address value.
-  // The word boundary \b prevents matching substrings of longer identifiers.
+  // Applied only to sepoliaBlock so mantleMainnet fields with the same name are never touched.
   const re = new RegExp(`(\\b${fieldName}:\\s*)${ADDRESS_RE}`, 'g');
-  const next = content.replace(re, `$1'${addr}' as Address`);
-  if (next === content) {
-    console.warn(`  ⚠ Field '${fieldName}' not found in addresses.ts (contract: ${contractName})`);
+  const next = sepoliaBlock.replace(re, `$1'${addr}' as Address`);
+  if (next === sepoliaBlock) {
+    console.warn(
+      `  ⚠ Field '${fieldName}' not found in mantleSepolia block (contract: ${contractName})`,
+    );
   } else {
     console.log(`  ✓ ${contractName} → ${fieldName}: ${addr}`);
-    content = next;
+    sepoliaBlock = next;
   }
 }
 
-if (content === original) {
+const content = prefix + sepoliaBlock;
+
+if (content === fullContent) {
   console.log('addresses.ts already up to date — no changes written.');
 } else {
   writeFileSync(addressesPath, content, 'utf8');
@@ -122,7 +140,12 @@ if (content === original) {
     console.log('typecheck passed ✓');
   } catch {
     console.error('typecheck FAILED — reverting addresses.ts');
-    writeFileSync(addressesPath, original, 'utf8');
+    try {
+      writeFileSync(addressesPath, fullContent, 'utf8');
+    } catch (revertErr) {
+      console.error('FATAL: revert also failed. Restore addresses.ts from git manually.');
+      console.error(revertErr);
+    }
     process.exit(1);
   }
 }

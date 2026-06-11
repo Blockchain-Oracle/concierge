@@ -3,11 +3,11 @@ pragma solidity 0.8.26;
 
 // solhint-disable no-unused-vars
 
-import {DataTypes} from "@aave/protocol/libraries/types/DataTypes.sol";
-import {IAaveOracle} from "@aave/interfaces/IAaveOracle.sol";
+import { DataTypes } from "@aave/protocol/libraries/types/DataTypes.sol";
+import { IAaveOracle } from "@aave/interfaces/IAaveOracle.sol";
 
-import {MockAavePoolLib} from "./MockAavePoolLib.sol";
-import {ReserveDataLite, EModeCategory} from "./types/MockReserveTypes.sol";
+import { MockAavePoolLib } from "./MockAavePoolLib.sol";
+import { ReserveDataLite, EModeCategory } from "./types/MockReserveTypes.sol";
 
 /// @notice Errors
 error InsufficientCollateralLTV();
@@ -24,7 +24,11 @@ contract MockAavePool {
     // ─── Events ──────────────────────────────────────────────────────────────
 
     event Supply(
-        address indexed reserve, address user, address indexed onBehalfOf, uint256 amount, uint16 indexed referralCode
+        address indexed reserve,
+        address user,
+        address indexed onBehalfOf,
+        uint256 amount,
+        uint16 indexed referralCode
     );
     event Borrow(
         address indexed reserve,
@@ -36,9 +40,15 @@ contract MockAavePool {
         uint16 indexed referralCode
     );
     event Repay(
-        address indexed reserve, address indexed user, address indexed repayer, uint256 amount, bool useATokens
+        address indexed reserve,
+        address indexed user,
+        address indexed repayer,
+        uint256 amount,
+        bool useATokens
     );
-    event Withdraw(address indexed reserve, address indexed user, address indexed to, uint256 amount);
+    event Withdraw(
+        address indexed reserve, address indexed user, address indexed to, uint256 amount
+    );
     event UserEModeSet(address indexed user, uint8 categoryId);
     event ReserveDataUpdated(address indexed reserve, uint256 supplyRateBps, uint256 borrowRateBps);
 
@@ -58,7 +68,10 @@ contract MockAavePool {
     mapping(address asset => uint8) internal _decimals;
     mapping(address user => mapping(address asset => bool)) internal _collateralEnabled;
 
-    constructor(address _oracle, address _admin) {
+    constructor(
+        address _oracle,
+        address _admin
+    ) {
         oracle = _oracle;
         admin = _admin;
     }
@@ -99,30 +112,47 @@ contract MockAavePool {
         emit ReserveDataUpdated(asset, supplyRateBps, borrowRateBps);
     }
 
-    function mockSetReserveData(address asset, uint128 supplyRateBps, uint128 borrowRateBps) external onlyAdmin {
+    function mockSetReserveData(
+        address asset,
+        uint128 supplyRateBps,
+        uint128 borrowRateBps
+    ) external onlyAdmin {
         if (!_reserves[asset].active) revert AssetNotSupported(asset);
         _reserves[asset].supplyRateBps = supplyRateBps;
         _reserves[asset].borrowRateBps = borrowRateBps;
         emit ReserveDataUpdated(asset, supplyRateBps, borrowRateBps);
     }
 
-    function mockSetEmodeCategory(uint8 catId, uint16 ltvBps, uint16 ltBps, uint16 bonusBps, string calldata label)
-        external
-        onlyAdmin
-    {
-        _emodeCategories[catId] = EModeCategory({ltvBps: ltvBps, ltBps: ltBps, bonusBps: bonusBps, label: label});
+    function mockSetEmodeCategory(
+        uint8 catId,
+        uint16 ltvBps,
+        uint16 ltBps,
+        uint16 bonusBps,
+        string calldata label
+    ) external onlyAdmin {
+        _emodeCategories[catId] =
+            EModeCategory({ ltvBps: ltvBps, ltBps: ltBps, bonusBps: bonusBps, label: label });
     }
 
     // ─── IPool: supply / withdraw / borrow / repay / setUserEMode ─────────────
 
-    function supply(address asset, uint256 amount, address onBehalfOf, uint16 referralCode) external {
+    function supply(
+        address asset,
+        uint256 amount,
+        address onBehalfOf,
+        uint16 referralCode
+    ) external {
         if (!_reserves[asset].active) revert AssetNotSupported(asset);
         _supplies[onBehalfOf][asset] += amount;
         _collateralEnabled[onBehalfOf][asset] = true;
         emit Supply(asset, msg.sender, onBehalfOf, amount, referralCode);
     }
 
-    function withdraw(address asset, uint256 amount, address to) external returns (uint256) {
+    function withdraw(
+        address asset,
+        uint256 amount,
+        address to
+    ) external returns (uint256) {
         if (!_reserves[asset].active) revert AssetNotSupported(asset);
         uint256 bal = _supplies[msg.sender][asset];
         uint256 actual = amount == type(uint256).max ? bal : amount;
@@ -142,9 +172,7 @@ contract MockAavePool {
         uint256, /* interestRateMode */
         uint16 referralCode,
         address onBehalfOf
-    )
-        external
-    {
+    ) external {
         ReserveDataLite storage r = _reserves[asset];
         if (!r.active) revert AssetNotSupported(asset);
         if (!r.borrowingEnabled) revert BorrowingDisabled(asset);
@@ -167,10 +195,7 @@ contract MockAavePool {
         uint256 amount,
         uint256, /* interestRateMode */
         address onBehalfOf
-    )
-        external
-        returns (uint256)
-    {
+    ) external returns (uint256) {
         if (!_reserves[asset].active) revert AssetNotSupported(asset);
         uint256 debt = _currentDebt(onBehalfOf, asset);
         if (debt == 0) revert InsufficientDebt();
@@ -181,7 +206,9 @@ contract MockAavePool {
         return actual;
     }
 
-    function setUserEMode(uint8 categoryId) external {
+    function setUserEMode(
+        uint8 categoryId
+    ) external {
         _userEMode[msg.sender] = categoryId;
         if (_hasDebt(msg.sender)) {
             (,,,,, uint256 hf) = _computeAccountData(msg.sender);
@@ -190,13 +217,18 @@ contract MockAavePool {
         emit UserEModeSet(msg.sender, categoryId);
     }
 
-    function setUserUseReserveAsCollateral(address asset, bool useAsCollateral) external {
+    function setUserUseReserveAsCollateral(
+        address asset,
+        bool useAsCollateral
+    ) external {
         _collateralEnabled[msg.sender][asset] = useAsCollateral;
     }
 
     // ─── IPool: read surface ──────────────────────────────────────────────────
 
-    function getUserAccountData(address user)
+    function getUserAccountData(
+        address user
+    )
         external
         view
         returns (
@@ -211,7 +243,9 @@ contract MockAavePool {
         return _computeAccountData(user);
     }
 
-    function getReserveData(address asset) external view returns (DataTypes.ReserveDataLegacy memory data) {
+    function getReserveData(
+        address asset
+    ) external view returns (DataTypes.ReserveDataLegacy memory data) {
         if (!_reserves[asset].active) revert AssetNotSupported(asset);
         ReserveDataLite storage r = _reserves[asset];
         data.aTokenAddress = r.aToken;
@@ -223,7 +257,9 @@ contract MockAavePool {
         data.lastUpdateTimestamp = uint40(block.timestamp);
     }
 
-    function getEModeCategoryData(uint8 id) external view returns (DataTypes.EModeCategoryLegacy memory) {
+    function getEModeCategoryData(
+        uint8 id
+    ) external view returns (DataTypes.EModeCategoryLegacy memory) {
         EModeCategory storage c = _emodeCategories[id];
         return DataTypes.EModeCategoryLegacy({
             ltv: c.ltvBps,
@@ -242,7 +278,9 @@ contract MockAavePool {
         return _reserveList.length;
     }
 
-    function getReserveConfigurationData(address asset)
+    function getReserveConfigurationData(
+        address asset
+    )
         external
         view
         returns (
@@ -272,31 +310,37 @@ contract MockAavePool {
         isFrozen = false;
     }
 
-    function getUserEMode(address user) external view returns (uint256) {
+    function getUserEMode(
+        address user
+    ) external view returns (uint256) {
         return _userEMode[user];
     }
 
     // ─── Internal helpers ─────────────────────────────────────────────────────
 
-    function _currentDebt(address user, address asset) internal view returns (uint256) {
+    function _currentDebt(
+        address user,
+        address asset
+    ) internal view returns (uint256) {
         uint256 principal = _debts[user][asset];
         uint256 ts = _debtTimestamp[user][asset];
         if (principal == 0 || ts == 0) return 0;
         return MockAavePoolLib.accrueSimpleInterest(principal, _reserves[asset].borrowRateBps, ts);
     }
 
-    function _hasDebt(address user) internal view returns (bool) {
+    function _hasDebt(
+        address user
+    ) internal view returns (bool) {
         for (uint256 i = 0; i < _reserveList.length; i++) {
             if (_debts[user][_reserveList[i]] > 0) return true;
         }
         return false;
     }
 
-    function _computeSupplySide(address user, uint8 eModeId)
-        internal
-        view
-        returns (uint256 totalCollateral, uint256 weightedLT, uint256 weightedLTV)
-    {
+    function _computeSupplySide(
+        address user,
+        uint8 eModeId
+    ) internal view returns (uint256 totalCollateral, uint256 weightedLT, uint256 weightedLTV) {
         EModeCategory storage eMode = _emodeCategories[eModeId];
         for (uint256 i = 0; i < _reserveList.length; i++) {
             address asset = _reserveList[i];
@@ -310,12 +354,16 @@ contract MockAavePool {
                 _reserves[asset].liquidationThresholdBps, eMode.ltBps, eModeId, reserveCatId
             );
             weightedLT += (supplyUsd * lt) / MockAavePoolLib.BPS_DENOMINATOR;
-            uint16 ltvBps = MockAavePoolLib.effectiveLtv(_reserves[asset].ltvBps, eMode.ltvBps, eModeId, reserveCatId);
+            uint16 ltvBps = MockAavePoolLib.effectiveLtv(
+                _reserves[asset].ltvBps, eMode.ltvBps, eModeId, reserveCatId
+            );
             weightedLTV += (supplyUsd * ltvBps) / MockAavePoolLib.BPS_DENOMINATOR;
         }
     }
 
-    function _computeDebtSide(address user) internal view returns (uint256 totalDebt) {
+    function _computeDebtSide(
+        address user
+    ) internal view returns (uint256 totalDebt) {
         for (uint256 i = 0; i < _reserveList.length; i++) {
             address asset = _reserveList[i];
             uint256 debtAmt = _currentDebt(user, asset);
@@ -325,7 +373,9 @@ contract MockAavePool {
         }
     }
 
-    function _computeAccountData(address user)
+    function _computeAccountData(
+        address user
+    )
         internal
         view
         returns (
@@ -351,7 +401,11 @@ contract MockAavePool {
         healthFactor = MockAavePoolLib.computeHealthFactor(wLT, debt);
     }
 
-    function _requireSufficientCollateral(address user, address borrowAsset, uint256 amount) internal view {
+    function _requireSufficientCollateral(
+        address user,
+        address borrowAsset,
+        uint256 amount
+    ) internal view {
         uint256 priceUsd8 = IAaveOracle(oracle).getAssetPrice(borrowAsset);
         uint256 borrowUsd = MockAavePoolLib.toUsdBase(amount, priceUsd8, _decimals[borrowAsset]);
         (,, uint256 avail,,,) = _computeAccountData(user);

@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-import {Test} from "forge-std/Test.sol";
-import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
-import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
+import { Test } from "forge-std/Test.sol";
+import { IAccessControl } from "@openzeppelin/contracts/access/IAccessControl.sol";
+import { Pausable } from "@openzeppelin/contracts/utils/Pausable.sol";
 
-import {ConciergeRegistry} from "../../src/ConciergeRegistry.sol";
-import {ConciergeRegistryProxy} from "../../src/ConciergeRegistryProxy.sol";
-import {IConciergeRegistry} from "../../src/interfaces/IConciergeRegistry.sol";
+import { ConciergeRegistry } from "../../src/ConciergeRegistry.sol";
+import { ConciergeRegistryProxy } from "../../src/ConciergeRegistryProxy.sol";
+import { IConciergeRegistry } from "../../src/interfaces/IConciergeRegistry.sol";
 import {
     NotAgentOwner,
     AgentInactive,
@@ -17,7 +17,7 @@ import {
     PolicyTooLarge,
     SameValidator
 } from "../../src/errors/ConciergeErrors.sol";
-import {AgentFixtures} from "../helpers/AgentFixtures.sol";
+import { AgentFixtures } from "../helpers/AgentFixtures.sol";
 
 /// @notice Story-11 unit tests — happy paths, revert paths, role-gate, pause-gate.
 /// Contract name contains "ConciergeRegistryTest" so forge --match-contract picks it up.
@@ -96,7 +96,11 @@ contract ConciergeRegistryTestUnit is Test {
     function test_registerAgent_Reverts_WithoutAgentOperatorRole() public {
         bytes32 role = registry.AGENT_OPERATOR_ROLE();
         vm.prank(bob);
-        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, bob, role));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, bob, role
+            )
+        );
         registry.registerAgent(alice, validator, keccak256("g"), "");
     }
 
@@ -306,7 +310,11 @@ contract ConciergeRegistryTestUnit is Test {
     function test_pause_Reverts_WhenNotPauser() public {
         bytes32 role = registry.PAUSER_ROLE();
         vm.prank(bob);
-        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, bob, role));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, bob, role
+            )
+        );
         registry.pause();
     }
 }

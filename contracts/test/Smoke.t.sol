@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-import {Test} from "forge-std/Test.sol";
-import {_Placeholder} from "../src/Placeholder.sol";
+import { Test } from "forge-std/Test.sol";
+import { _Placeholder } from "../src/Placeholder.sol";
 
 /// @notice Toolchain smoke test. Validates that the forge-std remapping
 /// resolves, solc 0.8.26 + shanghai EVM compiles, basic cheatcodes

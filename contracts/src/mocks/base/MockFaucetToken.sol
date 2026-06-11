@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
+import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import { AccessControl } from "@openzeppelin/contracts/access/AccessControl.sol";
 
 /// @notice Errors
 error FaucetCooldownActive(uint256 remainingSeconds);
@@ -33,7 +33,12 @@ abstract contract MockFaucetToken is ERC20, AccessControl {
     // Cooldown keyed on the CALLER (msg.sender), not the recipient — prevents griefing.
     mapping(address caller => uint256 timestamp) public lastFaucetAt;
 
-    constructor(string memory name_, string memory symbol_, address admin, uint256 faucetCap_) ERC20(name_, symbol_) {
+    constructor(
+        string memory name_,
+        string memory symbol_,
+        address admin,
+        uint256 faucetCap_
+    ) ERC20(name_, symbol_) {
         if (admin == address(0)) revert FaucetZeroAdmin();
         if (faucetCap_ == 0) revert FaucetZeroCap();
         _faucetCap = faucetCap_;
@@ -49,7 +54,10 @@ abstract contract MockFaucetToken is ERC20, AccessControl {
 
     // ─── Faucet ───────────────────────────────────────────────────────────────
 
-    function faucet(address to, uint256 amount) external {
+    function faucet(
+        address to,
+        uint256 amount
+    ) external {
         if (amount == 0) revert FaucetZeroAmount();
         if (amount > _faucetCap) revert FaucetAmountExceedsCap(amount, _faucetCap);
         uint256 last = lastFaucetAt[msg.sender];
@@ -66,7 +74,10 @@ abstract contract MockFaucetToken is ERC20, AccessControl {
 
     // ─── Admin mint ───────────────────────────────────────────────────────────
 
-    function mint(address to, uint256 amount) external onlyRole(MINTER_ROLE) {
+    function mint(
+        address to,
+        uint256 amount
+    ) external onlyRole(MINTER_ROLE) {
         _mint(to, amount);
     }
 }

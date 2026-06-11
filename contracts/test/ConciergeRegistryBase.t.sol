@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-import {Test} from "forge-std/Test.sol";
-import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
-import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
+import { Test } from "forge-std/Test.sol";
+import { IAccessControl } from "@openzeppelin/contracts/access/IAccessControl.sol";
+import { Pausable } from "@openzeppelin/contracts/utils/Pausable.sol";
 
-import {ConciergeRegistry} from "../src/ConciergeRegistry.sol";
-import {ConciergeRegistryProxy} from "../src/ConciergeRegistryProxy.sol";
-import {IConciergeRegistry} from "../src/interfaces/IConciergeRegistry.sol";
+import { ConciergeRegistry } from "../src/ConciergeRegistry.sol";
+import { ConciergeRegistryProxy } from "../src/ConciergeRegistryProxy.sol";
+import { IConciergeRegistry } from "../src/interfaces/IConciergeRegistry.sol";
 import {
     NotAgentOwner,
     AgentInactive,

@@ -38,7 +38,9 @@ interface IConciergeRegistry {
 
     // ─── Events ────────────────────────────────────────────────────────────
 
-    event AgentRegistered(uint256 indexed agentId, address indexed owner, address indexed validator, bytes32 goalHash);
+    event AgentRegistered(
+        uint256 indexed agentId, address indexed owner, address indexed validator, bytes32 goalHash
+    );
     event GoalUpdated(uint256 indexed agentId, bytes32 indexed newGoalHash);
     /// @dev policyHash = keccak256(newPolicy) — allows off-chain integrity checks
     ///      without replaying full calldata.
@@ -47,43 +49,63 @@ interface IConciergeRegistry {
     ///      replaying all prior ActiveSet events for the same agentId.
     event ActiveSet(uint256 indexed agentId, bool previousActive, bool active);
     event AgentTransferred(uint256 indexed agentId, address indexed from, address indexed to);
-    event ValidatorUpdated(uint256 indexed agentId, address indexed previousValidator, address indexed newValidator);
+    event ValidatorUpdated(
+        uint256 indexed agentId, address indexed previousValidator, address indexed newValidator
+    );
 
     // ─── Mutations ─────────────────────────────────────────────────────────
 
     /// @notice Mint a new agent record. Requires AGENT_OPERATOR_ROLE.
     /// @return agentId  The newly minted ID (starts at 1, increments by 1).
-    function registerAgent(address owner, address validator, bytes32 goalHash, bytes calldata policyData)
-        external
-        returns (uint256 agentId);
+    function registerAgent(
+        address owner,
+        address validator,
+        bytes32 goalHash,
+        bytes calldata policyData
+    ) external returns (uint256 agentId);
 
     /// @notice Update the goal hash for an agent. Caller must be the owner.
-    function updateGoal(uint256 agentId, bytes32 newGoalHash) external;
+    function updateGoal(
+        uint256 agentId,
+        bytes32 newGoalHash
+    ) external;
 
     /// @notice Replace an agent's policy blob. Caller must be the owner.
     /// @dev Reverts with PolicyTooLarge if newPolicy.length > 4096.
     ///      Reverts with AgentInactive if the agent is deactivated — consistent
     ///      with updateGoal. Deactivate → update → reactivate is the intended flow.
-    function updatePolicy(uint256 agentId, bytes calldata newPolicy) external;
+    function updatePolicy(
+        uint256 agentId,
+        bytes calldata newPolicy
+    ) external;
 
     /// @notice Flip the active flag. Caller must be the owner.
     /// @dev Reverts with AgentAlreadyInState if the flag is already at the
     ///      requested value, preventing spurious events.
-    function setActive(uint256 agentId, bool active) external;
+    function setActive(
+        uint256 agentId,
+        bool active
+    ) external;
 
     /// @notice Transfer ownership of an agent. Caller must be the current owner.
     /// @dev Reverts with InvalidOwner if newOwner is address(0).
     ///      Reverts with SameOwner if newOwner equals the current owner.
     ///      Preserves the agent's current `active` flag — the new owner must call
     ///      setActive(true) if the agent was deactivated before transfer.
-    function transferAgent(uint256 agentId, address newOwner) external;
+    function transferAgent(
+        uint256 agentId,
+        address newOwner
+    ) external;
 
     /// @notice Replace the session-key validator. Caller must be the owner.
     /// @dev Available on both active and inactive agents — key rotation is a security
     ///      operation that must be accessible even when the agent is deactivated.
     ///      Reverts with SameValidator if newValidator equals the current validator.
     ///      Reverts with InvalidValidator if newValidator is address(0).
-    function updateValidator(uint256 agentId, address newValidator) external;
+    function updateValidator(
+        uint256 agentId,
+        address newValidator
+    ) external;
 
     /// @notice Pause all mutations. Requires PAUSER_ROLE.
     function pause() external;
@@ -95,10 +117,14 @@ interface IConciergeRegistry {
 
     /// @notice Returns the full AgentRecord. Never reverts when paused.
     /// @dev Reverts with AgentNotFound if the ID has never been registered.
-    function getAgent(uint256 agentId) external view returns (AgentRecord memory);
+    function getAgent(
+        uint256 agentId
+    ) external view returns (AgentRecord memory);
 
     /// @notice Returns all agentIds owned by `owner` at the time of the call.
     /// @dev Includes both active and inactive agents. Callers that need only
     ///      active agents must filter by checking getAgent(id).active.
-    function agentsByOwner(address owner) external view returns (uint256[] memory);
+    function agentsByOwner(
+        address owner
+    ) external view returns (uint256[] memory);
 }

@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-import {Test} from "forge-std/Test.sol";
+import { Test } from "forge-std/Test.sol";
 
-import {ConciergeRegistry} from "../../src/ConciergeRegistry.sol";
-import {ConciergeRegistryProxy} from "../../src/ConciergeRegistryProxy.sol";
-import {ConciergeRegistryHandler} from "./handlers/ConciergeRegistryHandler.sol";
+import { ConciergeRegistry } from "../../src/ConciergeRegistry.sol";
+import { ConciergeRegistryProxy } from "../../src/ConciergeRegistryProxy.sol";
+import { ConciergeRegistryHandler } from "./handlers/ConciergeRegistryHandler.sol";
 
 /// forge-config: default.invariant.runs = 256
 /// forge-config: default.invariant.depth = 32
@@ -114,7 +114,9 @@ contract ConciergeRegistryInvariantTest is Test {
         uint256 nextId = registry.nextAgentId();
         for (uint256 i = 1; i < nextId; i++) {
             assertLe(
-                registry.getAgent(i).policyData.length, registry.MAX_POLICY_SIZE(), "policyData exceeds MAX_POLICY_SIZE"
+                registry.getAgent(i).policyData.length,
+                registry.MAX_POLICY_SIZE(),
+                "policyData exceeds MAX_POLICY_SIZE"
             );
         }
     }
@@ -131,7 +133,9 @@ contract ConciergeRegistryInvariantTest is Test {
     function invariant_ValidatorNeverZero() public view {
         uint256 nextId = registry.nextAgentId();
         for (uint256 i = 1; i < nextId; i++) {
-            assertNotEq(registry.getAgent(i).sessionKeyValidator, address(0), "sessionKeyValidator is zero");
+            assertNotEq(
+                registry.getAgent(i).sessionKeyValidator, address(0), "sessionKeyValidator is zero"
+            );
         }
     }
 

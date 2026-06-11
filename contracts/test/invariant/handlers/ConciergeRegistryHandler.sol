@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-import {Test} from "forge-std/Test.sol";
+import { Test } from "forge-std/Test.sol";
 
-import {ConciergeRegistry} from "../../../src/ConciergeRegistry.sol";
+import { ConciergeRegistry } from "../../../src/ConciergeRegistry.sol";
 
 /// @dev Invariant handler for ConciergeRegistry. Exposes bounded, semantically valid
 ///      actions to Foundry's invariant fuzzer. Tracks ghost state that invariant
@@ -42,13 +42,18 @@ contract ConciergeRegistryHandler is Test {
         ghost_paused = _registry.paused();
     }
 
-    function _pickActor(uint256 seed) internal view returns (address) {
+    function _pickActor(
+        uint256 seed
+    ) internal view returns (address) {
         return actors[seed % actors.length];
     }
 
     // ─── Handler functions ──────────────────────────────────────────────────
 
-    function registerAgent_h(uint256 actorSeed, bytes32 goalHash) external {
+    function registerAgent_h(
+        uint256 actorSeed,
+        bytes32 goalHash
+    ) external {
         if (goalHash == bytes32(0)) return;
         address owner = _pickActor(actorSeed);
 
@@ -57,10 +62,13 @@ contract ConciergeRegistryHandler is Test {
             ghost_totalRegistered++;
             ghost_activeCount++;
             ghost_ownerOf[id] = owner;
-        } catch {}
+        } catch { }
     }
 
-    function updateGoal_h(uint256 idSeed, bytes32 newGoal) external {
+    function updateGoal_h(
+        uint256 idSeed,
+        bytes32 newGoal
+    ) external {
         if (ghost_totalRegistered == 0) return;
         if (newGoal == bytes32(0)) return;
         if (ghost_paused) return;
@@ -73,7 +81,10 @@ contract ConciergeRegistryHandler is Test {
         registry.updateGoal(id, newGoal);
     }
 
-    function updatePolicy_h(uint256 idSeed, uint256 sizeSeed) external {
+    function updatePolicy_h(
+        uint256 idSeed,
+        uint256 sizeSeed
+    ) external {
         if (ghost_totalRegistered == 0) return;
         if (ghost_paused) return;
         uint256 id = bound(idSeed, 1, ghost_totalRegistered);
@@ -86,7 +97,10 @@ contract ConciergeRegistryHandler is Test {
         registry.updatePolicy(id, new bytes(size));
     }
 
-    function transferAgent_h(uint256 idSeed, uint256 newOwnerSeed) external {
+    function transferAgent_h(
+        uint256 idSeed,
+        uint256 newOwnerSeed
+    ) external {
         if (ghost_totalRegistered == 0) return;
         uint256 id = bound(idSeed, 1, ghost_totalRegistered);
         address newOwner = _pickActor(newOwnerSeed);
@@ -96,10 +110,13 @@ contract ConciergeRegistryHandler is Test {
         vm.prank(currentOwner);
         try registry.transferAgent(id, newOwner) {
             ghost_ownerOf[id] = newOwner;
-        } catch {}
+        } catch { }
     }
 
-    function setActive_h(uint256 idSeed, bool active) external {
+    function setActive_h(
+        uint256 idSeed,
+        bool active
+    ) external {
         if (ghost_totalRegistered == 0) return;
         uint256 id = bound(idSeed, 1, ghost_totalRegistered);
         address owner = ghost_ownerOf[id];
@@ -109,10 +126,13 @@ contract ConciergeRegistryHandler is Test {
         try registry.setActive(id, active) {
             if (active) ghost_activeCount++;
             else ghost_activeCount--;
-        } catch {}
+        } catch { }
     }
 
-    function updateValidator_h(uint256 idSeed, address newValidator) external {
+    function updateValidator_h(
+        uint256 idSeed,
+        address newValidator
+    ) external {
         if (ghost_totalRegistered == 0) return;
         if (ghost_paused) return;
         if (newValidator == address(0)) return;
@@ -121,20 +141,20 @@ contract ConciergeRegistryHandler is Test {
 
         vm.prank(owner);
         // SameValidator revert is expected — keep try/catch for that case alone.
-        try registry.updateValidator(id, newValidator) {} catch {}
+        try registry.updateValidator(id, newValidator) { } catch { }
     }
 
     function pause_h() external {
         vm.prank(pauser);
         try registry.pause() {
             ghost_paused = true;
-        } catch {}
+        } catch { }
     }
 
     function unpause_h() external {
         vm.prank(pauser);
         try registry.unpause() {
             ghost_paused = false;
-        } catch {}
+        } catch { }
     }
 }

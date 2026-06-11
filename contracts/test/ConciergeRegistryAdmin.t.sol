@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-import {ConciergeRegistryBase} from "./ConciergeRegistryBase.t.sol";
-import {ConciergeRegistry} from "../src/ConciergeRegistry.sol";
-import {ConciergeRegistryProxy} from "../src/ConciergeRegistryProxy.sol";
-import {IConciergeRegistry} from "../src/interfaces/IConciergeRegistry.sol";
+import { ConciergeRegistryBase } from "./ConciergeRegistryBase.t.sol";
+import { ConciergeRegistry } from "../src/ConciergeRegistry.sol";
+import { ConciergeRegistryProxy } from "../src/ConciergeRegistryProxy.sol";
+import { IConciergeRegistry } from "../src/interfaces/IConciergeRegistry.sol";
 import {
     NotAgentOwner,
     InvalidOwner,
@@ -13,8 +13,8 @@ import {
     UnexpectedValue,
     OwnerAgentLimitReached
 } from "../src/errors/ConciergeErrors.sol";
-import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
-import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
+import { IAccessControl } from "@openzeppelin/contracts/access/IAccessControl.sol";
+import { Pausable } from "@openzeppelin/contracts/utils/Pausable.sol";
 
 /// @notice Tests for initialization, transferAgent, pause/unpause, roles, and
 /// UUPS upgrade gate. Core CRUD tests: ConciergeRegistry.t.sol.
@@ -254,7 +254,11 @@ contract ConciergeRegistryAdminTest is ConciergeRegistryBase {
     function test_pause_reverts_noPauserRole() public {
         bytes32 role = registry.PAUSER_ROLE();
         vm.prank(bob);
-        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, bob, role));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, bob, role
+            )
+        );
         registry.pause();
     }
 
@@ -263,7 +267,11 @@ contract ConciergeRegistryAdminTest is ConciergeRegistryBase {
         vm.prank(pauser);
         registry.pause();
         vm.prank(bob);
-        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, bob, role));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, bob, role
+            )
+        );
         registry.unpause();
     }
 
@@ -291,7 +299,9 @@ contract ConciergeRegistryAdminTest is ConciergeRegistryBase {
         bytes32 adminRole = registry.ADMIN_ROLE();
         vm.prank(bob);
         vm.expectRevert(
-            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, bob, adminRole)
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, bob, adminRole
+            )
         );
         registry.upgradeToAndCall(address(newImpl), "");
     }
@@ -325,6 +335,6 @@ contract ConciergeRegistryAdminTest is ConciergeRegistryBase {
         vm.deal(admin, 1 ether);
         vm.prank(admin);
         vm.expectRevert(abi.encodeWithSelector(UnexpectedValue.selector, uint256(1)));
-        registry.upgradeToAndCall{value: 1}(address(newImpl), "");
+        registry.upgradeToAndCall{ value: 1 }(address(newImpl), "");
     }
 }

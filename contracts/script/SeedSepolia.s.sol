@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-import {Script, console2} from "forge-std/Script.sol";
+import { Script, console2 } from "forge-std/Script.sol";
 
-import {MockFaucetToken} from "../src/mocks/base/MockFaucetToken.sol";
+import { MockFaucetToken } from "../src/mocks/base/MockFaucetToken.sol";
+import { IAccessControl } from "@openzeppelin/contracts/access/IAccessControl.sol";
 
 /// @notice Mints demo balances to a seed account after DeployAll on Sepolia.
 ///
@@ -24,7 +25,7 @@ import {MockFaucetToken} from "../src/mocks/base/MockFaucetToken.sol";
 ///     --broadcast
 contract SeedSepolia is Script {
     uint256 constant SEED_USDC = 10_000e6; // 10,000 USDC (6 dec)
-    uint256 constant SEED_SUSDE = 1_000e18; // 1,000 sUSDe
+    uint256 constant SEED_SUSDE = 1000e18; // 1,000 sUSDe
     uint256 constant SEED_USDY = 100e18; // 100 USDY
     uint256 constant SEED_METH = 1e18; // 1 mETH
 
@@ -34,6 +35,19 @@ contract SeedSepolia is Script {
         address USDC = vm.envAddress("USDC_ADDR");
         address USDY = vm.envAddress("USDY_ADDR");
         address mETH = vm.envAddress("METH_ADDR");
+
+        // Pre-flight: verify the broadcaster holds MINTER_ROLE on every token.
+        // mint() is privileged; missing the role causes a silent revert inside broadcast.
+        address minter = tx.origin;
+        bytes32 minterRole = MockFaucetToken(sUSDe).MINTER_ROLE();
+        address[4] memory tokens = [sUSDe, USDC, USDY, mETH];
+        string[4] memory names = ["sUSDe", "USDC", "USDY", "mETH"];
+        for (uint256 i = 0; i < tokens.length; i++) {
+            require(
+                IAccessControl(tokens[i]).hasRole(minterRole, minter),
+                string.concat("SeedSepolia: missing MINTER_ROLE on ", names[i])
+            );
+        }
 
         vm.startBroadcast();
         MockFaucetToken(sUSDe).mint(seedAccount, SEED_SUSDE);

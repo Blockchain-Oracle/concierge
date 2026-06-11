@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-import {Test} from "forge-std/Test.sol";
+import { Test } from "forge-std/Test.sol";
 
-import {ConciergeRegistry} from "../../src/ConciergeRegistry.sol";
-import {ConciergeRegistryProxy} from "../../src/ConciergeRegistryProxy.sol";
-import {IConciergeRegistry} from "../../src/interfaces/IConciergeRegistry.sol";
+import { ConciergeRegistry } from "../../src/ConciergeRegistry.sol";
+import { ConciergeRegistryProxy } from "../../src/ConciergeRegistryProxy.sol";
+import { IConciergeRegistry } from "../../src/interfaces/IConciergeRegistry.sol";
 import {
     PolicyTooLarge,
     EmptyGoalHash,
@@ -41,7 +41,9 @@ contract ConciergeRegistryFuzzTest is Test {
     // ─── Goal hash dimension ────────────────────────────────────────────────
 
     /// Any non-zero bytes32 must register successfully and fully initialise the record.
-    function testFuzz_RegisterAgent_AcceptsAllNonZeroGoalHashes(bytes32 hash) public {
+    function testFuzz_RegisterAgent_AcceptsAllNonZeroGoalHashes(
+        bytes32 hash
+    ) public {
         vm.assume(hash != bytes32(0));
         vm.prank(operator);
         uint256 id = registry.registerAgent(alice, validator, hash, "");
@@ -54,7 +56,9 @@ contract ConciergeRegistryFuzzTest is Test {
     }
 
     /// Zero hash must always revert with EmptyGoalHash, regardless of other inputs.
-    function testFuzz_RegisterAgent_ZeroGoalHashAlwaysReverts(uint256 rawSize) public {
+    function testFuzz_RegisterAgent_ZeroGoalHashAlwaysReverts(
+        uint256 rawSize
+    ) public {
         bytes memory policy = new bytes(bound(rawSize, 0, 4096));
         vm.prank(operator);
         vm.expectRevert(EmptyGoalHash.selector);
@@ -64,7 +68,9 @@ contract ConciergeRegistryFuzzTest is Test {
     // ─── Policy size dimension ──────────────────────────────────────────────
 
     /// Any policy at or under MAX_POLICY_SIZE must be stored unchanged.
-    function testFuzz_UpdatePolicy_AcceptsAnySizeUnderCap(uint256 rawSize) public {
+    function testFuzz_UpdatePolicy_AcceptsAnySizeUnderCap(
+        uint256 rawSize
+    ) public {
         uint256 size = bound(rawSize, 1, registry.MAX_POLICY_SIZE());
         vm.prank(operator);
         uint256 id = registry.registerAgent(alice, validator, keccak256("g"), "");
@@ -75,7 +81,9 @@ contract ConciergeRegistryFuzzTest is Test {
     }
 
     /// Any policy over MAX_POLICY_SIZE must revert with PolicyTooLarge(size).
-    function testFuzz_UpdatePolicy_RevertsOnOversize(uint256 rawSize) public {
+    function testFuzz_UpdatePolicy_RevertsOnOversize(
+        uint256 rawSize
+    ) public {
         uint256 max = registry.MAX_POLICY_SIZE();
         uint256 size = bound(rawSize, max + 1, max * 4);
         vm.prank(operator);
@@ -88,7 +96,9 @@ contract ConciergeRegistryFuzzTest is Test {
     // ─── ID monotonicity ────────────────────────────────────────────────────
 
     /// agentId must increment by exactly 1 for every successful registration.
-    function testFuzz_RegisterAgent_NextIdMonotonicAcrossCalls(uint256 rawCount) public {
+    function testFuzz_RegisterAgent_NextIdMonotonicAcrossCalls(
+        uint256 rawCount
+    ) public {
         uint256 count = bound(rawCount, 1, 50);
         for (uint256 i = 0; i < count; i++) {
             vm.prank(operator);
@@ -101,7 +111,9 @@ contract ConciergeRegistryFuzzTest is Test {
     // ─── Transfer + owner index consistency ────────────────────────────────
 
     /// After any valid transfer: owner updated, old index cleared, new index contains id.
-    function testFuzz_TransferAgent_OwnerMapsAlwaysConsistent(address newOwner) public {
+    function testFuzz_TransferAgent_OwnerMapsAlwaysConsistent(
+        address newOwner
+    ) public {
         vm.assume(newOwner != address(0));
         vm.assume(newOwner != alice);
         vm.assume(registry.agentsByOwner(newOwner).length < registry.MAX_AGENTS_PER_OWNER());
@@ -121,7 +133,9 @@ contract ConciergeRegistryFuzzTest is Test {
     // ─── setActive idempotency ──────────────────────────────────────────────
 
     /// setActive to the current state always reverts with AgentAlreadyInState.
-    function testFuzz_SetActive_SameStateAlwaysReverts(bool active) public {
+    function testFuzz_SetActive_SameStateAlwaysReverts(
+        bool active
+    ) public {
         vm.prank(operator);
         uint256 id = registry.registerAgent(alice, validator, keccak256("g"), "");
 
@@ -137,7 +151,10 @@ contract ConciergeRegistryFuzzTest is Test {
     }
 
     /// After setActive(id, v), active flag must equal v.
-    function testFuzz_SetActive_FlagReflectsRequestedValue(bool first, bool second) public {
+    function testFuzz_SetActive_FlagReflectsRequestedValue(
+        bool first,
+        bool second
+    ) public {
         vm.assume(first != second); // must differ to avoid AgentAlreadyInState on second call
         vm.prank(operator);
         uint256 id = registry.registerAgent(alice, validator, keccak256("g"), "");
@@ -156,7 +173,10 @@ contract ConciergeRegistryFuzzTest is Test {
     // ─── Address dimension ──────────────────────────────────────────────────
 
     /// registerAgent must revert InvalidOwner for address(0), regardless of other inputs.
-    function testFuzz_RegisterAgent_ZeroOwnerAlwaysReverts(bytes32 hash, uint256 rawSize) public {
+    function testFuzz_RegisterAgent_ZeroOwnerAlwaysReverts(
+        bytes32 hash,
+        uint256 rawSize
+    ) public {
         vm.assume(hash != bytes32(0));
         bytes memory p = new bytes(bound(rawSize, 0, 4096));
         vm.prank(operator);
@@ -165,7 +185,9 @@ contract ConciergeRegistryFuzzTest is Test {
     }
 
     /// Per-owner cap is enforced: the (cap+1)th registration must revert.
-    function testFuzz_RegisterAgent_CapEnforced_ExactlyAtLimit(uint256 rawExtra) public {
+    function testFuzz_RegisterAgent_CapEnforced_ExactlyAtLimit(
+        uint256 rawExtra
+    ) public {
         uint256 cap = registry.MAX_AGENTS_PER_OWNER();
         uint256 extra = bound(rawExtra, 1, 10);
 

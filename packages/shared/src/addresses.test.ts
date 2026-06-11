@@ -50,6 +50,7 @@ const EXPECTED_PATHS = [
   'mantleSepolia.aave.oracle',
   'mantleSepolia.aave.pool',
   'mantleSepolia.aave.protocolDataProvider',
+  'mantleSepolia.conciergeRegistry',
   'mantleSepolia.erc8004.identityRegistry',
   'mantleSepolia.erc8004.reputationRegistry',
   'mantleSepolia.lifi.diamond',
@@ -65,7 +66,7 @@ const EXPECTED_PATHS = [
 ] as const;
 
 describe('ADDRESSES shape', () => {
-  it('has the exact 32-path canonical shape (rename breaks consumers)', () => {
+  it('has the exact 33-path canonical shape (rename breaks consumers)', () => {
     const paths = flattenAddresses(ADDRESSES)
       .map((x) => x.path)
       .sort();

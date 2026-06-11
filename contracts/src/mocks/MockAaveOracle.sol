@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
-import {IAaveOracle} from "@aave/interfaces/IAaveOracle.sol";
-import {IPoolAddressesProvider} from "@aave/interfaces/IPoolAddressesProvider.sol";
+import { AccessControl } from "@openzeppelin/contracts/access/AccessControl.sol";
+import { IAaveOracle } from "@aave/interfaces/IAaveOracle.sol";
+import { IPoolAddressesProvider } from "@aave/interfaces/IPoolAddressesProvider.sol";
 
 /// @notice Errors
 error AssetPriceUnavailable(address asset);
@@ -27,21 +27,29 @@ contract MockAaveOracle is IAaveOracle, AccessControl {
 
     mapping(address asset => uint256 priceUsd8) internal _prices;
 
-    constructor(address admin) {
+    constructor(
+        address admin
+    ) {
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
         _grantRole(ORACLE_ADMIN_ROLE, admin);
     }
 
     // ─── IAaveOracle: admin mutations ─────────────────────────────────────────
 
-    function setAssetPrice(address asset, uint256 priceUsd8) external onlyRole(ORACLE_ADMIN_ROLE) {
+    function setAssetPrice(
+        address asset,
+        uint256 priceUsd8
+    ) external onlyRole(ORACLE_ADMIN_ROLE) {
         if (priceUsd8 == 0) revert InvalidPrice();
         uint256 old = _prices[asset];
         _prices[asset] = priceUsd8;
         emit PriceUpdated(asset, old, priceUsd8);
     }
 
-    function setAssetPrices(address[] calldata assets, uint256[] calldata prices) external onlyRole(ORACLE_ADMIN_ROLE) {
+    function setAssetPrices(
+        address[] calldata assets,
+        uint256[] calldata prices
+    ) external onlyRole(ORACLE_ADMIN_ROLE) {
         if (assets.length != prices.length) revert BatchLengthMismatch();
         for (uint256 i = 0; i < assets.length; i++) {
             if (prices[i] == 0) revert InvalidPrice();
@@ -53,20 +61,29 @@ contract MockAaveOracle is IAaveOracle, AccessControl {
 
     // ─── IAaveOracle: no-op stubs (unused in Sepolia playground) ─────────────
 
-    function setAssetSources(address[] calldata, address[] calldata) external onlyRole(ORACLE_ADMIN_ROLE) {}
+    function setAssetSources(
+        address[] calldata,
+        address[] calldata
+    ) external onlyRole(ORACLE_ADMIN_ROLE) { }
 
-    function setFallbackOracle(address) external onlyRole(ORACLE_ADMIN_ROLE) {}
+    function setFallbackOracle(
+        address
+    ) external onlyRole(ORACLE_ADMIN_ROLE) { }
 
     // ─── IAaveOracle: read surface ────────────────────────────────────────────
 
     /// @dev Reverts with AssetPriceUnavailable when price is not set — NEVER returns 0 silently.
-    function getAssetPrice(address asset) external view override returns (uint256) {
+    function getAssetPrice(
+        address asset
+    ) external view override returns (uint256) {
         uint256 price = _prices[asset];
         if (price == 0) revert AssetPriceUnavailable(asset);
         return price;
     }
 
-    function getAssetsPrices(address[] calldata assets) external view override returns (uint256[] memory prices) {
+    function getAssetsPrices(
+        address[] calldata assets
+    ) external view override returns (uint256[] memory prices) {
         prices = new uint256[](assets.length);
         for (uint256 i = 0; i < assets.length; i++) {
             uint256 price = _prices[assets[i]];
@@ -75,7 +92,9 @@ contract MockAaveOracle is IAaveOracle, AccessControl {
         }
     }
 
-    function getSourceOfAsset(address) external view override returns (address) {
+    function getSourceOfAsset(
+        address
+    ) external view override returns (address) {
         return address(this);
     }
 

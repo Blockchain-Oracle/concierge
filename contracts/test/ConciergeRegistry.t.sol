@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-import {ConciergeRegistryBase} from "./ConciergeRegistryBase.t.sol";
-import {IConciergeRegistry} from "../src/interfaces/IConciergeRegistry.sol";
+import { ConciergeRegistryBase } from "./ConciergeRegistryBase.t.sol";
+import { IConciergeRegistry } from "../src/interfaces/IConciergeRegistry.sol";
 import {
     NotAgentOwner,
     AgentInactive,
@@ -15,7 +15,7 @@ import {
     OwnerAgentLimitReached,
     SameValidator
 } from "../src/errors/ConciergeErrors.sol";
-import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
+import { IAccessControl } from "@openzeppelin/contracts/access/IAccessControl.sol";
 
 /// @notice Core CRUD tests for ConciergeRegistry (registerAgent, updateGoal,
 /// updatePolicy, setActive, updateValidator, reads, fuzz).
@@ -80,7 +80,11 @@ contract ConciergeRegistryTest is ConciergeRegistryBase {
     function test_registerAgent_reverts_noOperatorRole() public {
         bytes32 role = registry.AGENT_OPERATOR_ROLE();
         vm.prank(bob);
-        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, bob, role));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, bob, role
+            )
+        );
         registry.registerAgent(alice, validator, goalHash, policyData);
     }
 
@@ -355,17 +359,22 @@ contract ConciergeRegistryTest is ConciergeRegistryBase {
 
     // ─── Fuzz ──────────────────────────────────────────────────────────────
 
-    function testFuzz_registerAgent_idAlwaysIncrements(uint256 count) public {
+    function testFuzz_registerAgent_idAlwaysIncrements(
+        uint256 count
+    ) public {
         count = bound(count, 1, 50);
         for (uint256 i = 0; i < count; i++) {
             vm.prank(operator);
-            uint256 id = registry.registerAgent(alice, validator, keccak256(abi.encode(i)), policyData);
+            uint256 id =
+                registry.registerAgent(alice, validator, keccak256(abi.encode(i)), policyData);
             assertEq(id, i + 1);
         }
         assertEq(registry.nextAgentId(), count + 1);
     }
 
-    function testFuzz_updatePolicy_rejectsOversized(uint16 rawSize) public {
+    function testFuzz_updatePolicy_rejectsOversized(
+        uint16 rawSize
+    ) public {
         uint256 size = bound(rawSize, 4097, 65_535);
         uint256 id = _registerAlice();
         vm.prank(alice);
