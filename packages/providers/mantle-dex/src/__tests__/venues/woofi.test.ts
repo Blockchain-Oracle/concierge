@@ -1,7 +1,7 @@
 // Unit tests for createWooFiVenue — no fork required; publicClient is mocked.
 
 import type { Address } from '@concierge/shared';
-import { ContractFunctionRevertedError } from 'viem';
+import { ContractFunctionExecutionError, ContractFunctionRevertedError } from 'viem';
 import { describe, expect, it, vi } from 'vitest';
 import { createWooFiVenue } from '../../venues/woofi.ts';
 
@@ -41,6 +41,22 @@ describe('createWooFiVenue — quote', () => {
       amountIn: 1_000_000n,
     });
     expect(result).toMatchObject({ venue: 'woofi', amountOut: 999_000n });
+  });
+
+  it('returns null when viem wraps revert in ContractFunctionExecutionError (fork behaviour)', async () => {
+    const inner = new ContractFunctionRevertedError({
+      abi: [],
+      functionName: 'querySwap',
+      message: 'no listing',
+    });
+    const outer = new ContractFunctionExecutionError(inner, {
+      abi: [],
+      functionName: 'querySwap',
+    });
+    const publicClient = { readContract: vi.fn().mockRejectedValue(outer) };
+    const venue = createWooFiVenue(publicClient as never, undefined, ROUTER);
+    const result = await venue.quote({ tokenIn: TOKEN_IN, tokenOut: TOKEN_OUT, amountIn: 1_000n });
+    expect(result).toBeNull();
   });
 
   it('propagates non-revert errors (RPC failure)', async () => {

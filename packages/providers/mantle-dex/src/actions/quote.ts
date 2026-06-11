@@ -1,3 +1,4 @@
+import { ConciergeError } from '@concierge/sdk';
 import { tool } from '@concierge/tools';
 import { z } from 'zod';
 import type { ActionContext } from '../_context.ts';
@@ -116,12 +117,11 @@ export async function resolveRouteMap(
   tokenOut: string,
 ): Promise<QuoteOutputType> {
   const validRoutes = (Object.values(routeMap) as (VenueQuoteResult | null)[])
-    .filter((r): r is VenueQuoteResult => r !== null)
+    .filter((r): r is VenueQuoteResult => r !== null && r.amountOut > 0n)
     .sort((a, b) => (b.amountOut > a.amountOut ? 1 : -1));
   const best = validRoutes[0];
 
   if (best === undefined) {
-    const { ConciergeError } = await import('@concierge/sdk');
     throw new ConciergeError(
       'InsufficientLiquidity',
       `[@concierge/mantle-dex] quote: no venue returned a route for ${tokenIn} → ${tokenOut}`,

@@ -64,11 +64,9 @@ export async function startAnvilFork(): Promise<AnvilFork> {
   const port = await getFreePort();
 
   return new Promise((resolve, reject) => {
-    const proc = spawn(
-      ANVIL_BIN,
-      ['--port', String(port), '--fork-url', MANTLE_MAINNET_RPC, '--no-mining'],
-      { stdio: ['ignore', 'pipe', 'pipe'] },
-    );
+    const proc = spawn(ANVIL_BIN, ['--port', String(port), '--fork-url', MANTLE_MAINNET_RPC], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
 
     let started = false;
     let stopping = false;
@@ -113,6 +111,11 @@ export async function startAnvilFork(): Promise<AnvilFork> {
           amount: bigint,
           mappingSlot: number,
         ) => {
+          if (!Number.isInteger(mappingSlot) || mappingSlot < 0 || mappingSlot > 0xffff) {
+            throw new RangeError(
+              `setErc20Balance: mappingSlot must be a non-negative integer ≤ 65535, got ${mappingSlot}`,
+            );
+          }
           // slot = keccak256(abi.encode(account, mappingSlot))
           const storageKey = keccak256(
             encodeAbiParameters(parseAbiParameters('address, uint256'), [
@@ -126,6 +129,26 @@ export async function startAnvilFork(): Promise<AnvilFork> {
             method: 'anvil_setStorageAt',
             params: [token, storageKey, value],
           });
+          // Verify the write landed — a wrong mappingSlot produces a silent zero-balance.
+          const actual = await publicClient.readContract({
+            address: token,
+            abi: [
+              {
+                name: 'balanceOf',
+                type: 'function',
+                inputs: [{ name: '', type: 'address' }],
+                outputs: [{ name: '', type: 'uint256' }],
+                stateMutability: 'view',
+              },
+            ] as const,
+            functionName: 'balanceOf',
+            args: [account],
+          });
+          if (actual < amount) {
+            throw new Error(
+              `[setup] setErc20Balance: write failed for ${token}: expected ≥ ${amount}, got ${actual}. Slot ${mappingSlot} may be wrong.`,
+            );
+          }
         };
 
         resolve({ port, chain, publicClient, walletClient, stop, setErc20Balance });
