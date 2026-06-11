@@ -101,15 +101,21 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
+      - uses: foundry-rs/foundry-toolchain@v1.8.0
       - run: pnpm install --frozen-lockfile
+      # Install Foundry submodule deps (forge-std, OpenZeppelin, aave-v3-origin).
+      # Must run before forge build — libs are not stored in git.
+      - run: bash scripts/install-deps.sh
+        working-directory: contracts
+      # Build Foundry contracts so integration tests can load artifacts from contracts/out/.
+      - run: forge build
+        working-directory: contracts
       # `pnpm -r run test` recurses workspace packages. NO --if-present:
       # per silent-failure-hunter on PR #4, --if-present silently skips
       # packages without a test script — the existential silent-CI-failure
       # mode. Without it, a workspace package that lacks `test` will fail
       # loudly, which is the contract we want.
       - run: pnpm -r run test
-      - name: Note vacuous-green state until story-20+
-        run: echo "::warning::No workspace package has a 'test' script yet — today's green is vacuous. Real tests + per-package matrix arrive in story-20+."
 
   build:
     runs-on: ubuntu-24.04

@@ -218,7 +218,7 @@ contract MockAavePoolTest is Test {
         // USDC: supplyRateBps=400, borrowRateBps=500
         uint256 expectedSupplyRay = (400 * MockAavePoolLib.RAY) / 10_000;
         uint256 expectedBorrowRay = (500 * MockAavePoolLib.RAY) / 10_000;
-        DataTypes.ReserveDataLegacy memory rd = pool.getReserveData(USDC);
+        DataTypes.ReserveData memory rd = pool.getReserveData(USDC);
         assertEq(rd.currentLiquidityRate, expectedSupplyRay, "supplyRate");
         assertEq(rd.currentVariableBorrowRate, expectedBorrowRay, "borrowRate");
     }
@@ -228,7 +228,7 @@ contract MockAavePoolTest is Test {
     function test_mockSetReserveData_UpdatesRates() public {
         vm.prank(admin);
         pool.mockSetReserveData(USDC, 600, 700);
-        DataTypes.ReserveDataLegacy memory rd = pool.getReserveData(USDC);
+        DataTypes.ReserveData memory rd = pool.getReserveData(USDC);
         assertEq(rd.currentLiquidityRate, (600 * MockAavePoolLib.RAY) / 10_000, "new supplyRate");
         assertEq(
             rd.currentVariableBorrowRate, (700 * MockAavePoolLib.RAY) / 10_000, "new borrowRate"

@@ -82,15 +82,28 @@ export function createAaveV3MantleProvider(
   const transport = http(opts.rpcUrl ?? viemChain.rpcUrls.default.http[0]);
   const publicClient = opts.publicClient ?? createPublicClient({ chain: viemChain, transport });
 
-  const sharedAddrs = addressesFor(chainId);
+  // addressesFor throws for custom chains (e.g. Anvil forks) — only call it for known chain IDs.
+  const sharedAddrs = SUPPORTED_CHAIN_IDS.has(chainId) ? addressesFor(chainId) : undefined;
   const ov = opts.addresses;
 
-  const poolAddress = ov?.pool ?? sharedAddrs.aave.pool;
-  const oracleAddress = ov?.oracle ?? sharedAddrs.aave.oracle;
+  const poolAddress = ov?.pool ?? sharedAddrs?.aave.pool;
+  const oracleAddress = ov?.oracle ?? sharedAddrs?.aave.oracle;
+  if (!poolAddress || !oracleAddress) {
+    throw new ConciergeError(
+      'ConfigError',
+      `[@concierge/aave-v3-mantle] pool and oracle addresses are required for custom chains. Pass addresses: { pool, oracle } in AaveV3MantleProviderOpts.`,
+    );
+  }
   // Sepolia: incentives controller not deployed — claimRewards will throw NetworkUnsupported.
   const incentivesControllerAddress: Address | undefined =
     ov?.incentivesController ?? (chainId === 5000 ? MAINNET_INCENTIVES_CONTROLLER : undefined);
-  const sUsdeAddress = ov?.sUsde ?? sharedAddrs.tokens.sUSDe;
+  const sUsdeAddress = ov?.sUsde ?? sharedAddrs?.tokens.sUSDe;
+  if (!sUsdeAddress) {
+    throw new ConciergeError(
+      'ConfigError',
+      `[@concierge/aave-v3-mantle] sUsde address is required for custom chains. Pass addresses: { sUsde } in AaveV3MantleProviderOpts.`,
+    );
+  }
 
   const ctx: ActionContext = {
     publicClient,

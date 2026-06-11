@@ -64,10 +64,9 @@ async function executeSupply(ctx: ActionContext, args: z.infer<typeof SupplyInpu
     getUserAccountData(publicClient, poolAddress, account),
     getUserEMode(publicClient, poolAddress, account),
   ]);
-  await ensureApproval(ctx, asset, amount, account);
-
   let txHash: `0x${string}`;
   try {
+    await ensureApproval(ctx, asset, amount, account);
     txHash = await walletClient.writeContract({
       address: poolAddress,
       abi: ipoolAbi,
@@ -77,9 +76,10 @@ async function executeSupply(ctx: ActionContext, args: z.infer<typeof SupplyInpu
       chain: walletClient.chain ?? null,
     });
   } catch (err) {
+    if (err instanceof ConciergeError) throw err;
     throw new ConciergeError(
       'RpcError',
-      `[@concierge/aave-v3-mantle] supply: Pool.supply() failed. An allowance for ${poolAddress} may be live on ${asset}. Revoke with approve(${poolAddress}, 0) if needed.`,
+      `[@concierge/aave-v3-mantle] supply: Pool.supply() failed for asset ${asset}. Verify the asset is supported by the Aave V3 pool.`,
       err instanceof Error ? err : undefined,
       { asset, poolAddress },
     );

@@ -27,11 +27,14 @@ export async function requireWallet(
       `[@concierge/aave-v3-mantle] ${action}: walletClient is required for write operations. Initialise AaveV3MantleProvider with a connected WalletClient.`,
     );
   }
-  const [account] = await ctx.walletClient.getAddresses();
+  // Require the account to be explicitly bound to the wallet client.
+  // getAddresses()[0] returns the node's first unlocked account — not the caller's —
+  // and would silently execute against the wrong signer on any multi-account node.
+  const account = ctx.walletClient.account?.address as Address | undefined;
   if (!account) {
     throw new ConciergeError(
       'ConfigError',
-      `[@concierge/aave-v3-mantle] ${action}: no account found in walletClient. Connect a wallet account before calling write operations.`,
+      `[@concierge/aave-v3-mantle] ${action}: walletClient has no bound account. Pass an explicit account to createWalletClient({ account: privateKeyToAccount(...) }) or createWalletClient({ account: "0xaddr" }).`,
     );
   }
   return { walletClient: ctx.walletClient, account };

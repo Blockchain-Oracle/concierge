@@ -245,7 +245,7 @@ contract MockAavePool {
 
     function getReserveData(
         address asset
-    ) external view returns (DataTypes.ReserveDataLegacy memory data) {
+    ) external view returns (DataTypes.ReserveData memory data) {
         if (!_reserves[asset].active) revert AssetNotSupported(asset);
         ReserveDataLite storage r = _reserves[asset];
         data.aTokenAddress = r.aToken;
