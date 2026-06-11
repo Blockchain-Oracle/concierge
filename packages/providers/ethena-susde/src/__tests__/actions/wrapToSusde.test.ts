@@ -6,7 +6,7 @@
 // simulate WooFi having liquidity, covering the full action code path.
 import { ConciergeError } from '@concierge/sdk';
 import { ADDRESSES } from '@concierge/shared';
-import { createPublicClient, createWalletClient, http } from 'viem';
+import { createWalletClient, http } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { executeWrapToSusde } from '../../actions/wrapToSusde.ts';
@@ -40,13 +40,15 @@ afterAll(async () => {
 
 describe('wrapToSusde — happy path (mocked WooFi liquidity)', () => {
   it('completes full wrap pipeline: quote → approve → swap → attestation', async () => {
-    // Simulate WooFi having liquidity for USDe → sUSDe
+    // Simulate WooFi having liquidity for USDe → sUSDe.
+    // Routes readContract by functionName to avoid ordering fragility.
     // biome-ignore lint/suspicious/noExplicitAny: minimal mock for fork integration test
     const publicClient: any = {
-      readContract: vi
-        .fn()
-        .mockResolvedValueOnce(MOCK_QUOTE) // querySwap returns simulated quote
-        .mockResolvedValueOnce(WRAP_AMOUNT), // allowance is sufficient (no approve needed)
+      readContract: vi.fn().mockImplementation(({ functionName }: { functionName: string }) => {
+        if (functionName === 'querySwap') return Promise.resolve(MOCK_QUOTE);
+        if (functionName === 'allowance') return Promise.resolve(WRAP_AMOUNT); // no approve needed
+        return Promise.reject(new Error(`Unexpected readContract: ${functionName}`));
+      }),
       simulateContract: vi.fn().mockResolvedValue({ result: MOCK_QUOTE, request: {} }),
       waitForTransactionReceipt: vi.fn().mockResolvedValue({ status: 'success', logs: [] }),
     };
@@ -79,16 +81,14 @@ describe('wrapToSusde — happy path (mocked WooFi liquidity)', () => {
     expect(result.txHash).toBe(TX_HASH);
     expect(result.attestationPayload.schema).toBe('concierge.ethena.wrap.v1');
     expect(BigInt(result.amountSusdeOut)).toBeGreaterThan(0n);
+    expect(result.amountUsdeIn).toBe(WRAP_AMOUNT.toString());
   });
 });
 
 describe('wrapToSusde — fork (real WooFi on Mantle mainnet)', () => {
-  it('throws when WooFi has no USDe → sUSDe liquidity on Mantle mainnet', async () => {
+  it('throws InsufficientLiquidity when WooFi has no USDe → sUSDe pool on Mantle', async () => {
     const ctx = {
-      publicClient: createPublicClient({
-        chain: fork.chain,
-        transport: http(`http://127.0.0.1:${fork.port}`),
-      }),
+      publicClient: fork.publicClient,
       walletClient: fork.walletClient,
       chainId: 5000 as const,
       addresses: {
@@ -107,6 +107,8 @@ describe('wrapToSusde — fork (real WooFi on Mantle mainnet)', () => {
         slippageBps: 50,
         recipient: TEST_ACCOUNT,
       }),
-    ).rejects.toThrow();
+    ).rejects.toSatisfy(
+      (e: unknown) => e instanceof ConciergeError && e.type === 'InsufficientLiquidity',
+    );
   }, 30_000);
 });

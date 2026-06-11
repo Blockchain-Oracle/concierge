@@ -2,11 +2,12 @@
 // through queryMinOut → ensureApproval → executeWooFiSwap → buildAttestationPayload.
 //
 // Fork note: WooFi on Mantle mainnet does NOT have a sUSDe/USDe pool as of fork date.
-// On Mantle, sUSDe is a LayerZero OFT — there is NO 7-day cooldown (the cooldown is
+// On Mantle, sUSDe is a LayerZero V2 OFT — there is NO 7-day cooldown (the cooldown is
 // L1-only). Unwrap is a plain DEX swap. The absence of a cooldown is verified by the
-// fact that the call completes synchronously (no timestamp advance needed).
+// fact that the implementation makes no cooldown reads (confirmed by the unit mock test).
+import { ConciergeError } from '@concierge/sdk';
 import { ADDRESSES } from '@concierge/shared';
-import { createPublicClient, createWalletClient, http } from 'viem';
+import { createWalletClient, http } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { executeUnwrapToUSDe } from '../../actions/unwrapToUSDe.ts';
@@ -38,15 +39,17 @@ afterAll(async () => {
   await fork.stop();
 });
 
-describe('unwrapToUSDe — NoCooldownOnMantle (mocked WooFi liquidity)', () => {
-  it('completes immediately with no time advance — proves no 7-day cooldown on Mantle', async () => {
-    // Simulate WooFi having sUSDe → USDe liquidity
+describe('unwrapToUSDe — happy path (mocked WooFi liquidity)', () => {
+  it('completes full unwrap pipeline with no cooldown wait — Mantle sUSDe is LayerZero OFT', async () => {
+    // Simulate WooFi having sUSDe → USDe liquidity.
+    // Routes readContract by functionName to avoid ordering fragility.
     // biome-ignore lint/suspicious/noExplicitAny: minimal mock for fork integration test
     const publicClient: any = {
-      readContract: vi
-        .fn()
-        .mockResolvedValueOnce(MOCK_QUOTE) // querySwap returns simulated quote
-        .mockResolvedValueOnce(UNWRAP_AMOUNT), // allowance sufficient (no approve needed)
+      readContract: vi.fn().mockImplementation(({ functionName }: { functionName: string }) => {
+        if (functionName === 'querySwap') return Promise.resolve(MOCK_QUOTE);
+        if (functionName === 'allowance') return Promise.resolve(UNWRAP_AMOUNT); // no approve needed
+        return Promise.reject(new Error(`Unexpected readContract: ${functionName}`));
+      }),
       simulateContract: vi.fn().mockResolvedValue({ result: MOCK_QUOTE, request: {} }),
       waitForTransactionReceipt: vi.fn().mockResolvedValue({ status: 'success', logs: [] }),
     };
@@ -80,16 +83,14 @@ describe('unwrapToUSDe — NoCooldownOnMantle (mocked WooFi liquidity)', () => {
     expect(result.txHash).toBe(TX_HASH);
     expect(result.attestationPayload.schema).toBe('concierge.ethena.unwrap.v1');
     expect(BigInt(result.amountUsdeOut)).toBeGreaterThan(0n);
+    expect(result.amountSusdeIn).toBe(UNWRAP_AMOUNT.toString());
   });
 });
 
 describe('unwrapToUSDe — fork (real WooFi on Mantle mainnet)', () => {
-  it('throws when WooFi has no sUSDe → USDe liquidity on Mantle mainnet', async () => {
+  it('throws InsufficientLiquidity when WooFi has no sUSDe → USDe pool on Mantle', async () => {
     const ctx = {
-      publicClient: createPublicClient({
-        chain: fork.chain,
-        transport: http(`http://127.0.0.1:${fork.port}`),
-      }),
+      publicClient: fork.publicClient,
       walletClient: fork.walletClient,
       chainId: 5000 as const,
       addresses: {
@@ -108,6 +109,8 @@ describe('unwrapToUSDe — fork (real WooFi on Mantle mainnet)', () => {
         slippageBps: 50,
         recipient: TEST_ACCOUNT,
       }),
-    ).rejects.toThrow();
+    ).rejects.toSatisfy(
+      (e: unknown) => e instanceof ConciergeError && e.type === 'InsufficientLiquidity',
+    );
   }, 30_000);
 });

@@ -1,9 +1,10 @@
 // Integration tests for createEthenaSusdeProvider — verifies the provider composes
 // correctly and exposes the expected action surface for callers.
 import { ADDRESSES } from '@concierge/shared';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createPublicClient, http } from 'viem';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createEthenaSusdeProvider } from '../provider.ts';
-import { stubEthenaApi } from './setup.ts';
+import { type AnvilFork, startAnvilFork, stubEthenaApi } from './setup.ts';
 
 const ADDRS = ADDRESSES.mantleMainnet;
 
@@ -48,13 +49,38 @@ describe('createEthenaSusdeProvider — action surface', () => {
 });
 
 describe('createEthenaSusdeProvider — getCarryVsAave wiring', () => {
+  let fork: AnvilFork;
+
+  beforeAll(async () => {
+    fork = await startAnvilFork();
+  }, 60_000);
+
+  afterAll(async () => {
+    await fork.stop();
+  });
+
   it('getCarryVsAave is wired through to Aave pool + Ethena API and returns carry result', async () => {
     stubEthenaApi(3.8); // 380 bps
-    const result = await makeProvider().actions.getCarryVsAave.invoke({ spreadFloor: 0 });
-    // Verifies: Ethena stub → 380 bps, Aave pool (real mainnet RPC) → numeric borrow bps.
+    const provider = createEthenaSusdeProvider({
+      publicClient: createPublicClient({
+        chain: fork.chain,
+        transport: http(`http://127.0.0.1:${fork.port}`),
+      }),
+      chain: fork.chain,
+      addresses: {
+        usde: ADDRS.tokens.USDe,
+        susde: ADDRS.tokens.sUSDe,
+        usdc: ADDRS.tokens.USDC,
+        aavePool: ADDRS.aave.pool,
+        aaveOracle: ADDRS.aave.oracle,
+        woofiRouter: ADDRS.mantleDex.woofi.router,
+      },
+    });
+    const result = await provider.actions.getCarryVsAave.invoke({ spreadFloor: 0 });
+    // Verifies: Ethena stub → 380 bps, Aave pool (fork) → numeric borrow bps.
     expect(result.susdeYieldBps).toBe(380);
     expect(result.usdcBorrowBps).toBeGreaterThan(0);
     expect(result.carryBps).toBe(380 - result.usdcBorrowBps);
     expect(typeof result.spreadFloorPassing).toBe('boolean');
-  });
+  }, 30_000);
 });

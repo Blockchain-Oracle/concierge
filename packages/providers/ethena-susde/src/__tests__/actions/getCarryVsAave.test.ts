@@ -46,7 +46,7 @@ describe('getCarryVsAave — fork', () => {
     stubEthenaApi(3.8); // 380 bps
     const result = await makeProvider().actions.getCarryVsAave.invoke({ spreadFloor: 0 });
     expect(result.susdeYieldBps).toBe(380);
-    expect(result.usdcBorrowBps).toBeGreaterThanOrEqual(0);
+    expect(result.usdcBorrowBps).toBeGreaterThan(0);
     expect(result.carryBps).toBe(result.susdeYieldBps - result.usdcBorrowBps);
     expect(typeof result.spreadFloorPassing).toBe('boolean');
   }, 30_000);
@@ -59,9 +59,17 @@ describe('getCarryVsAave — fork', () => {
 
   it('throws RpcError when Aave pool contract is drained', async () => {
     stubEthenaApi(3.8);
+    // Snapshot before draining so subsequent tests see a healthy Aave pool.
+    // @ts-expect-error evm_snapshot is an Anvil extension not in viem's standard types
+    const snapId: string = await fork.publicClient.request({ method: 'evm_snapshot', params: [] });
     await fork.drainContract(ADDRESSES.mantleMainnet.aave.pool);
-    await expect(
-      makeProvider().actions.getCarryVsAave.invoke({ spreadFloor: 0 }),
-    ).rejects.toSatisfy((e: unknown) => e instanceof ConciergeError && e.type === 'RpcError');
+    try {
+      await expect(
+        makeProvider().actions.getCarryVsAave.invoke({ spreadFloor: 0 }),
+      ).rejects.toSatisfy((e: unknown) => e instanceof ConciergeError && e.type === 'RpcError');
+    } finally {
+      // @ts-expect-error evm_revert is an Anvil extension not in viem's standard types
+      await fork.publicClient.request({ method: 'evm_revert', params: [snapId] });
+    }
   }, 30_000);
 });

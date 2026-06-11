@@ -1,7 +1,12 @@
 import { ConciergeError } from '@concierge/sdk';
+import { encodeAbiParameters, encodeEventTopics, parseAbi } from 'viem';
 import { describe, expect, it, vi } from 'vitest';
 import type { ActionContext } from '../../_context.ts';
 import { ensureApproval, executeWooFiSwap, queryMinOut } from '../../_woofi.ts';
+
+const WOO_SWAP_ABI = parseAbi([
+  'event WooRouterSwap(uint8 swapType, address indexed fromToken, address indexed toToken, uint256 fromAmount, uint256 toAmount, address from, address to, address rebateTo)',
+]);
 
 const ZERO = '0x0000000000000000000000000000000000000000' as const;
 const TOKEN = '0x5d3a1Ff2b6BAb83b63cd9AD0787074081a52ef34' as const;
@@ -171,5 +176,53 @@ describe('executeWooFiSwap — success paths', () => {
     );
     expect(result.txHash).toBe(TX_HASH);
     expect(result.amountOut).toBe(MIN_OUT); // falls back to simulated
+  });
+
+  it('returns ground-truth amountOut from WooRouterSwap event when present in receipt', async () => {
+    const ACTUAL_AMOUNT_OUT = AMOUNT + 500n; // intentionally different from MIN_OUT
+    // Build a properly ABI-encoded WooRouterSwap log so parseEventLogs can decode it.
+    const topics = encodeEventTopics({
+      abi: WOO_SWAP_ABI,
+      eventName: 'WooRouterSwap',
+      args: { fromToken: TOKEN, toToken: TOKEN },
+    });
+    const data = encodeAbiParameters(
+      [
+        { name: 'swapType', type: 'uint8' },
+        { name: 'fromAmount', type: 'uint256' },
+        { name: 'toAmount', type: 'uint256' },
+        { name: 'from', type: 'address' },
+        { name: 'to', type: 'address' },
+        { name: 'rebateTo', type: 'address' },
+      ],
+      [1, AMOUNT, ACTUAL_AMOUNT_OUT, ACCOUNT, ACCOUNT, ZERO],
+    );
+    const log = {
+      address: SPENDER,
+      topics,
+      data,
+      blockHash: `0x${'00'.repeat(32)}` as `0x${string}`,
+      blockNumber: 1n,
+      transactionHash: TX_HASH,
+      transactionIndex: 0,
+      logIndex: 0,
+      removed: false,
+    };
+    const simulate = vi.fn().mockResolvedValue(MOCK_SIM);
+    const waitReceipt = vi.fn().mockResolvedValue({ status: 'success', logs: [log] });
+    const ctx = makeCtx(vi.fn(), simulate, waitReceipt);
+    const result = await executeWooFiSwap(
+      ctx,
+      TOKEN,
+      TOKEN,
+      AMOUNT,
+      MIN_OUT,
+      ACCOUNT,
+      ACCOUNT,
+      makeWallet(),
+      'test',
+    );
+    expect(result.txHash).toBe(TX_HASH);
+    expect(result.amountOut).toBe(ACTUAL_AMOUNT_OUT); // ground truth from event, not MIN_OUT
   });
 });

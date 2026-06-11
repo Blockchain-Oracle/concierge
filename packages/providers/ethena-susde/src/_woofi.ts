@@ -1,7 +1,7 @@
 import { ConciergeError } from '@concierge/sdk';
 import type { Address, Hex } from '@concierge/shared';
 import type { WalletClient } from 'viem';
-import { parseAbi, parseEventLogs } from 'viem';
+import { ContractFunctionExecutionError, parseAbi, parseEventLogs } from 'viem';
 import type { ActionContext } from './_context.ts';
 
 export const WOOFI_ABI = parseAbi([
@@ -29,12 +29,26 @@ export async function queryMinOut(
   slippageBps: number,
   tag: string,
 ): Promise<bigint> {
-  const quoted = await ctx.publicClient.readContract({
-    address: ctx.addresses.woofiRouter,
-    abi: WOOFI_ABI,
-    functionName: 'querySwap',
-    args: [fromToken, toToken, fromAmount],
-  });
+  const quoted = await ctx.publicClient
+    .readContract({
+      address: ctx.addresses.woofiRouter,
+      abi: WOOFI_ABI,
+      functionName: 'querySwap',
+      args: [fromToken, toToken, fromAmount],
+    })
+    .catch((err: unknown) => {
+      if (err instanceof ConciergeError) throw err;
+      // Only classify on-chain reverts as InsufficientLiquidity — network/timeout
+      // errors are not liquidity failures and must propagate for proper retry logic.
+      if (err instanceof ContractFunctionExecutionError) {
+        throw new ConciergeError(
+          'InsufficientLiquidity',
+          `${tag}: WooFi querySwap reverted — token pair may not be supported`,
+          err,
+        );
+      }
+      throw err;
+    });
   if (quoted === 0n) {
     throw new ConciergeError('InsufficientLiquidity', `${tag}: WooFi has no route`);
   }
@@ -106,9 +120,14 @@ function parseSwapAmountOut(
   try {
     const parsed = parseEventLogs({ abi: WOO_SWAP_EVENT_ABI, eventName: 'WooRouterSwap', logs });
     const toAmount = parsed[0]?.args.toAmount;
-    return toAmount !== undefined ? toAmount : simulatedAmountOut;
+    if (toAmount === undefined) {
+      // Tx landed but no matching event — router upgrade or unexpected ABI change.
+      console.warn(`${tag}: WooRouterSwap event not found in receipt — using simulated amountOut`);
+      return simulatedAmountOut;
+    }
+    return toAmount;
   } catch (err) {
-    // Non-fatal: ABI mismatch on router upgrade falls back to simulated result.
+    // Non-fatal: ABI decode failure on router upgrade falls back to simulated result.
     console.error(`${tag}: WooRouterSwap event parse failed — using simulated amountOut:`, err);
     return simulatedAmountOut;
   }

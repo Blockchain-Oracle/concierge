@@ -17,6 +17,7 @@ import {
   type WalletClient,
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
+import { vi } from 'vitest';
 
 export const MANTLE_MAINNET_RPC = process.env['MANTLE_RPC_URL'] ?? 'https://rpc.mantle.xyz';
 const ANVIL_BIN = process.env['ANVIL_BIN'] ?? 'anvil';
@@ -180,21 +181,22 @@ export async function startAnvilFork(): Promise<AnvilFork> {
   });
 }
 
-/** Stubs the Ethena yields API while passing all other fetch requests through. */
+/** Stubs the Ethena yields API while passing all other fetch requests through.
+ * Uses vi.stubGlobal so vi.unstubAllGlobals() in afterEach properly restores fetch. */
 export function stubEthenaApi(susdeYieldPct: number): void {
   const pct = susdeYieldPct;
   const realFetch = globalThis.fetch;
-  globalThis.fetch = async (
-    input: string | URL | Request,
-    init?: RequestInit,
-  ): Promise<Response> => {
-    if (String(input).includes('ethena.fi')) {
-      return new Response(JSON.stringify({ data: { protocol: pct, staking: pct } }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
-    // Pass all other requests through (e.g., viem JSON-RPC to Anvil fork).
-    return realFetch(input, init);
-  };
+  vi.stubGlobal(
+    'fetch',
+    async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      if (String(input).includes('ethena.fi')) {
+        return new Response(JSON.stringify({ data: { protocol: pct, staking: pct } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      // Pass all other requests through (e.g., viem JSON-RPC to Anvil fork).
+      return realFetch(input, init);
+    },
+  );
 }
