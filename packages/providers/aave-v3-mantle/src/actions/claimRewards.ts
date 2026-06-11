@@ -57,10 +57,7 @@ function parseRewardsClaimed(receipt: TransactionReceipt): {
         claimedAmounts.push(args.amount.toString());
       }
     } catch {
-      // A log matched the topic but failed to decode — surface for diagnostics.
-      process.stderr.write(
-        `[claimRewards] WARN: failed to decode RewardsClaimed event in tx ${receipt.transactionHash}\n`,
-      );
+      // Silently skip — a corrupted log should not abort parsing of other valid events.
     }
   }
   return { rewardsList, claimedAmounts };
