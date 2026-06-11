@@ -251,18 +251,18 @@ stories:
     merged_at: "2026-06-11"
   - id: story-38-meth-staking-provider
     epic: "Epic E3 — Action Providers"
-    status: PENDING
+    status: COMPLETE
     depends_on: [story-22-sdk-skeleton]
     issue_url: ""
-    pr_url: ""
-    merged_at: ""
+    pr_url: "https://github.com/Blockchain-Oracle/concierge/pull/69"
+    merged_at: "2026-06-11"
   - id: story-39-meth-staking-tests
     epic: "Epic E3 — Action Providers"
-    status: PENDING
+    status: COMPLETE
     depends_on: [story-38-meth-staking-provider]
     issue_url: ""
-    pr_url: ""
-    merged_at: ""
+    pr_url: "https://github.com/Blockchain-Oracle/concierge/pull/69"
+    merged_at: "2026-06-11"
   - id: story-40-lifi-bridge-provider
     epic: "Epic E3 — Action Providers"
     status: PENDING
