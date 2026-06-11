@@ -6,6 +6,7 @@ import type { Address } from '@concierge/shared';
 import { createWalletClient, http, parseAbi } from 'viem';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createAaveV3MantleProvider } from '../../provider.ts';
+import { getUserAccountData } from '../../selectors.ts';
 import {
   ANVIL_ACCOUNTS,
   type AnvilInstance,
@@ -146,6 +147,10 @@ describe('borrow — happy path with E-Mode', () => {
     const preHF = BigInt(result.attestationPayload.preHF);
     expect(hfBig).toBeGreaterThan(1_500_000_000_000_000_000n);
     expect(preHF).toBeGreaterThan(hfBig);
+
+    // Debt position actually registered on-chain
+    const postAccountData = await getUserAccountData(publicClient, mocks.pool, borrowerAddr);
+    expect(postAccountData.totalDebtBase).toBeGreaterThan(0n);
   });
 
   it('throws RpcError when borrow exceeds available collateral', async () => {

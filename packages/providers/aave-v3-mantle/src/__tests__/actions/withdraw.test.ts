@@ -112,6 +112,26 @@ describe('withdraw action', () => {
     expect(post.totalCollateralBase).toBeLessThan(pre.totalCollateralBase);
   });
 
+  it('amount=max with no debt: withdraws full aToken balance, collateral reaches zero', async () => {
+    const { provider, addr } = await makeWithdrawer(3, false); // no debt
+
+    const pre = await getUserAccountData(anvil.publicClient, mocks.pool, addr);
+    expect(pre.totalCollateralBase).toBeGreaterThan(0n);
+
+    const result = await provider.actions.withdraw.invoke({
+      asset: mocks.usdc,
+      amount: 'max',
+      to: addr,
+    });
+
+    expect(result.txHash).toMatch(/^0x[0-9a-fA-F]{64}$/);
+    expect(result.attestationPayload.schema).toBe('concierge.aave.v3.withdraw.v1');
+    expect(result.warning).toBeUndefined();
+
+    const post = await getUserAccountData(anvil.publicClient, mocks.pool, addr);
+    expect(post.totalCollateralBase).toBe(0n);
+  });
+
   it('throws InsufficientLiquidity for amount=max when debt is outstanding', async () => {
     const { ConciergeError } = await import('@concierge/sdk');
     // Small borrow keeps HF > 1.5, but max withdraw should still be rejected

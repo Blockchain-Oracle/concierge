@@ -95,6 +95,8 @@ describe('repay action', () => {
 
     expect(result.txHash).toMatch(/^0x[0-9a-fA-F]{64}$/);
     expect(result.attestationPayload.schema).toBe('concierge.aave.v3.repay.v1');
+    // Verify event-log parser returned the actual repaid amount (not 0 or maxUint256)
+    expect(BigInt(result.actualRepaid)).toBe(50_000_000n);
 
     const post = await getUserAccountData(anvil.publicClient, mocks.pool, addr);
     expect(post.totalDebtBase).toBeLessThan(pre.totalDebtBase);

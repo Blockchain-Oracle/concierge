@@ -63,6 +63,9 @@ describe('setUserEMode action', () => {
     const acct2Addr = ANVIL_ACCOUNTS[0] as Address;
     const { publicClient, chain } = anvil;
 
+    // Put TEST_ACCOUNT in a known state so the independence check is not order-dependent.
+    await setUserEMode.invoke({ categoryId: 0 });
+
     const wc2 = createWalletClient({
       transport: http(`http://127.0.0.1:${anvil.port}`),
       account: acct2Addr, // Anvil unlocked account
@@ -79,8 +82,8 @@ describe('setUserEMode action', () => {
     const eMode2 = await getUserEMode(publicClient, mocks.pool, acct2Addr);
     expect(eMode2).toBe(1);
 
-    // Main account's eMode is independently managed (still at 1 from the preceding test)
+    // TEST_ACCOUNT is still at 0 — acct2's eMode change did not affect it.
     const eMode1 = await getUserEMode(publicClient, mocks.pool, TEST_ACCOUNT);
-    expect(eMode1).toBe(1);
+    expect(eMode1).toBe(0);
   });
 });

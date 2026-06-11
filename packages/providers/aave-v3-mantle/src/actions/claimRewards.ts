@@ -45,15 +45,22 @@ function parseRewardsClaimed(receipt: TransactionReceipt): {
   const claimedAmounts: string[] = [];
   for (const log of receipt.logs) {
     if (log.topics[0] !== REWARDS_CLAIMED_TOPIC) continue;
-    const { args } = decodeEventLog({
-      abi: rewardsClaimedEventAbi,
-      data: log.data as Hex,
-      topics: log.topics as [Hex, ...Hex[]],
-      strict: false,
-    });
-    if (args?.reward && args?.amount !== undefined) {
-      rewardsList.push(args.reward as string);
-      claimedAmounts.push((args.amount as bigint).toString());
+    try {
+      const { args } = decodeEventLog({
+        abi: rewardsClaimedEventAbi,
+        eventName: 'RewardsClaimed',
+        data: log.data as Hex,
+        topics: log.topics as [Hex, ...Hex[]],
+      });
+      if (args.reward && args.amount !== undefined) {
+        rewardsList.push(args.reward);
+        claimedAmounts.push(args.amount.toString());
+      }
+    } catch {
+      // A log matched the topic but failed to decode — surface for diagnostics.
+      process.stderr.write(
+        `[claimRewards] WARN: failed to decode RewardsClaimed event in tx ${receipt.transactionHash}\n`,
+      );
     }
   }
   return { rewardsList, claimedAmounts };
@@ -76,14 +83,25 @@ async function executeClaimRewards(ctx: ActionContext, args: z.infer<typeof Clai
     getUserEMode(publicClient, poolAddress, account),
   ]);
 
-  const txHash = await walletClient.writeContract({
-    address: incentivesControllerAddress as Address,
-    abi: rewardsControllerAbi,
-    functionName: 'claimAllRewards',
-    args: [assets, to],
-    account,
-    chain: walletClient.chain ?? null,
-  });
+  let txHash: `0x${string}`;
+  try {
+    txHash = await walletClient.writeContract({
+      address: incentivesControllerAddress as Address,
+      abi: rewardsControllerAbi,
+      functionName: 'claimAllRewards',
+      args: [assets, to],
+      account,
+      chain: walletClient.chain ?? null,
+    });
+  } catch (err) {
+    if (err instanceof ConciergeError) throw err;
+    throw new ConciergeError(
+      'RpcError',
+      `[@concierge/aave-v3-mantle] claimRewards: claimAllRewards() failed on controller ${incentivesControllerAddress}. Verify the assets array contains valid aToken/debtToken addresses.`,
+      err instanceof Error ? err : undefined,
+      { incentivesControllerAddress, assets },
+    );
+  }
 
   const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
   if (receipt.status === 'reverted') {

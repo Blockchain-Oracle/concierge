@@ -1,3 +1,4 @@
+import { parseAbi } from 'viem';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createAaveV3MantleProvider } from '../../provider.ts';
 import {
@@ -7,6 +8,8 @@ import {
   startAnvil,
   TEST_ACCOUNT,
 } from '../setup.ts';
+
+const balanceOfAbi = parseAbi(['function balanceOf(address) view returns (uint256)']);
 
 let anvil: AnvilInstance;
 let mocks: MockAddresses;
@@ -35,15 +38,30 @@ afterAll(async () => {
 });
 
 describe('claimRewards action', () => {
-  it('happy path: rewardsList is non-empty and claimedAmounts[0] is non-zero', async () => {
+  it('happy path: rewardsList contains wmnt, claimedAmounts[0] === 10 WMNT, balance increases', async () => {
+    const preBal = await anvil.publicClient.readContract({
+      address: mocks.wmnt,
+      abi: balanceOfAbi,
+      functionName: 'balanceOf',
+      args: [TEST_ACCOUNT],
+    });
+
     const result = await claimRewards.invoke({
       assets: [mocks.aUsdc],
       to: TEST_ACCOUNT,
     });
 
     expect(result.txHash).toMatch(/^0x[0-9a-fA-F]{64}$/);
-    expect(result.rewardsList.length).toBeGreaterThan(0);
-    expect(BigInt(result.claimedAmounts[0])).toBeGreaterThan(0n);
+    expect(result.rewardsList[0]?.toLowerCase()).toBe(mocks.wmnt.toLowerCase());
+    expect(BigInt(result.claimedAmounts[0])).toBe(10n * 10n ** 18n);
+
+    const postBal = await anvil.publicClient.readContract({
+      address: mocks.wmnt,
+      abi: balanceOfAbi,
+      functionName: 'balanceOf',
+      args: [TEST_ACCOUNT],
+    });
+    expect(postBal - preBal).toBe(10n * 10n ** 18n);
   });
 
   it('attestation payload has correct schema', async () => {

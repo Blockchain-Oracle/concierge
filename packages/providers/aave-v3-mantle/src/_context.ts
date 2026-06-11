@@ -27,20 +27,14 @@ export async function requireWallet(
       `[@concierge/aave-v3-mantle] ${action}: walletClient is required for write operations. Initialise AaveV3MantleProvider with a connected WalletClient.`,
     );
   }
-  // Prefer the account already bound to the wallet client (covers JSON-RPC accounts
-  // created with `createWalletClient({ account: "0xaddr" })`). Falling back to
-  // getAddresses()[0] would return ALL node accounts on a dev node (Anvil returns 10),
-  // and the first of those is always the node's default account, not the caller's.
-  let account: Address | undefined;
-  if (ctx.walletClient.account) {
-    account = ctx.walletClient.account.address as Address;
-  } else {
-    account = (await ctx.walletClient.getAddresses())[0] as Address | undefined;
-  }
+  // Require the account to be explicitly bound to the wallet client.
+  // getAddresses()[0] returns the node's first unlocked account — not the caller's —
+  // and would silently execute against the wrong signer on any multi-account node.
+  const account = ctx.walletClient.account?.address as Address | undefined;
   if (!account) {
     throw new ConciergeError(
       'ConfigError',
-      `[@concierge/aave-v3-mantle] ${action}: no account found in walletClient. Connect a wallet account before calling write operations.`,
+      `[@concierge/aave-v3-mantle] ${action}: walletClient has no bound account. Pass an explicit account to createWalletClient({ account: privateKeyToAccount(...) }) or createWalletClient({ account: "0xaddr" }).`,
     );
   }
   return { walletClient: ctx.walletClient, account };

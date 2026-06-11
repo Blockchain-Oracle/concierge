@@ -101,15 +101,35 @@ async function executeRepay(ctx: ActionContext, args: z.infer<typeof RepayInput>
   // Parse the Repay event from the receipt to get the exact token-unit amount repaid.
   // This is race-free: the value comes from what actually executed on-chain, not a
   // pre-tx simulation that could observe different state than what the tx landed on.
-  const repayLog = receipt.logs.find((log) => log.topics[0] === REPAY_TOPIC);
-  let actualRepaid = 0n;
-  if (repayLog) {
-    const { args } = decodeEventLog({
+  // Filter by both event signature (topics[0]) and reserve address (topics[1], ABI-padded).
+  const assetSuffix = asset.slice(2).toLowerCase();
+  const repayLog = receipt.logs.find(
+    (log) => log.topics[0] === REPAY_TOPIC && log.topics[1]?.toLowerCase().endsWith(assetSuffix),
+  );
+  if (!repayLog) {
+    throw new ConciergeError(
+      'RpcError',
+      `[@concierge/aave-v3-mantle] repay: tx ${txHash} was mined but no Repay event found for asset ${asset}. The pool ABI may have changed.`,
+      undefined,
+      { txHash, poolAddress, asset, logCount: receipt.logs.length },
+    );
+  }
+  let actualRepaid: bigint;
+  try {
+    const { args: eventArgs } = decodeEventLog({
       abi: repayEventAbi,
+      eventName: 'Repay',
       data: repayLog.data as Hex,
       topics: repayLog.topics as [Hex, ...Hex[]],
     });
-    actualRepaid = (args as { amount: bigint }).amount;
+    actualRepaid = eventArgs.amount;
+  } catch (decodeErr) {
+    throw new ConciergeError(
+      'RpcError',
+      `[@concierge/aave-v3-mantle] repay: failed to decode Repay event from tx ${txHash}. Pool ABI may have changed.`,
+      decodeErr instanceof Error ? decodeErr : undefined,
+      { txHash, poolAddress },
+    );
   }
 
   const attestationPayload = buildAttestationPayload({

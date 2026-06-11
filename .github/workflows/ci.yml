@@ -101,7 +101,7 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
-      - uses: foundry-rs/foundry-toolchain@v1
+      - uses: foundry-rs/foundry-toolchain@v1.8.0
       - run: pnpm install --frozen-lockfile
       # Build Foundry contracts so integration tests can load artifacts from contracts/out/.
       - run: forge build

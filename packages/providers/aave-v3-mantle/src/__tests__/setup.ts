@@ -8,6 +8,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Address, Hex } from '@concierge/shared';
 import {
+  type Abi,
   type Chain,
   createPublicClient,
   createWalletClient,
@@ -49,7 +50,7 @@ export interface AnvilInstance {
   readonly chain: Chain;
   readonly publicClient: PublicClient;
   readonly walletClient: WalletClient;
-  stop: () => Promise<void>;
+  readonly stop: () => Promise<void>;
 }
 
 function getFreePort(): Promise<number> {
@@ -73,6 +74,7 @@ export async function startAnvil(): Promise<AnvilInstance> {
     });
 
     let started = false;
+    let stopping = false;
     const buf: string[] = [];
 
     // Cleared on success to prevent a timer fire against an already-resolved promise.
@@ -109,6 +111,7 @@ export async function startAnvil(): Promise<AnvilInstance> {
 
         const stop = () =>
           new Promise<void>((res) => {
+            stopping = true;
             proc.once('exit', () => res());
             proc.kill('SIGTERM');
           });
@@ -128,21 +131,25 @@ export async function startAnvil(): Promise<AnvilInstance> {
         ),
       );
     });
-    proc.on('exit', (code) => {
+    proc.on('exit', (code, signal) => {
       if (!started) {
         clearTimeout(timer);
         reject(new Error(`Anvil exited with code ${String(code)} before listening`));
+      } else if (!stopping) {
+        process.stderr.write(
+          `[setup] Anvil (port ${port}) exited unexpectedly: code=${String(code)} signal=${String(signal)}. Subsequent RPC calls will fail.\n`,
+        );
       }
     });
   });
 }
 
-export function loadArtifact(contractName: string): { abi: unknown[]; bytecode: Hex } {
+export function loadArtifact(contractName: string): { abi: Abi; bytecode: Hex } {
   const artifactPath = resolve(CONTRACTS_OUT, `${contractName}.sol/${contractName}.json`);
-  let raw: { abi: unknown[]; bytecode: { object: Hex } };
+  let raw: { abi: Abi; bytecode: { object: Hex } };
   try {
     raw = JSON.parse(readFileSync(artifactPath, 'utf-8')) as {
-      abi: unknown[];
+      abi: Abi;
       bytecode: { object: Hex };
     };
   } catch (err) {
@@ -210,7 +217,9 @@ export async function deployMocks(anvil: AnvilInstance): Promise<MockAddresses> 
       chain: anvil.chain,
     });
     const receipt = await publicClient.waitForTransactionReceipt({ hash });
-    if (!receipt.contractAddress) throw new Error('Deploy failed: no contractAddress');
+    if (receipt.status === 'reverted' || !receipt.contractAddress) {
+      throw new Error(`deploy: contract deployment reverted or produced no address (tx ${hash})`);
+    }
     return receipt.contractAddress as Address;
   }
 
@@ -300,6 +309,15 @@ export async function deployMocks(anvil: AnvilInstance): Promise<MockAddresses> 
     [wmnt, 10n * 10n ** 18n],
     'mockSetReward(wmnt)',
   );
+  // Pre-mint WMNT to rewardsController so claimAllRewards can transfer to claimants.
+  // 100 WMNT covers many test claims (each call distributes 10 WMNT).
+  await writeAndConfirm(
+    wmnt,
+    mockMintAbi,
+    'mint',
+    [rewardsController, 100n * 10n ** 18n],
+    'mint(wmnt → rewardsController)',
+  );
 
   // Pre-mint tokens to test wallet for actions that need an existing balance
   for (const token of [usdc, sUsde]) {
@@ -329,5 +347,10 @@ export async function mintToken(
     account: privateKeyToAccount(TEST_PRIVATE_KEY),
     chain: anvil.chain,
   });
-  await anvil.publicClient.waitForTransactionReceipt({ hash });
+  const receipt = await anvil.publicClient.waitForTransactionReceipt({ hash });
+  if (receipt.status === 'reverted') {
+    throw new Error(
+      `mintToken: mint(${to}, ${amount}) on token ${token} reverted (tx ${hash}). Verify the test account has minting privileges.`,
+    );
+  }
 }
