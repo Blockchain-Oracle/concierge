@@ -52,6 +52,7 @@ export function createSetUserEModeTool(ctx: ActionContext) {
         chain: walletClient.chain ?? null,
       });
 
+      await publicClient.waitForTransactionReceipt({ hash: txHash });
       const postState = await getUserAccountData(publicClient, poolAddress, account);
 
       const attestationPayload = buildAttestationPayload({

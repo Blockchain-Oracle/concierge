@@ -21,13 +21,8 @@ export interface AaveV3MantleAddressOverrides {
   pool?: Address;
   oracle?: Address;
   incentivesController?: Address;
-  tokens?: Partial<{
-    USDC: Address;
-    USDe: Address;
-    sUSDe: Address;
-    USDY: Address;
-    mETH: Address;
-  }>;
+  // Only sUSDe is consumed by the provider (E-Mode preflight). Add other token overrides here as actions are added.
+  sUsde?: Address;
 }
 
 export interface AaveV3MantleProviderOpts {
@@ -38,9 +33,6 @@ export interface AaveV3MantleProviderOpts {
   /** Override addresses for testing (e.g. mock contracts on an Anvil fork). */
   addresses?: AaveV3MantleAddressOverrides | undefined;
 }
-
-// biome-ignore lint/suspicious/noExplicitAny: ConciergeTool generics are erased at the provider boundary
-export type AaveActionRecord = Record<string, any>;
 
 export interface AaveV3MantleProvider {
   readonly chainId: EvmChainId;
@@ -83,10 +75,10 @@ export function createAaveV3MantleProvider(
 
   const poolAddress = ov?.pool ?? sharedAddrs.aave.pool;
   const oracleAddress = ov?.oracle ?? sharedAddrs.aave.oracle;
-  const incentivesControllerAddress =
-    ov?.incentivesController ??
-    (chainId === 5000 ? MAINNET_INCENTIVES_CONTROLLER : sharedAddrs.aave.pool); // Sepolia: not deployed; tests override
-  const sUsdeAddress = ov?.tokens?.sUSDe ?? sharedAddrs.tokens.sUSDe;
+  // Sepolia: incentives controller not deployed — claimRewards will throw NotSupportedOnChain.
+  const incentivesControllerAddress: Address | undefined =
+    ov?.incentivesController ?? (chainId === 5000 ? MAINNET_INCENTIVES_CONTROLLER : undefined);
+  const sUsdeAddress = ov?.sUsde ?? sharedAddrs.tokens.sUSDe;
 
   const ctx: ActionContext = {
     publicClient,

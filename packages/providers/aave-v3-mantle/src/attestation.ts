@@ -1,7 +1,7 @@
 // ERC-8004 attestation payload builder for Aave V3 Mantle actions.
 // Returns the raw JSON payload; EIP-712 hash + on-chain write belong to story-67 (record phase).
 
-import type { Address, Hex } from '@concierge/shared';
+import type { Address, EvmChainId, Hex } from '@concierge/shared';
 import { z } from 'zod';
 
 export type AaveAction =
@@ -22,21 +22,24 @@ export const AAVE_ATTESTATION_SCHEMAS = {
   claimRewards: 'concierge.aave.v3.claimRewards.v1',
 } as const satisfies Record<AaveAction, string>;
 
+const SCHEMA_ENUM_VALUES = Object.values(AAVE_ATTESTATION_SCHEMAS) as [string, ...string[]];
+const NON_NEG_INT_STR = z.string().regex(/^\d+$/, 'must be a non-negative integer decimal string');
+
 export const AttestationPayloadSchema = z.object({
   schema: z
-    .string()
+    .enum(SCHEMA_ENUM_VALUES)
     .describe(
       'concierge.aave.v3.<action>.v1 — used by the record phase to select the ERC-8004 schema',
     ),
   chain: z.number(),
   pool: z.string(),
   asset: z.string(),
-  amountBase: z
-    .string()
-    .describe('Amount in token base units (bigint serialised to decimal string)'),
+  amountBase: NON_NEG_INT_STR.describe(
+    'Amount in token base units (bigint serialised to decimal string)',
+  ),
   txHash: z.string(),
-  preHF: z.string().describe('Health factor before the action (1e18 scaled, decimal string)'),
-  postHF: z.string().describe('Health factor after the action (1e18 scaled, decimal string)'),
+  preHF: NON_NEG_INT_STR.describe('Health factor before the action (1e18 scaled, decimal string)'),
+  postHF: NON_NEG_INT_STR.describe('Health factor after the action (1e18 scaled, decimal string)'),
   eMode: z
     .number()
     .describe('Active E-Mode category at execution time (0=general, 1=sUSDe, 2=USDe)'),
@@ -47,7 +50,7 @@ export type AttestationPayload = z.infer<typeof AttestationPayloadSchema>;
 
 export interface AttestationContext {
   action: AaveAction;
-  chainId: number;
+  chainId: EvmChainId;
   pool: Address;
   asset: Address;
   amountBase: bigint;

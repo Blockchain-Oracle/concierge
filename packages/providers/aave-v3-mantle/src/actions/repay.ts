@@ -1,20 +1,18 @@
-import type { Address } from '@concierge/shared';
+import { ConciergeError } from '@concierge/sdk';
 import { erc20Abi, ipoolAbi } from '@concierge/shared/abi';
 import { tool } from '@concierge/tools';
 import { maxUint256 } from 'viem';
 import { z } from 'zod';
 import type { ActionContext } from '../_context.ts';
+import { HEX_ADDRESS, POSITIVE_BIGINT } from '../_schema.ts';
 import { AttestationPayloadSchema, buildAttestationPayload } from '../attestation.ts';
 import { getUserAccountData } from '../selectors.ts';
-
-const HEX_ADDRESS = z.string().regex(/^0x[0-9a-fA-F]{40}$/) as z.ZodType<Address>;
 
 const RepayInput = z.object({
   asset: HEX_ADDRESS.describe('ERC-20 debt token address to repay'),
   amount: z
-    .union([z.bigint().positive(), z.literal('max')])
+    .union([POSITIVE_BIGINT, z.literal('max')])
     .describe('Amount to repay in base units, or "max" to fully clear the debt position'),
-  onBehalfOf: HEX_ADDRESS.describe('Address whose debt is being repaid'),
 });
 
 const RepayOutput = z.object({
@@ -30,35 +28,56 @@ async function executeRepay(ctx: ActionContext, args: z.infer<typeof RepayInput>
   const [account] = await walletClient.getAddresses();
   if (!account) throw new Error('[@concierge/aave-v3-mantle] repay: no account in walletClient');
 
-  const { asset, amount, onBehalfOf } = args;
+  const { asset, amount } = args;
   const rawAmount = amount === 'max' ? maxUint256 : amount;
   const preState = await getUserAccountData(publicClient, poolAddress, account);
 
-  await walletClient.writeContract({
+  const allowance = await publicClient.readContract({
     address: asset,
     abi: erc20Abi,
-    functionName: 'approve',
-    args: [poolAddress, maxUint256],
-    account,
-    chain: walletClient.chain ?? null,
+    functionName: 'allowance',
+    args: [account, poolAddress],
   });
-  const txHash = await walletClient.writeContract({
-    address: poolAddress,
-    abi: ipoolAbi,
-    functionName: 'repay',
-    args: [asset, rawAmount, 2n, onBehalfOf], // interestRateMode=2 (variable)
-    account,
-    chain: walletClient.chain ?? null,
-  });
+  if (allowance < rawAmount) {
+    const approveTxHash = await walletClient.writeContract({
+      address: asset,
+      abi: erc20Abi,
+      functionName: 'approve',
+      args: [poolAddress, maxUint256],
+      account,
+      chain: walletClient.chain ?? null,
+    });
+    await publicClient.waitForTransactionReceipt({ hash: approveTxHash });
+  }
+
+  let txHash: `0x${string}`;
+  try {
+    txHash = await walletClient.writeContract({
+      address: poolAddress,
+      abi: ipoolAbi,
+      functionName: 'repay',
+      args: [asset, rawAmount, 2n, account], // interestRateMode=2 (variable)
+      account,
+      chain: walletClient.chain ?? null,
+    });
+  } catch (err) {
+    throw new ConciergeError(
+      'RpcError',
+      `[@concierge/aave-v3-mantle] repay: Pool.repay() failed. An allowance for ${poolAddress} may be live on ${asset}. Revoke with approve(${poolAddress}, 0) if needed.`,
+      err instanceof Error ? err : undefined,
+      { asset, poolAddress },
+    );
+  }
 
   const [postState] = await Promise.all([
     getUserAccountData(publicClient, poolAddress, account),
-    publicClient.waitForTransactionReceipt({ hash: txHash }), // await for confirmation
+    publicClient.waitForTransactionReceipt({ hash: txHash }),
   ]);
 
-  // Actual repaid amount is in receipt logs; debt-delta is a sufficient proxy for attestation.
   const debtDelta = preState.totalDebtBase - postState.totalDebtBase;
-  const actualRepaid = debtDelta > 0n ? debtDelta : rawAmount;
+  // When debtDelta <= 0 (interest accrued faster than repay, or debt already 0), avoid
+  // recording maxUint256 as amountBase for the 'max' path — use 0n as the safe sentinel.
+  const actualRepaid = debtDelta > 0n ? debtDelta : rawAmount === maxUint256 ? 0n : rawAmount;
   const attestationPayload = buildAttestationPayload({
     action: 'repay',
     chainId,

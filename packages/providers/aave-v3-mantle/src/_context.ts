@@ -9,7 +9,8 @@ export interface ActionContext {
   chainId: EvmChainId;
   poolAddress: Address;
   oracleAddress: Address;
-  incentivesControllerAddress: Address;
+  // undefined when the rewards controller is not deployed on this chain (e.g. Mantle Sepolia).
+  incentivesControllerAddress: Address | undefined;
   // Used in borrow's E-Mode pre-check to detect sUSDe collateral
   sUsdeAddress: Address;
 }

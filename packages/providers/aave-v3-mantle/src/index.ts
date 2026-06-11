@@ -2,6 +2,7 @@
 // 6 actions: supply, borrow, repay, withdraw, setUserEMode, claimRewards.
 // Verified on-chain addresses in research/concierge/03-providers/aave-v3-mantle.md.
 
+export { assertHFAboveFloor } from './actions/withdraw.ts';
 export type { AaveAction, AttestationContext, AttestationPayload } from './attestation.ts';
 export {
   AAVE_ATTESTATION_SCHEMAS,
@@ -15,7 +16,6 @@ export {
   createAaveV3MantleProvider,
 } from './provider.ts';
 export {
-  getHealthFactor,
   getReserveData,
   getUserAccountData,
   type MaxSafeBorrowOpts,

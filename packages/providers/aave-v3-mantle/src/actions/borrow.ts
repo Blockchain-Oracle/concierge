@@ -1,6 +1,7 @@
 // The E-Mode pre-check is the load-bearing safety rail in this file.
 // Aave's Pool.borrow() returns 0 SILENTLY when sUSDe LTV=0 (general mode, no E-Mode 1).
-// We detect this client-side by reading getUserEMode BEFORE submitting the transaction.
+// We detect this by checking the aSUSDe aToken balance — NOT the raw sUSDe wallet balance,
+// which is 0 after supply(sUSDe) moves tokens into the pool.
 
 import { ConciergeError } from '@concierge/sdk';
 import type { Address } from '@concierge/shared';
@@ -10,18 +11,16 @@ import type { PublicClient } from 'viem';
 import { parseAbi } from 'viem';
 import { z } from 'zod';
 import type { ActionContext } from '../_context.ts';
+import { HEX_ADDRESS, POSITIVE_BIGINT } from '../_schema.ts';
 import { AttestationPayloadSchema, buildAttestationPayload } from '../attestation.ts';
-import { getUserAccountData } from '../selectors.ts';
+import { getReserveData, getUserAccountData } from '../selectors.ts';
 
 // getUserEMode is not in the shared ipoolAbi — add inline to avoid modifying shared package.
 const getUserEModeAbi = parseAbi(['function getUserEMode(address user) view returns (uint256)']);
 
-const HEX_ADDRESS = z.string().regex(/^0x[0-9a-fA-F]{40}$/) as z.ZodType<Address>;
-
 const BorrowInput = z.object({
   asset: HEX_ADDRESS.describe('ERC-20 token address to borrow (USDC, USDe, or USDT0 in E-Mode 1)'),
-  amount: z.bigint().positive().describe('Amount in token base units'),
-  onBehalfOf: HEX_ADDRESS.describe('Address that incurs the debt'),
+  amount: POSITIVE_BIGINT.describe('Amount in token base units'),
 });
 
 const BorrowOutput = z.object({
@@ -36,7 +35,12 @@ async function checkEModePreflight(
   sUsdeAddress: Address,
   account: Address,
 ): Promise<number> {
-  const [eModeCategoryRaw, sUsdeBalance] = await Promise.all([
+  const { aTokenAddress: aSUsdeAddress } = await getReserveData(
+    publicClient,
+    poolAddress,
+    sUsdeAddress,
+  );
+  const [eModeCategoryRaw, aSUsdeBalance] = await Promise.all([
     publicClient.readContract({
       address: poolAddress,
       abi: getUserEModeAbi,
@@ -44,19 +48,19 @@ async function checkEModePreflight(
       args: [account],
     }),
     publicClient.readContract({
-      address: sUsdeAddress,
+      address: aSUsdeAddress,
       abi: erc20Abi,
       functionName: 'balanceOf',
       args: [account],
     }),
   ]);
   const eModeCategory = Number(eModeCategoryRaw);
-  if (eModeCategory === 0 && sUsdeBalance > 0n) {
+  if (eModeCategory === 0 && aSUsdeBalance > 0n) {
     throw new ConciergeError(
       'EModeNotEnabled',
-      '[@concierge/aave-v3-mantle] borrow: user has sUSDe as collateral but E-Mode 1 is not active. Call setUserEMode(1) to avoid a silent zero-return from Pool.borrow().',
+      '[@concierge/aave-v3-mantle] borrow: user has sUSDe collateral (aSUSDe > 0) but E-Mode 1 is not active. Call setUserEMode(1) to avoid a silent zero-return from Pool.borrow().',
       undefined,
-      { sUsdeBalance: sUsdeBalance.toString(), eModeCategory },
+      { aSUsdeBalance: aSUsdeBalance.toString(), eModeCategory },
     );
   }
   return eModeCategory;
@@ -71,7 +75,7 @@ export function createBorrowTool(ctx: ActionContext) {
     inputSchema: BorrowInput,
     outputSchema: BorrowOutput,
     supportsNetwork: (chainId) => chainId === ctx.chainId,
-    async invoke({ asset, amount, onBehalfOf }) {
+    async invoke({ asset, amount }) {
       const { publicClient, walletClient, chainId, poolAddress, sUsdeAddress } = ctx;
       if (!walletClient)
         throw new Error('[@concierge/aave-v3-mantle] borrow: walletClient required');
@@ -91,11 +95,12 @@ export function createBorrowTool(ctx: ActionContext) {
         address: poolAddress,
         abi: ipoolAbi,
         functionName: 'borrow',
-        args: [asset, amount, 2n, 0, onBehalfOf], // interestRateMode=2 (variable); referralCode=0
+        args: [asset, amount, 2n, 0, account], // interestRateMode=2 (variable); referralCode=0
         account,
         chain: walletClient.chain ?? null,
       });
 
+      await publicClient.waitForTransactionReceipt({ hash: txHash });
       const postState = await getUserAccountData(publicClient, poolAddress, account);
       const attestationPayload = buildAttestationPayload({
         action: 'borrow',

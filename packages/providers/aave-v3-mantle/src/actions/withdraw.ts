@@ -1,37 +1,47 @@
 import { ConciergeError } from '@concierge/sdk';
-import type { Address } from '@concierge/shared';
-import { ipoolAbi } from '@concierge/shared/abi';
+import { erc20Abi, ipoolAbi } from '@concierge/shared/abi';
 import { tool } from '@concierge/tools';
 import { maxUint256 } from 'viem';
 import { z } from 'zod';
 import type { ActionContext } from '../_context.ts';
+import { NON_ZERO_ADDRESS, POSITIVE_BIGINT } from '../_schema.ts';
 import { AttestationPayloadSchema, buildAttestationPayload } from '../attestation.ts';
 import type { UserAccountData } from '../selectors.ts';
-import { getUserAccountData } from '../selectors.ts';
-
-const HEX_ADDRESS = z.string().regex(/^0x[0-9a-fA-F]{40}$/) as z.ZodType<Address>;
+import { getReserveData, getUserAccountData } from '../selectors.ts';
 
 // HF policy floor: 1.5 in 1e18-scaled units. Aave liquidates at <1.0; 1.5 is the agent's safe floor.
 const HF_FLOOR = 1_500_000_000_000_000_000n;
 
 const WithdrawInput = z.object({
-  asset: HEX_ADDRESS.describe('aToken underlying asset to withdraw'),
+  asset: NON_ZERO_ADDRESS.describe('aToken underlying asset to withdraw'),
   amount: z
-    .union([z.bigint().positive(), z.literal('max')])
+    .union([POSITIVE_BIGINT, z.literal('max')])
     .describe('Amount to withdraw in base units, or "max" to withdraw the full aToken balance'),
-  to: HEX_ADDRESS.describe('Address receiving the underlying tokens'),
+  to: NON_ZERO_ADDRESS.describe('Address receiving the underlying tokens'),
 });
 
 const WithdrawOutput = z.object({
   txHash: z.string().describe('Transaction hash of the withdraw call'),
   attestationPayload: AttestationPayloadSchema,
+  warning: z
+    .string()
+    .optional()
+    .describe('Non-blocking alert: post-withdraw HF dropped below 1.5; withdrawal IS complete'),
 });
 
-function assertHFAboveFloor(preState: UserAccountData, amount: bigint | 'max'): void {
+// Exported for unit testing.
+export function assertHFAboveFloor(preState: UserAccountData, amount: bigint | 'max'): void {
   if (preState.totalDebtBase === 0n) return; // no debt → liquidation impossible
-  // Conservative pre-flight: if current HF already below floor, refuse. Exact post-HF
-  // projection would require an oracle price read; the post-write check below catches divergence.
-  if (amount !== 'max' && preState.healthFactor < HF_FLOOR) {
+  if (amount === 'max') {
+    // Cannot pre-compute post-HF without an oracle call; refusing max-with-debt is the safe default.
+    throw new ConciergeError(
+      'InsufficientLiquidity',
+      `[@concierge/aave-v3-mantle] withdraw: cannot withdraw all collateral while debt is outstanding (totalDebtBase: ${preState.totalDebtBase}). Repay all debt first.`,
+      undefined,
+      { totalDebtBase: preState.totalDebtBase.toString() },
+    );
+  }
+  if (preState.healthFactor < HF_FLOOR) {
     throw new ConciergeError(
       'InsufficientLiquidity',
       `[@concierge/aave-v3-mantle] withdraw: current HF (${preState.healthFactor}) is below the 1.5 policy floor. Repay debt first.`,
@@ -53,6 +63,18 @@ async function executeWithdraw(ctx: ActionContext, args: z.infer<typeof Withdraw
   const preState = await getUserAccountData(publicClient, poolAddress, account);
   assertHFAboveFloor(preState, amount);
 
+  // For 'max', read the exact aToken balance for accurate attestation amountBase.
+  let amountBase = rawAmount;
+  if (amount === 'max') {
+    const { aTokenAddress } = await getReserveData(publicClient, poolAddress, asset);
+    amountBase = await publicClient.readContract({
+      address: aTokenAddress,
+      abi: erc20Abi,
+      functionName: 'balanceOf',
+      args: [account],
+    });
+  }
+
   const txHash = await walletClient.writeContract({
     address: poolAddress,
     abi: ipoolAbi,
@@ -62,16 +84,15 @@ async function executeWithdraw(ctx: ActionContext, args: z.infer<typeof Withdraw
     chain: walletClient.chain ?? null,
   });
 
+  await publicClient.waitForTransactionReceipt({ hash: txHash });
   const postState = await getUserAccountData(publicClient, poolAddress, account);
+
+  // The tx is already mined at this point — return a warning rather than throwing.
+  let warning: string | undefined;
   if (postState.totalDebtBase > 0n && postState.healthFactor < HF_FLOOR) {
-    throw new ConciergeError(
-      'InsufficientLiquidity',
-      `[@concierge/aave-v3-mantle] withdraw: post-withdraw HF (${postState.healthFactor}) dropped below 1.5 floor.`,
-      undefined,
-      { postHF: postState.healthFactor.toString(), floor: HF_FLOOR.toString() },
-    );
+    warning = `Post-withdraw HF ${postState.healthFactor} is below the 1.5 floor. Withdrawal (tx ${txHash}) is COMPLETE. Repay debt immediately to avoid liquidation.`;
   }
-  const amountBase = amount === 'max' ? preState.totalCollateralBase : rawAmount;
+
   const attestationPayload = buildAttestationPayload({
     action: 'withdraw',
     chainId,
@@ -83,14 +104,14 @@ async function executeWithdraw(ctx: ActionContext, args: z.infer<typeof Withdraw
     postHF: postState.healthFactor,
     eMode: 0,
   });
-  return { txHash, attestationPayload };
+  return { txHash, attestationPayload, warning };
 }
 
 export function createWithdrawTool(ctx: ActionContext) {
   return tool({
     name: 'withdraw',
     description:
-      'Withdraw collateral from Aave V3 Mantle. Throws InsufficientLiquidity if HF would drop below 1.5.',
+      'Withdraw collateral from Aave V3 Mantle. Refuses if HF < 1.5 or if withdrawing all collateral while debt is outstanding.',
     inputSchema: WithdrawInput,
     outputSchema: WithdrawOutput,
     supportsNetwork: (chainId) => chainId === ctx.chainId,

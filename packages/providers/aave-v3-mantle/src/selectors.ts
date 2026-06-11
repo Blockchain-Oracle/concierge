@@ -42,15 +42,6 @@ export async function getUserAccountData(
   };
 }
 
-export async function getHealthFactor(
-  publicClient: PublicClient,
-  poolAddress: Address,
-  user: Address,
-): Promise<bigint> {
-  const data = await getUserAccountData(publicClient, poolAddress, user);
-  return data.healthFactor;
-}
-
 export interface ReserveData {
   liquidityIndex: bigint;
   currentLiquidityRate: bigint;
@@ -106,6 +97,7 @@ export interface MaxSafeBorrowOpts {
  */
 export async function maxSafeBorrow(opts: MaxSafeBorrowOpts): Promise<bigint> {
   const { publicClient, poolAddress, user, assetPrice, assetDecimals, targetHF } = opts;
+  if (targetHF <= 1.0) throw new Error(`targetHF must be > 1.0, got ${targetHF}`);
   const data = await getUserAccountData(publicClient, poolAddress, user);
 
   // numerator = collateralBase × LT (LT is in bps, divide by 10000)
