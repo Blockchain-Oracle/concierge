@@ -1,3 +1,4 @@
+import { ConciergeError } from '@concierge/sdk';
 import { toFunctionSelector } from 'viem';
 import { LIFI_DIAMOND } from './_context.ts';
 
@@ -27,6 +28,8 @@ export const BRIDGE_FUNCTION_SELECTORS = [
   ),
 ] as `0x${string}`[];
 
+const SELECTOR_WHITELIST = new Set(BRIDGE_FUNCTION_SELECTORS);
+
 // Static call policy — restrict session keys to Li.Fi Diamond only.
 // For exact selector extraction from a live route, use buildCallPolicy(routeData).
 export const callPolicy = {
@@ -34,13 +37,23 @@ export const callPolicy = {
   selectors: BRIDGE_FUNCTION_SELECTORS,
 } as const;
 
-// Dynamic policy builder — extracts the actual function selector from calldata.
+// Dynamic policy builder — extracts the actual function selector from calldata
+// and validates it against the known bridge function whitelist before returning.
+// Throws ConfigError if the selector is not in the whitelist (guards against
+// rogue API responses trying to authorize arbitrary calls on the Diamond).
 export function buildCallPolicy(routeCalldata: `0x${string}`): typeof callPolicy {
   if (routeCalldata.length < 10) {
-    throw new Error(
+    throw new ConciergeError(
+      'ConfigError',
       '[@concierge/lifi-bridge] buildCallPolicy: calldata too short to contain a function selector',
     );
   }
   const selector = routeCalldata.slice(0, 10) as `0x${string}`;
+  if (!SELECTOR_WHITELIST.has(selector)) {
+    throw new ConciergeError(
+      'ConfigError',
+      `[@concierge/lifi-bridge] buildCallPolicy: selector ${selector} is not in the known bridge function whitelist — refusing to create session-key policy`,
+    );
+  }
   return { targets: [LIFI_DIAMOND], selectors: [selector] };
 }

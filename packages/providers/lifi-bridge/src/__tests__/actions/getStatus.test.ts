@@ -70,6 +70,26 @@ describe('getStatus — NOT_FOUND (test_getStatus_NotFound)', () => {
   });
 });
 
+describe('getStatus — FAILED (test_getStatus_Failed)', () => {
+  it('returns FAILED with null completedAttestation when bridge fails on destination chain', async () => {
+    server.use(
+      http.get(`${LIFI_API}/status`, () =>
+        HttpResponse.json({ status: 'FAILED', fromTx: { txHash: DEX_TX_HASH, chainId: 5000 } }),
+      ),
+    );
+    const result = await executeGetStatus(ctx, {
+      sourceTxHash: DEX_TX_HASH,
+      lifiOperationId: OPERATION_ID,
+      fromChain: 5000,
+      toChain: 1,
+    });
+
+    expect(result.status).toBe('FAILED');
+    expect(result.destinationTxHash).toBeNull();
+    expect(result.completedAttestation).toBeNull();
+  });
+});
+
 describe('getStatus — error paths', () => {
   it('throws ConciergeError(RpcError) on network failure', async () => {
     server.use(http.get(`${LIFI_API}/status`, () => HttpResponse.error()));

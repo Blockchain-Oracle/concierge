@@ -67,6 +67,16 @@ describe('quote — filtered bridges (test_quote_FilteredBridges)', () => {
     // 2 routes remain (stargate + across), connext filtered
     expect(result.routes.length).toBe(2);
   });
+
+  it('excludeBridges removes all routes → routes: [], bestRoute: null', async () => {
+    const result = await executeQuote(ctx, {
+      ...BASE_INPUT,
+      excludeBridges: ['stargate', 'across', 'connext'],
+    });
+    expect(result.routes).toEqual([]);
+    expect(result.bestRoute).toBeNull();
+    expect(result.estimatedDuration).toBe(0);
+  });
 });
 
 describe('quote — no available routes (test_quote_NoRoute)', () => {

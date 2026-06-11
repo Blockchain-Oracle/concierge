@@ -11,32 +11,54 @@ const NON_ZERO_ADDR = z
   .regex(/^0x[0-9a-fA-F]{40}$/)
   .refine((v) => v !== '0x0000000000000000000000000000000000000000');
 
-// Immediately after source-chain tx submission
-export const SentAttestationPayloadSchema = z.object({
-  schema: z.literal(LIFI_SENT_SCHEMA),
+// Unix epoch in seconds: plausibility range guards against accidental Date.now() (ms) vs /1000
+const UNIX_TS_S = z
+  .number()
+  .int()
+  .min(1_700_000_000, 'ts must be a Unix timestamp in seconds (≥ 2023-11-15)')
+  .max(2_000_000_000, 'ts must be a Unix timestamp in seconds (< 2033-05-18)');
+
+const CHAIN_PAIR = {
   fromChain: z.number().int().positive(),
   toChain: z.number().int().positive(),
-  sourceTxHash: z.string().regex(TX_HASH_REGEX),
-  lifiOperationId: z.string().min(1),
-  fromToken: NON_ZERO_ADDR,
-  toToken: NON_ZERO_ADDR,
-  amountIn: NON_NEG_INT_STR,
-  expectedAmountOut: NON_NEG_INT_STR,
-  expectedDuration: z.number().int().nonnegative(),
-  ts: z.number().int().positive(),
-});
+};
+
+// Immediately after source-chain tx submission
+export const SentAttestationPayloadSchema = z
+  .object({
+    schema: z.literal(LIFI_SENT_SCHEMA),
+    ...CHAIN_PAIR,
+    sourceTxHash: z.string().regex(TX_HASH_REGEX),
+    lifiOperationId: z.string().min(1),
+    fromToken: NON_ZERO_ADDR,
+    toToken: NON_ZERO_ADDR,
+    amountIn: NON_NEG_INT_STR,
+    expectedAmountOut: NON_NEG_INT_STR,
+    expectedDuration: z.number().int().nonnegative(),
+    ts: UNIX_TS_S,
+  })
+  .superRefine((v, ctx) => {
+    if (v.fromChain === v.toChain) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'fromChain and toChain must differ' });
+    }
+  });
 
 // After destination-chain settlement confirmed via getStatus
-export const CompletedAttestationPayloadSchema = z.object({
-  schema: z.literal(LIFI_COMPLETED_SCHEMA),
-  fromChain: z.number().int().positive(),
-  toChain: z.number().int().positive(),
-  sourceTxHash: z.string().regex(TX_HASH_REGEX),
-  destinationTxHash: z.string().regex(TX_HASH_REGEX),
-  lifiOperationId: z.string().min(1),
-  bridgeUsed: z.string(),
-  ts: z.number().int().positive(),
-});
+export const CompletedAttestationPayloadSchema = z
+  .object({
+    schema: z.literal(LIFI_COMPLETED_SCHEMA),
+    ...CHAIN_PAIR,
+    sourceTxHash: z.string().regex(TX_HASH_REGEX),
+    destinationTxHash: z.string().regex(TX_HASH_REGEX),
+    lifiOperationId: z.string().min(1),
+    bridgeUsed: z.string().min(1),
+    ts: UNIX_TS_S,
+  })
+  .superRefine((v, ctx) => {
+    if (v.fromChain === v.toChain) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'fromChain and toChain must differ' });
+    }
+  });
 
 export type SentAttestationPayload = z.infer<typeof SentAttestationPayloadSchema>;
 export type CompletedAttestationPayload = z.infer<typeof CompletedAttestationPayloadSchema>;

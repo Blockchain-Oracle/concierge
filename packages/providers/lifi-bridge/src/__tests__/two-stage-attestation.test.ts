@@ -89,4 +89,16 @@ describe('two-stage attestation — sent + completed (test_twoStage_AttestationL
     expect(completedAttestation?.fromChain).toBe(5000);
     expect(completedAttestation?.toChain).toBe(1);
   });
+
+  it('sent attestation ts is a unix epoch in seconds, not milliseconds', async () => {
+    const before = Math.floor(Date.now() / 1000);
+    const { attestationPayload } = await executeBridge(ctx, BRIDGE_INPUT);
+    const after = Math.floor(Date.now() / 1000);
+
+    // Unix epoch seconds are ~1.7e9; milliseconds would be ~1.7e12 (3 orders of magnitude larger)
+    expect(attestationPayload.ts).toBeGreaterThanOrEqual(before);
+    expect(attestationPayload.ts).toBeLessThanOrEqual(after + 1);
+    // Guard against accidental Date.now() (ms) instead of Math.floor(Date.now()/1000)
+    expect(attestationPayload.ts).toBeLessThan(2_000_000_000);
+  });
 });

@@ -82,8 +82,10 @@ describe('bridge — happy path (test_bridge_SubmitsAndReturnsSentAttestation)',
       }),
     );
 
-    await executeBridge(ctx, { ...BASE_INPUT, route: freshRoute });
+    const result = await executeBridge(ctx, { ...BASE_INPUT, route: freshRoute });
     expect(routesCallCount).toBe(0);
+    // lifiOperationId must come from the provided route, not the re-quoted one
+    expect(result.lifiOperationId).toBe(freshRoute.id);
   });
 });
 
@@ -101,9 +103,55 @@ describe('bridge — stale route triggers re-quote (test_bridge_StaleRouteReQuot
     expect(result.sourceTxHash).toBe(SOURCE_TX);
     expect(result.attestationPayload.schema).toBe('concierge.lifi.bridge.sent.v1');
   });
+
+  it('stale route re-quote uses fresh bestRoute id as lifiOperationId, not stale route id', async () => {
+    const walletClient = makeWalletClient();
+    const ctx = { ...BASE_CTX, walletClient };
+    // Give stale route a distinctive id to confirm it is NOT used
+    // biome-ignore lint/style/noNonNullAssertion: fixture always has 3 routes
+    const staleRoute: LifiBridgeRoute = {
+      ...FIXTURE_ROUTES[0]!,
+      id: 'stale-route-id-will-not-appear-in-attestation',
+      _receivedAt: Date.now() - 40_000,
+    };
+
+    const result = await executeBridge(ctx, { ...BASE_INPUT, route: staleRoute });
+
+    // bestRoute from re-quote is FIXTURE_ROUTES[0] (RECOMMENDED) — id = 'route-stargate-001'
+    expect(result.lifiOperationId).toBe(FIXTURE_ROUTES[0]?.id);
+    expect(result.lifiOperationId).not.toBe('stale-route-id-will-not-appear-in-attestation');
+    expect(result.attestationPayload.lifiOperationId).toBe(result.lifiOperationId);
+  });
 });
 
 describe('bridge — error paths', () => {
+  it('throws ConciergeError(ConfigError) when walletClient has no bound account', async () => {
+    const walletClient = {
+      account: undefined,
+      sendTransaction: vi.fn(),
+      // biome-ignore lint/suspicious/noExplicitAny: testing the no-account guard path
+    } as any;
+    const ctx = { ...BASE_CTX, walletClient };
+    const { ConciergeError } = await import('@concierge/sdk');
+    await expect(executeBridge(ctx, BASE_INPUT)).rejects.toSatisfy(
+      (e: unknown) =>
+        e instanceof ConciergeError &&
+        (e as InstanceType<typeof ConciergeError>).type === 'ConfigError',
+    );
+  });
+
+  it('throws ConciergeError(RpcError) when API returns 503 during re-quote', async () => {
+    server.use(http.post(`${LIFI_API}/routes`, () => new HttpResponse(null, { status: 503 })));
+    const walletClient = makeWalletClient();
+    const ctx = { ...BASE_CTX, walletClient };
+    const { ConciergeError } = await import('@concierge/sdk');
+    await expect(executeBridge(ctx, BASE_INPUT)).rejects.toSatisfy(
+      (e: unknown) =>
+        e instanceof ConciergeError &&
+        (e as InstanceType<typeof ConciergeError>).type === 'RpcError',
+    );
+  });
+
   it('throws ConciergeError(ConfigError) when walletClient is absent', async () => {
     const ctx = { ...BASE_CTX };
     const { ConciergeError } = await import('@concierge/sdk');
