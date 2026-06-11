@@ -7,7 +7,8 @@ import { IAccessControl } from "@openzeppelin/contracts/access/IAccessControl.so
 import {
     MockAaveOracle,
     AssetPriceUnavailable,
-    BatchLengthMismatch
+    BatchLengthMismatch,
+    InvalidPrice
 } from "../../src/mocks/MockAaveOracle.sol";
 
 contract MockAaveOracleTest is Test {
@@ -96,11 +97,17 @@ contract MockAaveOracleTest is Test {
     }
 
     function test_SetAssetPrice_EmitsPriceUpdated() public {
-        vm.prank(admin);
         vm.expectEmit(true, false, false, true);
         emit MockAaveOracle.PriceUpdated(mockSUSDe, SUSDE_PRICE, 95_000_000);
+        vm.prank(admin);
         oracle.setAssetPrice(mockSUSDe, 95_000_000);
         assertEq(oracle.getAssetPrice(mockSUSDe), 95_000_000, "price updated");
+    }
+
+    function test_SetAssetPrice_RevertsOnZeroPrice() public {
+        vm.expectRevert(InvalidPrice.selector);
+        vm.prank(admin);
+        oracle.setAssetPrice(mockSUSDe, 0);
     }
 
     function test_SetAssetPrices_BatchUpdate() public {
@@ -111,6 +118,10 @@ contract MockAaveOracleTest is Test {
         prices[0] = 95_000_000;
         prices[1] = 120_000_000;
 
+        vm.expectEmit(true, false, false, true);
+        emit MockAaveOracle.PriceUpdated(mockSUSDe, SUSDE_PRICE, 95_000_000);
+        vm.expectEmit(true, false, false, true);
+        emit MockAaveOracle.PriceUpdated(mockMETH, METH_PRICE, 120_000_000);
         vm.prank(admin);
         oracle.setAssetPrices(assets, prices);
 
@@ -125,9 +136,50 @@ contract MockAaveOracleTest is Test {
         assets[1] = mockUSDC;
         prices[0] = 100_000_000;
 
-        vm.prank(admin);
         vm.expectRevert(BatchLengthMismatch.selector);
+        vm.prank(admin);
         oracle.setAssetPrices(assets, prices);
+    }
+
+    function test_SetAssetPrices_RevertsOnZeroPriceInBatch() public {
+        address[] memory assets = new address[](2);
+        uint256[] memory prices = new uint256[](2);
+        assets[0] = mockSUSDe;
+        assets[1] = mockUSDC;
+        prices[0] = 0; // poison
+        prices[1] = USDC_PRICE;
+
+        vm.expectRevert(InvalidPrice.selector);
+        vm.prank(admin);
+        oracle.setAssetPrices(assets, prices);
+    }
+
+    // ─── No-op stub access control ────────────────────────────────────────────
+
+    function test_SetAssetSources_RolesGated() public {
+        address[] memory assets = new address[](0);
+        address[] memory sources = new address[](0);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                alice,
+                oracle.ORACLE_ADMIN_ROLE()
+            )
+        );
+        vm.prank(alice);
+        oracle.setAssetSources(assets, sources);
+    }
+
+    function test_SetFallbackOracle_RolesGated() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                alice,
+                oracle.ORACLE_ADMIN_ROLE()
+            )
+        );
+        vm.prank(alice);
+        oracle.setFallbackOracle(alice);
     }
 
     // ─── Misc interface surface ───────────────────────────────────────────────
@@ -138,5 +190,9 @@ contract MockAaveOracleTest is Test {
 
     function test_GetFallbackOracle_ReturnsZero() public view {
         assertEq(oracle.getFallbackOracle(), address(0));
+    }
+
+    function test_AddressesProvider_ReturnsZero() public view {
+        assertEq(address(oracle.ADDRESSES_PROVIDER()), address(0));
     }
 }

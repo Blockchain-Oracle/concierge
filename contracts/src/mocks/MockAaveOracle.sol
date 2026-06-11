@@ -8,6 +8,7 @@ import { IPoolAddressesProvider } from "@aave/interfaces/IPoolAddressesProvider.
 /// @notice Errors
 error AssetPriceUnavailable(address asset);
 error BatchLengthMismatch();
+error InvalidPrice();
 
 /// @notice Sepolia-only mock of Aave V3 AaveOracle. Implements IAaveOracle for the Concierge
 /// agent's plan + simulate phases. Reverts on unset prices (never returns 0) to mirror real Aave
@@ -39,6 +40,7 @@ contract MockAaveOracle is IAaveOracle, AccessControl {
         address asset,
         uint256 priceUsd8
     ) external onlyRole(ORACLE_ADMIN_ROLE) {
+        if (priceUsd8 == 0) revert InvalidPrice();
         uint256 old = _prices[asset];
         _prices[asset] = priceUsd8;
         emit PriceUpdated(asset, old, priceUsd8);
@@ -50,6 +52,7 @@ contract MockAaveOracle is IAaveOracle, AccessControl {
     ) external onlyRole(ORACLE_ADMIN_ROLE) {
         if (assets.length != prices.length) revert BatchLengthMismatch();
         for (uint256 i = 0; i < assets.length; i++) {
+            if (prices[i] == 0) revert InvalidPrice();
             uint256 old = _prices[assets[i]];
             _prices[assets[i]] = prices[i];
             emit PriceUpdated(assets[i], old, prices[i]);

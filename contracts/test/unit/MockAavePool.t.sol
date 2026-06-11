@@ -6,6 +6,7 @@ import { Test } from "forge-std/Test.sol";
 import { DataTypes } from "@aave/protocol/libraries/types/DataTypes.sol";
 import { MockAavePool } from "../../src/mocks/MockAavePool.sol";
 import { MockAavePoolLib } from "../../src/mocks/MockAavePoolLib.sol";
+import { MockAaveOracle } from "../../src/mocks/MockAaveOracle.sol";
 import {
     InsufficientCollateralLTV,
     WouldBreakHealthFactor,
@@ -15,28 +16,10 @@ import {
     BorrowingDisabled
 } from "../../src/mocks/MockAavePool.sol";
 
-/// @notice Minimal price oracle for unit tests — returns fixed USD prices (8-decimal base).
-contract FixedPriceOracle {
-    mapping(address => uint256) internal _prices;
-
-    function setPrice(
-        address asset,
-        uint256 priceUsd8
-    ) external {
-        _prices[asset] = priceUsd8;
-    }
-
-    function getAssetPrice(
-        address asset
-    ) external view returns (uint256) {
-        return _prices[asset];
-    }
-}
-
 /// forge-config: default.fuzz.runs = 256
 contract MockAavePoolTest is Test {
     MockAavePool internal pool;
-    FixedPriceOracle internal oracle;
+    MockAaveOracle internal oracle;
 
     address internal admin = makeAddr("admin");
     address internal alice = makeAddr("alice");
@@ -54,17 +37,16 @@ contract MockAavePoolTest is Test {
     uint16 internal constant EMODE1_BONUS = 10_400;
 
     function setUp() public {
-        oracle = new FixedPriceOracle();
+        oracle = new MockAaveOracle(admin);
         pool = new MockAavePool(address(oracle), admin);
 
-        // Prices: sUSDe = $1.232, USDC = $1.00, USDe = $1.00, USDY = $1.00, mETH = $3000
-        oracle.setPrice(sUSDe, 123_200_000); // $1.232 * 1e8
-        oracle.setPrice(USDC, 100_000_000); // $1.00
-        oracle.setPrice(USDe, 100_000_000);
-        oracle.setPrice(USDY, 100_000_000);
-        oracle.setPrice(mETH, 300_000_000_000); // $3000
-
         vm.startPrank(admin);
+        // Prices: sUSDe = $1.232, USDC = $1.00, USDe = $1.00, USDY = $1.00, mETH = $3000
+        oracle.setAssetPrice(sUSDe, 123_200_000); // $1.232 * 1e8
+        oracle.setAssetPrice(USDC, 100_000_000); // $1.00
+        oracle.setAssetPrice(USDe, 100_000_000);
+        oracle.setAssetPrice(USDY, 100_000_000);
+        oracle.setAssetPrice(mETH, 300_000_000_000); // $3000
         // sUSDe: LTV=0 in general mode (E-Mode trap), active, NOT borrowing-enabled, eMode cat 1
         pool.mockInitReserve(
             sUSDe, 18, makeAddr("aSUSDe"), makeAddr("dSUSDe"), 200, 0, 0, 0, false, 1
