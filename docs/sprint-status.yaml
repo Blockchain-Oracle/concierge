@@ -129,11 +129,11 @@ stories:
     merged_at: "2026-06-11"
   - id: story-18-deploy-script-sepolia
     epic: "Epic E1 — Smart Contracts"
-    status: PENDING
+    status: COMPLETE
     depends_on: [story-17-helper-config, story-10-concierge-registry-base]
     issue_url: ""
-    pr_url: ""
-    merged_at: ""
+    pr_url: "https://github.com/Blockchain-Oracle/concierge/pull/52"
+    merged_at: "2026-06-11T09:11:11Z"
   - id: story-19-deploy-script-mainnet-gated
     epic: "Epic E1 — Smart Contracts"
     status: PENDING
