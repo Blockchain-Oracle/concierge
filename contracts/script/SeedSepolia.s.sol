@@ -36,16 +36,17 @@ contract SeedSepolia is Script {
         address USDY = vm.envAddress("USDY_ADDR");
         address mETH = vm.envAddress("METH_ADDR");
 
-        // Pre-flight: verify the broadcaster holds MINTER_ROLE on every token.
+        // Pre-flight: verify the broadcaster holds MINTER_ROLE on every token before broadcast.
         // mint() is privileged; missing the role causes a silent revert inside broadcast.
-        // MINTER_ROLE is read per-token in case a token uses a different role hash.
+        // Use the inline constant — avoids an external call before the loop and works even if
+        // one of the env-var addresses points at the wrong contract.
         address minter = tx.origin;
+        bytes32 minterRole = keccak256("MINTER_ROLE");
         address[4] memory tokens = [sUSDe, USDC, USDY, mETH];
         string[4] memory names = ["sUSDe", "USDC", "USDY", "mETH"];
         for (uint256 i = 0; i < tokens.length; i++) {
-            bytes32 role = MockFaucetToken(tokens[i]).MINTER_ROLE();
             require(
-                IAccessControl(tokens[i]).hasRole(role, minter),
+                IAccessControl(tokens[i]).hasRole(minterRole, minter),
                 string.concat("SeedSepolia: missing MINTER_ROLE on ", names[i])
             );
         }

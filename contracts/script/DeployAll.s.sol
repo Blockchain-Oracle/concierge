@@ -32,13 +32,14 @@ contract DeployAll is Script {
         // tx.origin is the broadcaster EOA in both --broadcast and vm.startBroadcast() contexts.
         // msg.sender inside an external call within broadcast is the script contract, not the EOA.
         address deployer = tx.origin;
+
+        // Chain guard first: wrong-chain failure is more actionable than "top up wallet".
+        uint256 chainId = block.chainid;
+        require(chainId == 5000 || chainId == 5003, "DeployAll: unsupported chain");
+
         require(
             deployer.balance >= 0.1 ether, "DeployAll: deployer balance < 0.1 MNT, top up first"
         );
-
-        // Chain guard: only Mantle Mainnet (5000) and Mantle Sepolia (5003) are supported.
-        uint256 chainId = block.chainid;
-        require(chainId == 5000 || chainId == 5003, "DeployAll: unsupported chain");
 
         // HelperConfig must be created BEFORE broadcast so it is not itself broadcast.
         HelperConfig helperConfig = new HelperConfig();

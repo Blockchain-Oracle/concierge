@@ -78,18 +78,18 @@ const CONTRACT_FIELD_MAP = [
   ['ConciergeRegistryProxy', 'conciergeRegistry'],
 ];
 
-let missingRequired = false;
-const updates = CONTRACT_FIELD_MAP.flatMap(([contractName, fieldName]) => {
+const updates = [];
+const missing = [];
+for (const [contractName, fieldName] of CONTRACT_FIELD_MAP) {
   const addr = deployed[contractName];
   if (!addr) {
     console.error(`  ✗ ${contractName} not found in broadcast artifact`);
-    missingRequired = true;
-    return [];
+    missing.push(contractName);
+  } else {
+    updates.push({ contractName, fieldName, addr });
   }
-  return [{ contractName, fieldName, addr }];
-});
-
-if (missingRequired) {
+}
+if (missing.length > 0) {
   console.error('One or more required contracts missing from broadcast artifact. Aborting.');
   process.exit(1);
 }
@@ -150,13 +150,17 @@ if (content === fullContent) {
   writeFileSync(addressesPath, content, 'utf8');
   console.log(`\nWrote: ${addressesPath}`);
 
-  // Verify the updated file still typechecks
-  console.log('Running pnpm typecheck…');
+  // Verify the updated file passes both typecheck AND the addresses lockbox test.
+  // typecheck alone is insufficient: the SEPOLIA_PENDING_ADDRESS_SLOTS lockbox test
+  // asserts that the pending-slot list matches every zero-address Sepolia path — after
+  // a successful deploy the populated slots must be removed from that list or the test fails.
+  console.log('Running pnpm typecheck + test…');
   try {
     execSync('pnpm run typecheck', { cwd: REPO_ROOT, stdio: 'inherit' });
-    console.log('typecheck passed ✓');
+    execSync('pnpm --filter @concierge/shared run test', { cwd: REPO_ROOT, stdio: 'inherit' });
+    console.log('typecheck + test passed ✓');
   } catch {
-    console.error('typecheck FAILED — reverting addresses.ts');
+    console.error('typecheck/test FAILED — reverting addresses.ts');
     try {
       writeFileSync(addressesPath, fullContent, 'utf8');
     } catch (revertErr) {
