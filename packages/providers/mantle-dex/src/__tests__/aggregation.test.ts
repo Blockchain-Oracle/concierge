@@ -95,4 +95,22 @@ describe('resolveRouteMap — best-of-N aggregation (pure compute)', () => {
     const result = await resolveRouteMap(routeMap({ agni: r('agni', 1n) }), TOKEN_A, TOKEN_B);
     expect(result.bestRoute).toBe('agni');
   });
+
+  it('treats amountOut === 0n as no-route — throws InsufficientLiquidity when only zero-amount venues exist', async () => {
+    await expect(
+      resolveRouteMap(routeMap({ agni: r('agni', 0n) }), TOKEN_A, TOKEN_B),
+    ).rejects.toSatisfy(
+      (e: unknown) => e instanceof ConciergeError && e.type === 'InsufficientLiquidity',
+    );
+  });
+
+  it('skips zero-amount venue and picks the positive-amount one', async () => {
+    const result = await resolveRouteMap(
+      routeMap({ agni: r('agni', 0n), woofi: r('woofi', 5n) }),
+      TOKEN_A,
+      TOKEN_B,
+    );
+    expect(result.bestRoute).toBe('woofi');
+    expect(result.bestAmountOut).toBe('5');
+  });
 });

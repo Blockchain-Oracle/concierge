@@ -122,7 +122,9 @@ export async function executeSwap(
     );
   }
 
-  const sorted = quotes.sort((a, b) => (b.amountOut > a.amountOut ? 1 : -1));
+  const sorted = quotes.sort((a, b) =>
+    a.amountOut === b.amountOut ? 0 : b.amountOut > a.amountOut ? 1 : -1,
+  );
   const bestQuote = sorted[0];
   if (!bestQuote) {
     throw new ConciergeError(

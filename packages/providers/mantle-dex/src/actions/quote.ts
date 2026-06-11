@@ -88,8 +88,14 @@ export async function executeQuote(
   };
 
   settled.forEach((s, i) => {
-    const venue = venues[i]?.name;
-    if (!venue) return;
+    const venueEntry = venues[i];
+    // venues and settled are always co-indexed from the same map — this is a programming error.
+    if (venueEntry === undefined)
+      throw new ConciergeError(
+        'RpcError',
+        `[@concierge/mantle-dex] quote: venue index ${i} out of bounds`,
+      );
+    const venue = venueEntry.name;
     if (s.status === 'rejected') {
       console.error(`[@concierge/mantle-dex] quote: ${venue} rejected:`, s.reason);
     } else if (s.value !== null) {
@@ -118,7 +124,7 @@ export async function resolveRouteMap(
 ): Promise<QuoteOutputType> {
   const validRoutes = (Object.values(routeMap) as (VenueQuoteResult | null)[])
     .filter((r): r is VenueQuoteResult => r !== null && r.amountOut > 0n)
-    .sort((a, b) => (b.amountOut > a.amountOut ? 1 : -1));
+    .sort((a, b) => (a.amountOut === b.amountOut ? 0 : b.amountOut > a.amountOut ? 1 : -1));
   const best = validRoutes[0];
 
   if (best === undefined) {

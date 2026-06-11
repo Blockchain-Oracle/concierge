@@ -144,9 +144,10 @@ export async function startAnvilFork(): Promise<AnvilFork> {
             functionName: 'balanceOf',
             args: [account],
           });
-          if (actual < amount) {
+          if (actual !== amount) {
             throw new Error(
-              `[setup] setErc20Balance: write failed for ${token}: expected ≥ ${amount}, got ${actual}. Slot ${mappingSlot} may be wrong.`,
+              `[setup] setErc20Balance: write failed for ${token}: expected exactly ${amount}, got ${actual}. ` +
+                `Slot ${mappingSlot} may be wrong, or account had a pre-existing balance masking the check.`,
             );
           }
         };
