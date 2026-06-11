@@ -9,6 +9,7 @@ struct ReserveDataLite {
     uint128 supplyRateBps; // annual supply rate in basis points
     uint16 ltvBps; // loan-to-value in bps (e.g. 8000 = 80%)
     uint16 liquidationThresholdBps; // liquidation threshold in bps
+    uint8 eModeCategoryId; // 0 = no category; matches the EModeCategory key
     bool active;
     bool borrowingEnabled;
 }

@@ -66,6 +66,7 @@ contract MockAavePool {
     mapping(address user => uint8) internal _userEMode;
     mapping(uint8 catId => EModeCategory) internal _emodeCategories;
     mapping(address asset => uint8) internal _decimals;
+    mapping(address user => mapping(address asset => bool)) internal _collateralEnabled;
 
     constructor(
         address _oracle,
@@ -91,10 +92,11 @@ contract MockAavePool {
         uint128 borrowRateBps,
         uint16 ltvBps,
         uint16 liquidationThresholdBps,
-        bool borrowingEnabled
+        bool borrowingEnabled,
+        uint8 eModeCategoryId
     ) external onlyAdmin {
         require(ltvBps <= liquidationThresholdBps, "ltv>lt");
-        if (_reserves[asset].aToken == address(0)) _reserveList.push(asset);
+        if (!_reserves[asset].active) _reserveList.push(asset);
         _reserves[asset] = ReserveDataLite({
             aToken: aToken,
             debtToken: debtToken,
@@ -102,6 +104,7 @@ contract MockAavePool {
             supplyRateBps: supplyRateBps,
             ltvBps: ltvBps,
             liquidationThresholdBps: liquidationThresholdBps,
+            eModeCategoryId: eModeCategoryId,
             active: true,
             borrowingEnabled: borrowingEnabled
         });
@@ -114,6 +117,7 @@ contract MockAavePool {
         uint128 supplyRateBps,
         uint128 borrowRateBps
     ) external onlyAdmin {
+        if (!_reserves[asset].active) revert AssetNotSupported(asset);
         _reserves[asset].supplyRateBps = supplyRateBps;
         _reserves[asset].borrowRateBps = borrowRateBps;
         emit ReserveDataUpdated(asset, supplyRateBps, borrowRateBps);
@@ -140,6 +144,7 @@ contract MockAavePool {
     ) external {
         if (!_reserves[asset].active) revert AssetNotSupported(asset);
         _supplies[onBehalfOf][asset] += amount;
+        _collateralEnabled[onBehalfOf][asset] = true;
         emit Supply(asset, msg.sender, onBehalfOf, amount, referralCode);
     }
 
@@ -205,13 +210,19 @@ contract MockAavePool {
         uint8 categoryId
     ) external {
         _userEMode[msg.sender] = categoryId;
+        if (_hasDebt(msg.sender)) {
+            (,,,,, uint256 hf) = _computeAccountData(msg.sender);
+            if (hf < 1e18) revert WouldBreakHealthFactor();
+        }
         emit UserEModeSet(msg.sender, categoryId);
     }
 
     function setUserUseReserveAsCollateral(
-        address,
-        bool
-    ) external { }
+        address asset,
+        bool useAsCollateral
+    ) external {
+        _collateralEnabled[msg.sender][asset] = useAsCollateral;
+    }
 
     // ─── IPool: read surface ──────────────────────────────────────────────────
 
@@ -334,16 +345,18 @@ contract MockAavePool {
         for (uint256 i = 0; i < _reserveList.length; i++) {
             address asset = _reserveList[i];
             uint256 supplyAmt = _supplies[user][asset];
-            if (supplyAmt == 0) continue;
+            if (supplyAmt == 0 || !_collateralEnabled[user][asset]) continue;
             uint256 price = IAaveOracle(oracle).getAssetPrice(asset);
             uint256 supplyUsd = MockAavePoolLib.toUsdBase(supplyAmt, price, _decimals[asset]);
             totalCollateral += supplyUsd;
+            uint8 reserveCatId = _reserves[asset].eModeCategoryId;
             uint16 lt = MockAavePoolLib.effectiveLt(
-                _reserves[asset].liquidationThresholdBps, eMode.ltBps, eModeId
+                _reserves[asset].liquidationThresholdBps, eMode.ltBps, eModeId, reserveCatId
             );
             weightedLT += (supplyUsd * lt) / MockAavePoolLib.BPS_DENOMINATOR;
-            uint16 ltvBps =
-                MockAavePoolLib.effectiveLtv(_reserves[asset].ltvBps, eMode.ltvBps, eModeId);
+            uint16 ltvBps = MockAavePoolLib.effectiveLtv(
+                _reserves[asset].ltvBps, eMode.ltvBps, eModeId, reserveCatId
+            );
             weightedLTV += (supplyUsd * ltvBps) / MockAavePoolLib.BPS_DENOMINATOR;
         }
     }

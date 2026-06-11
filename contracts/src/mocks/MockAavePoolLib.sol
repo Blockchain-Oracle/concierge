@@ -55,22 +55,24 @@ library MockAavePoolLib {
         return (weightedLTNumer * HF_PRECISION) / totalDebtBase;
     }
 
-    /// @notice Computes the effective LTV in bps for a user, given E-Mode category or general mode.
-    /// Returns the override ltv if eModeId > 0, else the reserve's own ltvBps.
+    /// @notice Computes the effective LTV in bps. E-Mode override applies only when the user's
+    /// eMode category matches the reserve's category — prevents non-member assets getting eMode LTV.
     function effectiveLtv(
         uint16 reserveLtvBps,
         uint16 eModeLtvBps,
-        uint8 eModeId
+        uint8 eModeId,
+        uint8 reserveEModeCategoryId
     ) internal pure returns (uint16) {
-        return eModeId > 0 ? eModeLtvBps : reserveLtvBps;
+        return (eModeId > 0 && eModeId == reserveEModeCategoryId) ? eModeLtvBps : reserveLtvBps;
     }
 
-    /// @notice Computes the effective liquidation threshold in bps.
+    /// @notice Computes the effective liquidation threshold in bps (same category-membership check).
     function effectiveLt(
         uint16 reserveLtBps,
         uint16 eModeLtBps,
-        uint8 eModeId
+        uint8 eModeId,
+        uint8 reserveEModeCategoryId
     ) internal pure returns (uint16) {
-        return eModeId > 0 ? eModeLtBps : reserveLtBps;
+        return (eModeId > 0 && eModeId == reserveEModeCategoryId) ? eModeLtBps : reserveLtBps;
     }
 }

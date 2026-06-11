@@ -65,19 +65,22 @@ contract MockAavePoolTest is Test {
         oracle.setPrice(mETH, 300_000_000_000); // $3000
 
         vm.startPrank(admin);
-        // sUSDe: LTV=0 in general mode (E-Mode trap), active, NOT borrowing-enabled
-        pool.mockInitReserve(sUSDe, 18, makeAddr("aSUSDe"), makeAddr("dSUSDe"), 200, 0, 0, 0, false);
+        // sUSDe: LTV=0 in general mode (E-Mode trap), active, NOT borrowing-enabled, eMode cat 1
         pool.mockInitReserve(
-            USDC, 6, makeAddr("aUSDC"), makeAddr("dUSDC"), 400, 500, 7500, 8000, true
+            sUSDe, 18, makeAddr("aSUSDe"), makeAddr("dSUSDe"), 200, 0, 0, 0, false, 1
         );
         pool.mockInitReserve(
-            USDe, 18, makeAddr("aUSDe"), makeAddr("dUSDe"), 350, 400, 7500, 8000, true
+            USDC, 6, makeAddr("aUSDC"), makeAddr("dUSDC"), 400, 500, 7500, 8000, true, 1
         );
         pool.mockInitReserve(
-            USDY, 18, makeAddr("aUSDY"), makeAddr("dUSDY"), 350, 400, 7500, 8000, true
+            USDe, 18, makeAddr("aUSDe"), makeAddr("dUSDe"), 350, 400, 7500, 8000, true, 1
         );
         pool.mockInitReserve(
-            mETH, 18, makeAddr("amETH"), makeAddr("dmETH"), 250, 350, 7000, 7500, true
+            USDY, 18, makeAddr("aUSDY"), makeAddr("dUSDY"), 350, 400, 7500, 8000, true, 1
+        );
+        // mETH is NOT in E-Mode 1 — eModeCategoryId=0 ensures its LTV/LT is unaffected by eMode
+        pool.mockInitReserve(
+            mETH, 18, makeAddr("amETH"), makeAddr("dmETH"), 250, 350, 7000, 7500, true, 0
         );
         // E-Mode 1: "sUSDe Stablecoins" (verified from Mantle Mainnet)
         pool.mockSetEmodeCategory(1, EMODE1_LTV, EMODE1_LT, EMODE1_BONUS, "sUSDe Stablecoins");
@@ -279,7 +282,7 @@ contract MockAavePoolTest is Test {
     function test_mockInitReserve_RevertsForNonAdmin() public {
         vm.prank(alice);
         vm.expectRevert("not admin");
-        pool.mockInitReserve(USDC, 6, address(1), address(2), 0, 0, 0, 0, false);
+        pool.mockInitReserve(USDC, 6, address(1), address(2), 0, 0, 0, 0, false, 0);
     }
 
     function test_mockSetReserveData_RevertsForNonAdmin() public {
@@ -389,5 +392,109 @@ contract MockAavePoolTest is Test {
         // sUSDe ltvBps=0 in general mode → avail=0
         assertEq(availGeneral, 0, "general mode sUSDe should have 0 borrow capacity");
         assertGt(availEMode, availGeneral, "emode capacity > general mode capacity");
+    }
+
+    // ─── E-Mode category membership ───────────────────────────────────────────
+
+    /// mETH is NOT in E-Mode 1 — its LTV/LT must stay at its reserve values even with eMode=1.
+    function test_emode1_NonMemberAssetKeepsReserveLTV() public {
+        vm.prank(alice);
+        pool.supply(mETH, 1e18, alice, 0); // $3000 collateral
+        vm.prank(alice);
+        pool.setUserEMode(1);
+        (,, uint256 avail,,, uint256 hf) = pool.getUserAccountData(alice);
+        // mETH ltvBps=7000 (not overridden to 9000); avail = 3000e8 * 7000/10000 = 2100e8
+        assertEq(avail, 2100e8, "mETH LTV must stay at 70% in eMode-1");
+        assertEq(hf, type(uint256).max, "no debt yet");
+    }
+
+    function test_setUserEMode_RevertsIfWouldBreakHF() public {
+        vm.prank(alice);
+        pool.supply(sUSDe, 1000e18, alice, 0); // ~$1232
+        vm.prank(alice);
+        pool.setUserEMode(1);
+        vm.prank(alice);
+        pool.borrow(USDe, 500e18, 2, 0, alice); // $500 debt, HF ≈ 2.27 in eMode-1
+
+        // Downgrading to eMode-0 makes sUSDe LT=0 → HF collapses
+        vm.prank(alice);
+        vm.expectRevert(WouldBreakHealthFactor.selector);
+        pool.setUserEMode(0);
+    }
+
+    // ─── setUserUseReserveAsCollateral ────────────────────────────────────────
+
+    function test_setUserUseReserveAsCollateral_ExcludesFromCollateral() public {
+        vm.prank(alice);
+        pool.supply(USDC, 1000e6, alice, 0);
+        (uint256 before,,,,,) = pool.getUserAccountData(alice);
+        assertEq(before, 1000e8);
+
+        vm.prank(alice);
+        pool.setUserUseReserveAsCollateral(USDC, false);
+        (uint256 after_,,,,,) = pool.getUserAccountData(alice);
+        assertEq(after_, 0, "excluded asset should not count as collateral");
+    }
+
+    function test_setUserUseReserveAsCollateral_ReenablesCollateral() public {
+        vm.prank(alice);
+        pool.supply(USDC, 1000e6, alice, 0);
+        vm.prank(alice);
+        pool.setUserUseReserveAsCollateral(USDC, false);
+        vm.prank(alice);
+        pool.setUserUseReserveAsCollateral(USDC, true);
+        (uint256 collateral,,,,,) = pool.getUserAccountData(alice);
+        assertEq(collateral, 1000e8, "re-enabled collateral should count again");
+    }
+
+    // ─── Multi-asset HF aggregation ───────────────────────────────────────────
+
+    function test_getUserAccountData_MultiAssetCollateral() public {
+        vm.prank(alice);
+        pool.supply(USDC, 500e6, alice, 0); // $500, LTV=75%, LT=80%
+        vm.prank(alice);
+        pool.supply(mETH, 1e18, alice, 0); // $3000, LTV=70%, LT=75%
+
+        (uint256 collateral,, uint256 avail, uint256 lt,,) = pool.getUserAccountData(alice);
+        assertEq(collateral, 3500e8, "total collateral");
+        // avail = 500e8*7500/10000 + 3000e8*7000/10000 = 375e8 + 2100e8 = 2475e8
+        assertEq(avail, 2475e8, "available borrows aggregated");
+        // weightedLT = (500e8*8000 + 3000e8*7500) / 3500e8 = (4000e8 + 22500e8) / 3500e8 * 10000
+        // = 26500e8 / 3500e8 * 10000 = 7571 (truncated)
+        assertApproxEqAbs(lt, 7571, 1, "weighted LT aggregated");
+    }
+
+    // ─── Second-borrow interest checkpoint (regression for C-1 fix) ───────────
+
+    function test_borrow_CheckpointsAccruedInterestOnSecondBorrow() public {
+        vm.prank(alice);
+        pool.supply(USDC, 2000e6, alice, 0);
+        vm.prank(alice);
+        pool.borrow(USDC, 100e6, 2, 0, alice); // 100 USDC @ 5% borrow rate
+
+        vm.warp(block.timestamp + 365 days); // 5 USDC accrued → debt ≈ 105 USDC
+
+        vm.prank(alice);
+        pool.borrow(USDC, 100e6, 2, 0, alice); // checkpoint 105 + 100 = 205 USDC
+
+        vm.warp(block.timestamp + 365 days); // 205 * 5% = 10.25 → debt ≈ 215.25 USDC
+
+        (, uint256 debtBase,,,,) = pool.getUserAccountData(alice);
+        // 215 USDC @ $1 = 215e8 base; second borrow must have captured the first year's interest
+        assertApproxEqAbs(debtBase, 215e8, 2e8, "second borrow must checkpoint accrued interest");
+    }
+
+    function test_borrow_RespectsExistingDebt() public {
+        vm.prank(alice);
+        pool.supply(USDC, 1000e6, alice, 0); // $1000, LTV=75% → avail $750
+        vm.prank(alice);
+        pool.borrow(USDC, 700e6, 2, 0, alice); // avail now ≈ $50
+
+        vm.prank(alice);
+        vm.expectRevert(InsufficientCollateralLTV.selector);
+        pool.borrow(USDC, 100e6, 2, 0, alice); // $100 > remaining avail → revert
+
+        vm.prank(alice);
+        pool.borrow(USDC, 40e6, 2, 0, alice); // $40 ≤ avail → succeed
     }
 }
