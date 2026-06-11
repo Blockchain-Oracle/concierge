@@ -89,6 +89,30 @@ describe('getBalance — error paths (mocked)', () => {
   });
 });
 
+describe('getBalance — sub-dollar USDY price (mocked)', () => {
+  it('returns yieldAccrued = 0 when USDY spot price is below $1.00', async () => {
+    // SQRT_SUB_DOLLAR: sqrtPriceX96 where rawPriceUsdy > 1e12 → price < 1e18 (USDY < $1.00).
+    // 1_010_149n * 2^96 → rawPriceUsdy = 1_010_149^2 ≈ 1.02e12 → price ≈ 0.98e18 < 1e18.
+    const RAW = 1_000_000_000_000_000_000n; // 1 USDY
+    const SQRT_SUB_DOLLAR = 1_010_149n * 2n ** 96n;
+    // biome-ignore lint/suspicious/noExplicitAny: minimal mock
+    const publicClient: any = {
+      readContract: vi.fn().mockImplementation(({ functionName }: { functionName: string }) => {
+        if (functionName === 'balanceOf') return Promise.resolve(RAW);
+        if (functionName === 'slot0')
+          return Promise.resolve([SQRT_SUB_DOLLAR, 276000, 0, 1, 1, 0, true]);
+        return Promise.reject(new Error(`Unexpected: ${functionName}`));
+      }),
+      getBlockNumber: vi.fn().mockResolvedValue(12345n),
+    };
+    const ctx = { publicClient, chainId: 5000 as const, addresses };
+    const result = await executeGetBalance(ctx, KNOWN_USDY_HOLDER);
+
+    expect(BigInt(result.yieldAccrued)).toBe(0n); // USDY < $1 → no yield accrued
+    expect(BigInt(result.raw)).toBe(RAW);
+  });
+});
+
 describe('getBalance — happy path (mocked DEX)', () => {
   it('computes usdValue and yieldAccrued correctly from mocked pool and balance', async () => {
     const RAW = 1_000_000_000_000_000_000n; // 1 USDY

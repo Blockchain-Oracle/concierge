@@ -131,6 +131,36 @@ describe('fetchYieldBps', () => {
     );
   });
 
+  it('throws ConciergeError(RpcError) when tick cumulative diff exceeds safe integer range', async () => {
+    const slot0 = [SQRT_PRICE, TICK, 0, 1, 1, 0, true];
+    // diff = 10^16 > Number.MAX_SAFE_INTEGER (9_007_199_254_740_991) — triggers overflow guard
+    const overflowDiff = 10_000_000_000_000_000n;
+    const client = makeClient(slot0, [
+      [overflowDiff, 0n],
+      [0n, 0n],
+    ]);
+    await expect(fetchYieldBps(client, POOL, 'test')).rejects.toSatisfy(
+      (e: unknown) => e instanceof ConciergeError && e.type === 'RpcError',
+    );
+  });
+
+  it('throws ConciergeError(RpcError) when computed yield exceeds 10,000 bps ceiling', async () => {
+    const slot0 = [SQRT_PRICE, TICK, 0, 1, 1, 0, true];
+    // Construct tick cumulatives that produce yieldBps > 10_000.
+    // yieldBps = round(-2 * (TICK - meanTick) * ratio), ratio = 31_536_000 / 604_800 ≈ 52.14
+    // Need meanTick > TICK + 95.89 → meanTick = TICK + 96 = 275821
+    // diff = 275821 * 604_800 = 166_816_660_800 → yieldBps ≈ 10_011 (> 10_000)
+    const TICK_CUMULATIVE_NOW = 23_000_000_000_000n;
+    const TICK_CUMULATIVE_7D = TICK_CUMULATIVE_NOW - 166_816_660_800n;
+    const client = makeClient(slot0, [
+      [TICK_CUMULATIVE_NOW, TICK_CUMULATIVE_7D],
+      [0n, 0n],
+    ]);
+    await expect(fetchYieldBps(client, POOL, 'test')).rejects.toSatisfy(
+      (e: unknown) => e instanceof ConciergeError && e.type === 'RpcError',
+    );
+  });
+
   it('throws ConciergeError(InsufficientLiquidity) when computed yield <= 0', async () => {
     const slot0 = [SQRT_PRICE, TICK, 0, 1, 1, 0, true];
     // meanTick < tick_now → positive deviation → negative yield (USDY depreciated)
