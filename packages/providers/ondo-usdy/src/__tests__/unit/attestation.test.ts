@@ -50,4 +50,22 @@ describe('buildAttestationPayload', () => {
       thrown instanceof ConciergeError && (thrown as ConciergeError).type === 'ConfigError',
     ).toBe(true);
   });
+
+  it('throws ConciergeError(ConfigError) for zero multiplier (invalid pool price)', () => {
+    let thrown: unknown;
+    try {
+      buildAttestationPayload({
+        chainId: 5000,
+        user: USER,
+        balance: 1_000_000_000_000_000_000n,
+        multiplier: 0n,
+        blockNumber: 1,
+      });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(
+      thrown instanceof ConciergeError && (thrown as ConciergeError).type === 'ConfigError',
+    ).toBe(true);
+  });
 });

@@ -4,6 +4,7 @@ import { type PublicClient, parseAbi } from 'viem';
 import { z } from 'zod';
 import { computePriceFromSqrt, fetchPoolState } from '../_agni.ts';
 import type { ActionContext } from '../_context.ts';
+import { NON_NEG_INT_STR } from '../_validators.ts';
 import { AttestationPayloadSchema, buildAttestationPayload } from '../attestation.ts';
 
 const ERC20_ABI = parseAbi(['function balanceOf(address owner) view returns (uint256)']);
@@ -14,8 +15,6 @@ export const GetBalanceInput = z.object({
     .regex(/^0x[0-9a-fA-F]{40}$/)
     .describe('User wallet address'),
 });
-
-const NON_NEG_INT_STR = z.string().regex(/^\d+$/, 'must be a non-negative integer string');
 
 export const GetBalanceOutput = z.object({
   raw: NON_NEG_INT_STR.describe('Raw USDY balance (18 dec, bigint as string)'),

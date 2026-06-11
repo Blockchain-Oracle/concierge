@@ -56,6 +56,20 @@ describe('computePriceFromSqrt', () => {
       true,
     );
   });
+
+  it('throws ConciergeError(RpcError) when sqrtPriceX96 is near max tick (price underflows)', () => {
+    // Large enough that (sqrtPriceX96^2 / 2^192) > 10^30 → price underflows to 0
+    const NEAR_MAX_SQRT = 2n ** 96n * 10n ** 16n;
+    let thrown: unknown;
+    try {
+      computePriceFromSqrt(NEAR_MAX_SQRT);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown instanceof ConciergeError && (thrown as ConciergeError).type === 'RpcError').toBe(
+      true,
+    );
+  });
 });
 
 describe('fetchPoolState', () => {
@@ -106,6 +120,14 @@ describe('fetchYieldBps', () => {
     const client = makeClient(slot0, undefined, new Error('OLD'));
     await expect(fetchYieldBps(client, POOL, 'test')).rejects.toSatisfy(
       (e: unknown) => e instanceof ConciergeError && e.type === 'InsufficientLiquidity',
+    );
+  });
+
+  it('throws ConciergeError(RpcError) when observe fails with a non-OLD transport error', async () => {
+    const slot0 = [SQRT_PRICE, TICK, 0, 1, 1, 0, true];
+    const client = makeClient(slot0, undefined, new Error('connection refused'));
+    await expect(fetchYieldBps(client, POOL, 'test')).rejects.toSatisfy(
+      (e: unknown) => e instanceof ConciergeError && e.type === 'RpcError',
     );
   });
 

@@ -100,9 +100,9 @@ export async function fetchYieldBps(
     });
   } catch (err: unknown) {
     // "OLD" revert = pool has fewer than 7 days of observations (expected business case).
+    // viem decodes Solidity revert("OLD") into err.message containing 'OLD'.
     // All other failures are RPC/transport errors and should surface as such.
-    const isOldRevert =
-      err instanceof Error && (err.message.includes('OLD') || err.message.includes('0x001'));
+    const isOldRevert = err instanceof Error && err.message.includes('OLD');
     throw new ConciergeError(
       isOldRevert ? 'InsufficientLiquidity' : 'RpcError',
       isOldRevert
@@ -116,7 +116,13 @@ export async function fetchYieldBps(
   if (yieldBps <= 0) {
     throw new ConciergeError(
       'InsufficientLiquidity',
-      `${tag}: computed USDY yield ≤ 0 bps (${yieldBps}) — pool may be too new or price feed unreliable`,
+      `[@concierge/ondo-usdy] ${tag}: computed USDY yield <= 0 bps (${yieldBps}) — pool may be too new or price feed unreliable`,
+    );
+  }
+  if (yieldBps > 10_000) {
+    throw new ConciergeError(
+      'RpcError',
+      `[@concierge/ondo-usdy] ${tag}: computed yield ${yieldBps} bps exceeds sanity ceiling (10,000 bps / 100% APY) — pool state may be anomalous`,
     );
   }
   return yieldBps;

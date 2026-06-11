@@ -3,21 +3,20 @@ import { tool } from '@concierge/tools';
 import { z } from 'zod';
 import { computePriceFromSqrt, fetchPoolState } from '../_agni.ts';
 import type { ActionContext } from '../_context.ts';
+import { NON_NEG_INT_STR, POSITIVE_INT_STR } from '../_validators.ts';
 
 export const GetRateAccrualInput = z.object({});
 
 export const GetRateAccrualOutput = z.object({
-  multiplier: z
-    .string()
-    .describe(
-      'Current DEX spot price of USDY in USDC, expressed as 1e18-scaled integer (1e18 = $1.00)',
-    ),
+  multiplier: POSITIVE_INT_STR.describe(
+    'Current DEX spot price of USDY in USDC, expressed as 1e18-scaled integer (1e18 = $1.00)',
+  ),
   rateMantissa: z
-    .string()
+    .literal('0')
     .describe(
       'Always 0 — Mantle USDY has no on-chain accrual oracle. Yield is encoded in token price.',
     ),
-  lastUpdateBlock: z.string().describe('Block number at which this observation was taken'),
+  lastUpdateBlock: NON_NEG_INT_STR.describe('Block number at which this observation was taken'),
 });
 
 export async function executeGetRateAccrual(ctx: ActionContext) {
@@ -36,7 +35,7 @@ export async function executeGetRateAccrual(ctx: ActionContext) {
 
   return {
     multiplier: multiplier.toString(),
-    rateMantissa: '0',
+    rateMantissa: '0' as const,
     lastUpdateBlock: blockNumber.toString(),
   };
 }

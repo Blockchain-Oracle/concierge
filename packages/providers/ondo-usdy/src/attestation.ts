@@ -1,12 +1,7 @@
 import { ConciergeError } from '@concierge/sdk';
 import type { Address, EvmChainId } from '@concierge/shared';
 import { z } from 'zod';
-
-const NON_NEG_INT_STR = z.string().regex(/^\d+$/, 'must be a non-negative integer string');
-const NON_ZERO_ADDRESS = z
-  .string()
-  .regex(/^0x[0-9a-fA-F]{40}$/)
-  .refine((v) => v !== '0x0000000000000000000000000000000000000000', 'must not be zero address');
+import { NON_NEG_INT_STR, NON_ZERO_ADDRESS, POSITIVE_INT_STR } from './_validators.ts';
 
 export const ONDO_ATTESTATION_SCHEMA = 'concierge.ondo.read.v1' as const;
 
@@ -15,7 +10,7 @@ export const AttestationPayloadSchema = z.object({
   chain: z.number().int().positive(),
   user: NON_ZERO_ADDRESS,
   balance: NON_NEG_INT_STR,
-  multiplier: NON_NEG_INT_STR,
+  multiplier: POSITIVE_INT_STR,
   blockNumber: z.number().int().positive(),
   ts: z.number().int().positive(),
 });
@@ -52,5 +47,13 @@ export function buildAttestationPayload(ctx: AttestationContext): AttestationPay
     blockNumber: ctx.blockNumber,
     ts: Math.floor(Date.now() / 1000),
   };
-  return AttestationPayloadSchema.parse(raw);
+  try {
+    return AttestationPayloadSchema.parse(raw);
+  } catch (err) {
+    throw new ConciergeError(
+      'ConfigError',
+      `[@concierge/ondo-usdy] attestation: payload validation failed — ${err instanceof Error ? err.message : String(err)}`,
+      err instanceof Error ? err : undefined,
+    );
+  }
 }
