@@ -133,8 +133,9 @@ describe('maxSafeBorrow', () => {
 
     expect(safeBorrow).toBeGreaterThan(0n);
 
-    // Borrow the computed amount and verify HF ≥ 1.4 (≈1.5 ± 5% due to integer truncation)
-    await walletClient.writeContract({
+    // Borrow the computed amount and verify HF ≥ 1.4 (≈1.5 ± 5% due to integer truncation).
+    // Explicitly await the receipt so CI runners don't read state before the block mines.
+    const borrowHash = await walletClient.writeContract({
       address: mocks.pool,
       abi: poolAbi,
       functionName: 'borrow',
@@ -142,6 +143,7 @@ describe('maxSafeBorrow', () => {
       account: addr,
       chain,
     });
+    await publicClient.waitForTransactionReceipt({ hash: borrowHash });
     const data = await getUserAccountData(publicClient, mocks.pool, addr);
     expect(data.healthFactor).toBeGreaterThanOrEqual(1_400_000_000_000_000_000n);
     expect(data.healthFactor).toBeLessThanOrEqual(1_600_000_000_000_000_000n);
