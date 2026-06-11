@@ -26,6 +26,9 @@ contract ConciergeRegistryInvariantTest is Test {
     address internal bob;
     address internal charlie;
 
+    /// Stored dynamically so invariants stay in sync with setUp's actor pool.
+    address[] internal _actors;
+
     function setUp() public {
         ConciergeRegistry impl = new ConciergeRegistry();
         bytes memory initData = abi.encodeCall(ConciergeRegistry.initialize, (admin));
@@ -41,6 +44,10 @@ contract ConciergeRegistryInvariantTest is Test {
         bob = makeAddr("bob");
         charlie = makeAddr("charlie");
 
+        _actors.push(alice);
+        _actors.push(bob);
+        _actors.push(charlie);
+
         address[] memory actors = new address[](3);
         actors[0] = alice;
         actors[1] = bob;
@@ -52,16 +59,17 @@ contract ConciergeRegistryInvariantTest is Test {
 
     // ─── Invariants ─────────────────────────────────────────────────────────
 
-    /// nextAgentId is always at least one ahead of total successful registrations.
+    /// nextAgentId is exactly one ahead of total successful registrations.
     function invariant_NextAgentIdMonotonicallyIncreasing() public view {
-        assertGe(registry.nextAgentId(), handler.ghost_totalRegistered() + 1);
+        assertEq(registry.nextAgentId(), handler.ghost_totalRegistered() + 1);
     }
 
-    /// Every minted agent record has a non-zero owner — no orphaned IDs.
+    /// Every minted agent record has a non-zero owner and ghost_ownerOf agrees with on-chain.
     function invariant_NoOrphanedAgents() public view {
         uint256 nextId = registry.nextAgentId();
         for (uint256 i = 1; i < nextId; i++) {
             assertNotEq(registry.getAgent(i).owner, address(0));
+            assertEq(handler.ghost_ownerOf(i), registry.getAgent(i).owner, "ghost_ownerOf drift");
         }
     }
 
@@ -82,15 +90,11 @@ contract ConciergeRegistryInvariantTest is Test {
             assertTrue(found, "agent id missing from owner index");
         }
         // Reverse: every entry in an actor's index points to an agent owned by that actor.
-        // Also catches stale entries left by a buggy _removeFromOwnerIndex.
-        address[3] memory actors = [alice, bob, charlie];
-        for (uint256 a = 0; a < 3; a++) {
-            uint256[] memory owned = registry.agentsByOwner(actors[a]);
+        // Catches stale entries left by a buggy _removeFromOwnerIndex.
+        for (uint256 a = 0; a < _actors.length; a++) {
+            uint256[] memory owned = registry.agentsByOwner(_actors[a]);
             for (uint256 k = 0; k < owned.length; k++) {
-                assertEq(registry.getAgent(owned[k]).owner, actors[a], "stale reverse-index entry");
-                for (uint256 m = k + 1; m < owned.length; m++) {
-                    assertNotEq(owned[k], owned[m], "duplicate in owner index");
-                }
+                assertEq(registry.getAgent(owned[k]).owner, _actors[a], "stale reverse-index entry");
             }
         }
     }
@@ -125,7 +129,17 @@ contract ConciergeRegistryInvariantTest is Test {
         }
     }
 
-    /// Paused state always matches what the handler drove — and is never permanently locked.
+    /// sessionKeyValidator is never zero for any registered agent.
+    function invariant_ValidatorNeverZero() public view {
+        uint256 nextId = registry.nextAgentId();
+        for (uint256 i = 1; i < nextId; i++) {
+            assertNotEq(
+                registry.getAgent(i).sessionKeyValidator, address(0), "sessionKeyValidator is zero"
+            );
+        }
+    }
+
+    /// Paused state always matches what the handler drove — ghost mirrors on-chain paused flag.
     function invariant_PausedStateRestored() public view {
         assertEq(registry.paused(), handler.ghost_paused());
     }

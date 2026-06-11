@@ -17,9 +17,13 @@ contract ConciergeRegistryHandler is Test {
     address[] internal actors;
 
     /// Ghost variables mirror expected on-chain state.
+    /// ghost_totalRegistered: number of successful registerAgent calls — never decrements.
     uint256 public ghost_totalRegistered;
+    /// ghost_activeCount: current count of active agents — increments on register, toggles on setActive.
     uint256 public ghost_activeCount;
+    /// ghost_paused: mirrors registry.paused() after every handler call.
     bool public ghost_paused;
+    /// ghost_ownerOf: current owner of each agent ID; zero for IDs never registered.
     mapping(uint256 => address) public ghost_ownerOf;
 
     constructor(
@@ -34,6 +38,8 @@ contract ConciergeRegistryHandler is Test {
         pauser = _pauser;
         validator = _validator;
         actors = _actors;
+        // Mirror the registry's initial paused state instead of relying on the bool default.
+        ghost_paused = _registry.paused();
     }
 
     function _pickActor(
@@ -50,7 +56,6 @@ contract ConciergeRegistryHandler is Test {
     ) external {
         if (goalHash == bytes32(0)) return;
         address owner = _pickActor(actorSeed);
-        if (registry.agentsByOwner(owner).length >= registry.MAX_AGENTS_PER_OWNER()) return;
 
         vm.prank(operator);
         try registry.registerAgent(owner, validator, goalHash, "") returns (uint256 id) {
@@ -66,11 +71,14 @@ contract ConciergeRegistryHandler is Test {
     ) external {
         if (ghost_totalRegistered == 0) return;
         if (newGoal == bytes32(0)) return;
+        if (ghost_paused) return;
         uint256 id = bound(idSeed, 1, ghost_totalRegistered);
+        // Agent must be active — skip rather than catch; unexpected reverts surface as failures.
+        if (!registry.getAgent(id).active) return;
         address owner = ghost_ownerOf[id];
 
         vm.prank(owner);
-        try registry.updateGoal(id, newGoal) { } catch { }
+        registry.updateGoal(id, newGoal);
     }
 
     function updatePolicy_h(
@@ -78,12 +86,15 @@ contract ConciergeRegistryHandler is Test {
         uint256 sizeSeed
     ) external {
         if (ghost_totalRegistered == 0) return;
+        if (ghost_paused) return;
         uint256 id = bound(idSeed, 1, ghost_totalRegistered);
+        // Agent must be active — skip rather than catch.
+        if (!registry.getAgent(id).active) return;
         uint256 size = bound(sizeSeed, 0, registry.MAX_POLICY_SIZE());
         address owner = ghost_ownerOf[id];
 
         vm.prank(owner);
-        try registry.updatePolicy(id, new bytes(size)) { } catch { }
+        registry.updatePolicy(id, new bytes(size));
     }
 
     function transferAgent_h(
@@ -95,7 +106,6 @@ contract ConciergeRegistryHandler is Test {
         address newOwner = _pickActor(newOwnerSeed);
         address currentOwner = ghost_ownerOf[id];
         if (newOwner == currentOwner) return;
-        if (registry.agentsByOwner(newOwner).length >= registry.MAX_AGENTS_PER_OWNER()) return;
 
         vm.prank(currentOwner);
         try registry.transferAgent(id, newOwner) {
@@ -124,10 +134,13 @@ contract ConciergeRegistryHandler is Test {
         address newValidator
     ) external {
         if (ghost_totalRegistered == 0) return;
+        if (ghost_paused) return;
+        if (newValidator == address(0)) return;
         uint256 id = bound(idSeed, 1, ghost_totalRegistered);
         address owner = ghost_ownerOf[id];
 
         vm.prank(owner);
+        // SameValidator revert is expected — keep try/catch for that case alone.
         try registry.updateValidator(id, newValidator) { } catch { }
     }
 
