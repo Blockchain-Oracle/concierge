@@ -5,7 +5,11 @@ import { z } from 'zod';
 import { computeRateFromSqrt, fetchPoolState } from '../_agni.ts';
 import type { ActionContext } from '../_context.ts';
 import { NON_NEG_INT_STR } from '../_validators.ts';
-import { buildReadAttestationPayload, ReadAttestationPayloadSchema } from '../attestation.ts';
+import {
+  buildReadAttestationPayload,
+  type ReadAttestationPayload,
+  ReadAttestationPayloadSchema,
+} from '../attestation.ts';
 
 const ERC20_ABI = parseAbi(['function balanceOf(address owner) view returns (uint256)']);
 
@@ -59,13 +63,22 @@ export async function executeGetBalance(
   const rate = computeRateFromSqrt(poolState.sqrtPriceX96);
   const ethValue = (raw * rate) / 10n ** 18n;
 
-  const attestationPayload = buildReadAttestationPayload({
-    chainId: ctx.chainId,
-    user,
-    balance: raw,
-    exchangeRate: rate,
-    blockNumber: Number(blockNumber),
-  });
+  let attestationPayload: ReadAttestationPayload;
+  try {
+    attestationPayload = buildReadAttestationPayload({
+      chainId: ctx.chainId,
+      user,
+      balance: raw,
+      exchangeRate: rate,
+      blockNumber: Number(blockNumber),
+    });
+  } catch (err) {
+    throw new ConciergeError(
+      'AttestationFailed',
+      `[@concierge/meth-staking] getBalance: attestation payload validation failed for user ${user} at block ${blockNumber}`,
+      err instanceof Error ? err : undefined,
+    );
+  }
 
   return {
     raw: raw.toString(),

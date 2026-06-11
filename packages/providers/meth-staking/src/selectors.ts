@@ -1,3 +1,4 @@
+import { ConciergeError } from '@concierge/sdk';
 import type { Address } from '@concierge/shared';
 import { type PublicClient, parseAbi } from 'viem';
 import { computeRateFromSqrt, fetchPoolState, fetchYieldBps } from './_agni.ts';
@@ -24,12 +25,20 @@ export async function getMethBalance(
 ): Promise<{ raw: bigint; ethValue: bigint }> {
   const [{ sqrtPriceX96 }, raw] = await Promise.all([
     fetchPoolState(publicClient, addresses.agniMethWeth, 'selectors.getMethBalance'),
-    publicClient.readContract({
-      address: addresses.meth,
-      abi: ERC20_ABI,
-      functionName: 'balanceOf',
-      args: [user],
-    }),
+    publicClient
+      .readContract({
+        address: addresses.meth,
+        abi: ERC20_ABI,
+        functionName: 'balanceOf',
+        args: [user],
+      })
+      .catch((err: unknown) => {
+        throw new ConciergeError(
+          'RpcError',
+          `[@concierge/meth-staking] selectors.getMethBalance: failed to read mETH balance for ${user}`,
+          err instanceof Error ? err : undefined,
+        );
+      }),
   ]);
   const rate = computeRateFromSqrt(sqrtPriceX96);
   return { raw, ethValue: (raw * rate) / 10n ** 18n };

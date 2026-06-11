@@ -22,6 +22,7 @@ export const UnwrapAttestationPayloadSchema = z.object({
   dexTxHash: z.string().regex(/^0x[0-9a-fA-F]{64}$/),
   amountMethIn: POSITIVE_INT_STR,
   expectedEthOut: NON_NEG_INT_STR,
+  actualEthOut: NON_NEG_INT_STR,
   slippageBps: z.number().int().min(1).max(5000),
   ts: z.number().int().positive(),
 });

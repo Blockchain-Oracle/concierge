@@ -50,8 +50,10 @@ describe('getUnwrapToWETH — routes through dex provider (test_RoutesThroughDex
     });
 
     expect(result.dexTxHash).toBe(DEX_TX_HASH);
+    expect(result.actualEthOut).toBe('1092000000000000000');
     expect(result.attestationPayload.schema).toBe('concierge.meth.unwrap-via-dex.v1');
     expect(result.attestationPayload.dexTxHash).toBe(DEX_TX_HASH);
+    expect(result.attestationPayload.actualEthOut).toBe('1092000000000000000');
   });
 });
 
@@ -80,6 +82,9 @@ describe('getUnwrapToWETH — attestation captures expectedEthOut (test_unwrapTo
     const expectedEthOut = BigInt(result.expectedEthOut);
     expect(expectedEthOut).toBeGreaterThan(2_000_000_000_000_000_000n); // rate > 1
     expect(result.attestationPayload.expectedEthOut).toBe(result.expectedEthOut);
+    // actualEthOut comes from DEX swap result and is recorded in the attestation
+    expect(result.actualEthOut).toBe('1092000000000000000');
+    expect(result.attestationPayload.actualEthOut).toBe('1092000000000000000');
   });
 });
 

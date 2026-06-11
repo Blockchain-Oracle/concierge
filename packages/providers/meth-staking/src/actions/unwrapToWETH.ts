@@ -34,7 +34,11 @@ export const GetUnwrapToWETHOutput = z.object({
     .describe('Transaction hash of the DEX swap that unwrapped mETH → WETH'),
   expectedEthOut: NON_NEG_INT_STR.describe(
     'WETH expected from oracle exchange rate × mETH amount (18 dec, bigint as string). ' +
-      'Compare to DEX amountOut via dexTxHash to detect price manipulation.',
+      'Compare to actualEthOut to detect price manipulation between oracle and DEX execution.',
+  ),
+  actualEthOut: NON_NEG_INT_STR.describe(
+    'Actual WETH received from the DEX swap (18 dec, bigint as string). ' +
+      'Recorded in the attestation for manipulation detection.',
   ),
   attestationPayload: UnwrapAttestationPayloadSchema.describe('ERC-8004 attestation payload'),
 });
@@ -46,22 +50,23 @@ export async function executeGetUnwrapToWETH(
   const { amountMeth, slippageBps, recipient } = args;
 
   // Compute oracle-based expected output BEFORE the swap for attestation anchoring.
-  // Failure here is safe to retry — no funds have moved yet.
-  let sqrtPriceX96: bigint;
+  // Both pool read and rate computation are pre-swap — any failure here is safe to retry.
+  let rate: bigint;
   try {
-    ({ sqrtPriceX96 } = await fetchPoolState(
+    const { sqrtPriceX96 } = await fetchPoolState(
       ctx.publicClient,
       ctx.addresses.agniMethWeth,
       'getUnwrapToWETH',
-    ));
+    );
+    rate = computeRateFromSqrt(sqrtPriceX96);
   } catch (err) {
+    if (err instanceof ConciergeError && err.type === 'OracleUnavailable') throw err;
     throw new ConciergeError(
       'OracleUnavailable',
-      '[@concierge/meth-staking] getUnwrapToWETH: oracle price read failed before swap — no funds moved, safe to retry',
+      '[@concierge/meth-staking] getUnwrapToWETH: oracle price read or rate computation failed before swap — no funds moved, safe to retry',
       err instanceof Error ? err : undefined,
     );
   }
-  const rate = computeRateFromSqrt(sqrtPriceX96);
   const expectedEthOut = (amountMeth * rate) / 10n ** 18n;
 
   let swapResult: { txHash: string; amountOut: string };
@@ -82,7 +87,15 @@ export async function executeGetUnwrapToWETH(
     );
   }
 
-  const dexTxHash = swapResult.txHash as `0x${string}`;
+  const rawTxHash = swapResult.txHash;
+  if (!/^0x[0-9a-fA-F]{64}$/.test(rawTxHash)) {
+    throw new ConciergeError(
+      'RpcError',
+      `[@concierge/meth-staking] getUnwrapToWETH: DEX provider returned a malformed txHash: '${rawTxHash}' — swap may have executed; verify manually`,
+    );
+  }
+  const dexTxHash = rawTxHash as `0x${string}`;
+  const actualEthOut = swapResult.amountOut;
 
   // Swap executed — wrap any attestation failure with the txHash so it can be recorded manually.
   let attestationPayload: UnwrapAttestationPayload;
@@ -93,6 +106,7 @@ export async function executeGetUnwrapToWETH(
       dexTxHash,
       amountMethIn: amountMeth.toString(),
       expectedEthOut: expectedEthOut.toString(),
+      actualEthOut,
       slippageBps,
       ts: Math.floor(Date.now() / 1000),
     });
@@ -104,7 +118,7 @@ export async function executeGetUnwrapToWETH(
     );
   }
 
-  return { dexTxHash, expectedEthOut: expectedEthOut.toString(), attestationPayload };
+  return { dexTxHash, expectedEthOut: expectedEthOut.toString(), actualEthOut, attestationPayload };
 }
 
 export function createGetUnwrapToWETHTool(ctx: ActionContext) {

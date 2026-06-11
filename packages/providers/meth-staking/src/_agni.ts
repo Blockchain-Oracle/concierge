@@ -48,10 +48,11 @@ function computeYieldBps(
   tickCumulativePast: bigint,
 ): number {
   const diff = tickCumulativeNow - tickCumulativePast;
-  if (diff > 9_007_199_254_740_991n) {
+  const MAX_SAFE = 9_007_199_254_740_991n;
+  if (diff > MAX_SAFE || diff < -MAX_SAFE) {
     throw new ConciergeError(
       'RpcError',
-      `[@concierge/meth-staking] computeYieldBps: tick cumulative diff (${diff}) exceeds safe integer range`,
+      `[@concierge/meth-staking] computeYieldBps: tick cumulative diff (${diff}) outside safe integer range`,
     );
   }
   const tickCumulativeDiff = Number(diff);
