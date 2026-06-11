@@ -7,6 +7,9 @@ import { AccessControl } from "@openzeppelin/contracts/access/AccessControl.sol"
 /// @notice Errors
 error FaucetCooldownActive(uint256 remainingSeconds);
 error FaucetAmountExceedsCap(uint256 requested, uint256 cap);
+error FaucetZeroAmount();
+error FaucetZeroAdmin();
+error FaucetZeroCap();
 
 /// @notice Abstract base for Sepolia mock ERC-20 tokens with a rate-limited public faucet.
 /// Subclasses set the per-call cap and token metadata via the constructor.
@@ -27,7 +30,8 @@ abstract contract MockFaucetToken is ERC20, AccessControl {
     // ─── State ───────────────────────────────────────────────────────────────
 
     uint256 internal immutable _faucetCap;
-    mapping(address recipient => uint256 timestamp) public lastFaucetAt;
+    // Cooldown keyed on the CALLER (msg.sender), not the recipient — prevents griefing.
+    mapping(address caller => uint256 timestamp) public lastFaucetAt;
 
     constructor(
         string memory name_,
@@ -35,6 +39,8 @@ abstract contract MockFaucetToken is ERC20, AccessControl {
         address admin,
         uint256 faucetCap_
     ) ERC20(name_, symbol_) {
+        if (admin == address(0)) revert FaucetZeroAdmin();
+        if (faucetCap_ == 0) revert FaucetZeroCap();
         _faucetCap = faucetCap_;
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
         _grantRole(MINTER_ROLE, admin);
@@ -52,15 +58,16 @@ abstract contract MockFaucetToken is ERC20, AccessControl {
         address to,
         uint256 amount
     ) external {
+        if (amount == 0) revert FaucetZeroAmount();
         if (amount > _faucetCap) revert FaucetAmountExceedsCap(amount, _faucetCap);
-        uint256 last = lastFaucetAt[to];
+        uint256 last = lastFaucetAt[msg.sender];
         // forge-lint: disable-next-line(block-timestamp)
         if (last != 0 && block.timestamp < last + FAUCET_COOLDOWN) {
             // forge-lint: disable-next-line(block-timestamp)
             revert FaucetCooldownActive(last + FAUCET_COOLDOWN - block.timestamp);
         }
         // forge-lint: disable-next-line(block-timestamp)
-        lastFaucetAt[to] = block.timestamp;
+        lastFaucetAt[msg.sender] = block.timestamp;
         _mint(to, amount);
         emit FaucetClaim(to, amount);
     }
