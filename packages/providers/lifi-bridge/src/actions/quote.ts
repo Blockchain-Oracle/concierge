@@ -3,37 +3,42 @@ import { z } from 'zod';
 import { fetchQuote, type GetQuoteParams } from '../_api.ts';
 import type { ActionContext } from '../_context.ts';
 import { LifiBridgeRouteSchema } from '../_types.ts';
+import { NON_ZERO_ADDR } from '../_zod.ts';
 
-const NON_ZERO_ADDR = z
-  .string()
-  .regex(/^0x[0-9a-fA-F]{40}$/)
-  .refine((v) => v !== '0x0000000000000000000000000000000000000000');
-
-export const QuoteInput = z.object({
-  fromChain: z.number().int().positive().describe('Source chain ID'),
-  toChain: z.number().int().positive().describe('Destination chain ID'),
-  fromToken: NON_ZERO_ADDR.describe('Source token contract address'),
-  toToken: NON_ZERO_ADDR.describe('Destination token contract address'),
-  amount: z
-    .string()
-    .regex(/^\d+$/)
-    .describe('Amount to bridge in base units (e.g., wei for 18-decimal tokens)'),
-  slippageBps: z
-    .number()
-    .int()
-    .min(1)
-    .max(5000)
-    .default(50)
-    .describe('Max slippage in bps (default 50 = 0.5%)'),
-  fromAddress: NON_ZERO_ADDR.describe('Sender wallet address'),
-  toAddress: NON_ZERO_ADDR.optional().describe(
-    'Recipient on destination chain (defaults to fromAddress)',
-  ),
-  excludeBridges: z
-    .array(z.string())
-    .optional()
-    .describe('Bridge names to exclude (e.g., ["connext"])'),
-});
+export const QuoteInput = z
+  .object({
+    fromChain: z.number().int().positive().describe('Source chain ID'),
+    toChain: z.number().int().positive().describe('Destination chain ID'),
+    fromToken: NON_ZERO_ADDR.describe('Source token contract address'),
+    toToken: NON_ZERO_ADDR.describe('Destination token contract address'),
+    amount: z
+      .string()
+      .regex(/^\d+$/)
+      .describe('Amount to bridge in base units (e.g., wei for 18-decimal tokens)'),
+    slippageBps: z
+      .number()
+      .int()
+      .min(1)
+      .max(5000)
+      .default(50)
+      .describe('Max slippage in bps (default 50 = 0.5%)'),
+    fromAddress: NON_ZERO_ADDR.describe('Sender wallet address'),
+    toAddress: NON_ZERO_ADDR.optional().describe(
+      'Recipient on destination chain (defaults to fromAddress)',
+    ),
+    excludeBridges: z
+      .array(z.string())
+      .optional()
+      .describe('Bridge names to exclude (e.g., ["connext"])'),
+  })
+  .superRefine((v, ctx) => {
+    if (v.fromChain === v.toChain) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'fromChain and toChain must be different for a bridge operation',
+      });
+    }
+  });
 
 export const QuoteOutput = z.object({
   route: LifiBridgeRouteSchema.nullable().describe(

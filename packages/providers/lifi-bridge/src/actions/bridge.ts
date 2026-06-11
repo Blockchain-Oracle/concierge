@@ -3,18 +3,13 @@ import { tool } from '@concierge/tools';
 import { z } from 'zod';
 import { type ActionContext, ROUTE_TTL_MS } from '../_context.ts';
 import { type LifiBridgeRoute, LifiBridgeRouteSchema } from '../_types.ts';
+import { NON_ZERO_ADDR } from '../_zod.ts';
 import {
   buildSentAttestation,
   type SentAttestationPayload,
   SentAttestationPayloadSchema,
 } from '../attestation.ts';
 import { executeQuote } from './quote.ts';
-
-const NON_ZERO_ADDR = z
-  .string()
-  .regex(/^0x[0-9a-fA-F]{40}$/)
-  .refine((v) => v !== '0x0000000000000000000000000000000000000000')
-  .transform((v) => v as `0x${string}`);
 
 export const BridgeInput = z.object({
   fromChain: z.number().int().positive().describe('Source chain ID'),
@@ -25,6 +20,10 @@ export const BridgeInput = z.object({
   slippageBps: z.number().int().min(1).max(5000).default(50).describe('Max slippage in bps'),
   fromAddress: NON_ZERO_ADDR.describe('Sender wallet address'),
   toAddress: NON_ZERO_ADDR.optional().describe('Recipient address (defaults to fromAddress)'),
+  excludeBridges: z
+    .array(z.string())
+    .optional()
+    .describe('Bridge names to exclude — persisted for stale re-quote'),
   route: LifiBridgeRouteSchema.optional().describe('Pre-fetched route; re-quoted if stale (>30s)'),
 });
 
@@ -67,12 +66,13 @@ async function resolveRoute(
   const quoteResult = await executeQuote(ctx, {
     fromChain: input.fromChain,
     toChain: input.toChain,
-    fromToken: input.fromToken as string,
-    toToken: input.toToken as string,
+    fromToken: input.fromToken,
+    toToken: input.toToken,
     amount: input.amount,
     slippageBps: input.slippageBps,
-    fromAddress: input.fromAddress as string,
-    toAddress: input.toAddress ? (input.toAddress as string) : undefined,
+    fromAddress: input.fromAddress,
+    toAddress: input.toAddress,
+    excludeBridges: input.excludeBridges,
   });
   if (!quoteResult.route) {
     throw new ConciergeError(
@@ -86,8 +86,21 @@ async function resolveRoute(
 async function submitBridgeTx(
   walletClient: NonNullable<ActionContext['walletClient']>,
   txReq: LifiBridgeRoute['transactionRequest'],
+  lifiDiamond: ActionContext['lifiDiamond'],
 ): Promise<`0x${string}`> {
-  if (walletClient.chain !== undefined && walletClient.chain.id !== txReq.chainId) {
+  if (txReq.to.toLowerCase() !== lifiDiamond.toLowerCase()) {
+    throw new ConciergeError(
+      'ConfigError',
+      `[@concierge/lifi-bridge] bridge: route targets ${txReq.to} which is not the Li.Fi Diamond — refusing to submit`,
+    );
+  }
+  if (walletClient.chain === undefined) {
+    throw new ConciergeError(
+      'ConfigError',
+      '[@concierge/lifi-bridge] bridge: walletClient has no bound chain — bind a chain or call switchChain before bridging',
+    );
+  }
+  if (walletClient.chain.id !== txReq.chainId) {
     throw new ConciergeError(
       'NetworkUnsupported',
       `[@concierge/lifi-bridge] bridge: wallet chain ${walletClient.chain.id} ≠ route chain ${txReq.chainId} — switch networks before bridging`,
@@ -96,15 +109,15 @@ async function submitBridgeTx(
   try {
     // biome-ignore lint/suspicious/noExplicitAny: sendTransaction overloads vary by account/chain binding
     return await (walletClient as any).sendTransaction({
-      to: txReq.to as `0x${string}`,
-      data: txReq.data as `0x${string}`,
+      to: txReq.to,
+      data: txReq.data,
       value: BigInt(txReq.value || '0'),
     });
   } catch (err) {
     if (err instanceof ConciergeError) throw err;
     throw new ConciergeError(
       'RpcError',
-      '[@concierge/lifi-bridge] bridge: source-chain tx submission failed',
+      `[@concierge/lifi-bridge] bridge: source-chain tx submission failed — ${err instanceof Error ? err.message : String(err)}`,
       err instanceof Error ? err : undefined,
     );
   }
@@ -116,7 +129,11 @@ export async function executeBridge(
 ): Promise<z.infer<typeof BridgeOutput>> {
   const { walletClient } = await requireWallet(ctx);
   const route = await resolveRoute(ctx, input);
-  const sourceTxHash = await submitBridgeTx(walletClient, route.transactionRequest);
+  const sourceTxHash = await submitBridgeTx(
+    walletClient,
+    route.transactionRequest,
+    ctx.lifiDiamond,
+  );
   const lifiOperationId = route.id;
   const expectedDuration = route.estimate.executionDuration;
 

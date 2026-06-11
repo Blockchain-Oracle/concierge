@@ -29,6 +29,7 @@ async function doFetch(url: string, init: RequestInit, label: string): Promise<u
     let detail = '';
     try {
       const body = (await res.json()) as Record<string, unknown>;
+      // biome-ignore lint/complexity/useLiteralKeys: tsconfig noPropertyAccessFromIndexSignature requires bracket notation here
       if (typeof body['message'] === 'string') detail = ` — ${body['message']}`;
     } catch {
       // error body may not be JSON (e.g. gateway HTML) — omit detail

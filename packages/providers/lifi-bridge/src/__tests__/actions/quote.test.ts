@@ -2,7 +2,7 @@ import { HttpResponse, http } from 'msw';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { LIFI_API } from '../../_context.ts';
 import { executeQuote } from '../../actions/quote.ts';
-import { FIXTURE_ROUTES } from '../__mocks__/lifi-api.ts';
+import { FIXTURE_ROUTES, QUOTE_RESPONSES } from '../__mocks__/lifi-api.ts';
 import { server } from '../setup.ts';
 
 beforeAll(() => server.listen());
@@ -101,5 +101,42 @@ describe('quote — error paths', () => {
         e instanceof ConciergeError &&
         (e as InstanceType<typeof ConciergeError>).type === 'RpcError',
     );
+  });
+
+  it('throws ConciergeError(RpcError) when route has non-digit amount field', async () => {
+    // LifiStepEstimateSchema rejects non-digit amounts → safeParse fails → RpcError
+    // Protects against garbage values silently flowing into on-chain attestations
+    const malformed = {
+      // biome-ignore lint/style/noNonNullAssertion: fixture always has at least 1 entry
+      ...QUOTE_RESPONSES[0]!,
+      estimate: {
+        // biome-ignore lint/style/noNonNullAssertion: fixture always has at least 1 entry
+        ...QUOTE_RESPONSES[0]!.estimate,
+        fromAmount: 'not-a-number', // fails NON_NEG_INT_STR regex
+      },
+    };
+    server.use(http.get(`${LIFI_API}/quote`, () => HttpResponse.json(malformed)));
+    const { ConciergeError } = await import('@concierge/sdk');
+    await expect(executeQuote(ctx, BASE_INPUT)).rejects.toSatisfy(
+      (e: unknown) =>
+        e instanceof ConciergeError &&
+        (e as InstanceType<typeof ConciergeError>).type === 'RpcError',
+    );
+  });
+});
+
+describe('quote — request parameters (test_quote_RequestParams)', () => {
+  it('sends slippage as a fraction (bps ÷ 10000) not raw bps', async () => {
+    let capturedUrl: URL | undefined;
+    server.use(
+      http.get(`${LIFI_API}/quote`, ({ request }) => {
+        capturedUrl = new URL(request.url);
+        // biome-ignore lint/style/noNonNullAssertion: fixture always has at least 1 entry
+        return HttpResponse.json(QUOTE_RESPONSES[0]!);
+      }),
+    );
+    await executeQuote(ctx, { ...BASE_INPUT, slippageBps: 50 });
+    // 50 bps → 0.005; a bug sending raw bps would produce '50' here
+    expect(capturedUrl?.searchParams.get('slippage')).toBe('0.005');
   });
 });

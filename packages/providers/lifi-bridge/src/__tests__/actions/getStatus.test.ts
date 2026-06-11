@@ -92,6 +92,76 @@ describe('getStatus — FAILED (test_getStatus_Failed)', () => {
   });
 });
 
+describe('getStatus — DONE with missing settlement data (test_getStatus_DoneMissingData)', () => {
+  it('throws ConciergeError(RpcError) when DONE but toTx.txHash is absent', async () => {
+    server.use(
+      http.get(
+        `${LIFI_API}/status`,
+        () => HttpResponse.json({ status: 'DONE', tool: 'stargate' }), // no toTx
+      ),
+    );
+    const { ConciergeError } = await import('@concierge/sdk');
+    await expect(
+      executeGetStatus(ctx, {
+        sourceTxHash: DEX_TX_HASH,
+        lifiOperationId: OPERATION_ID,
+        fromChain: 5000,
+        toChain: 1,
+      }),
+    ).rejects.toSatisfy(
+      (e: unknown) =>
+        e instanceof ConciergeError &&
+        (e as InstanceType<typeof ConciergeError>).type === 'RpcError',
+    );
+  });
+
+  it('throws ConciergeError(RpcError) when DONE but bridge name is absent', async () => {
+    server.use(
+      http.get(`${LIFI_API}/status`, () =>
+        // no tool and no metadata.bridges — bridge name cannot be determined
+        HttpResponse.json({ status: 'DONE', toTx: { txHash: DEST_TX_HASH, chainId: 1 } }),
+      ),
+    );
+    const { ConciergeError } = await import('@concierge/sdk');
+    await expect(
+      executeGetStatus(ctx, {
+        sourceTxHash: DEX_TX_HASH,
+        lifiOperationId: OPERATION_ID,
+        fromChain: 5000,
+        toChain: 1,
+      }),
+    ).rejects.toSatisfy(
+      (e: unknown) =>
+        e instanceof ConciergeError &&
+        (e as InstanceType<typeof ConciergeError>).type === 'RpcError',
+    );
+  });
+});
+
+describe('getStatus — bridgeUsed metadata fallback (test_getStatus_MetadataFallback)', () => {
+  it('resolves bridgeUsed from metadata.bridges when tool field absent', async () => {
+    server.use(
+      http.get(`${LIFI_API}/status`, () =>
+        HttpResponse.json({
+          status: 'DONE',
+          toTx: { txHash: DEST_TX_HASH, chainId: 1 },
+          // no top-level tool — should fall back to metadata.bridges[0].name
+          metadata: { bridges: [{ name: 'stargate' }] },
+        }),
+      ),
+    );
+    const result = await executeGetStatus(ctx, {
+      sourceTxHash: DEX_TX_HASH,
+      lifiOperationId: OPERATION_ID,
+      fromChain: 5000,
+      toChain: 1,
+    });
+    expect(result.status).toBe('DONE');
+    expect(result.bridgeUsed).toBe('stargate');
+    expect(result.completedAttestation).not.toBeNull();
+  });
+});
+
 describe('getStatus — error paths', () => {
   it('throws ConciergeError(RpcError) on network failure', async () => {
     server.use(http.get(`${LIFI_API}/status`, () => HttpResponse.error()));

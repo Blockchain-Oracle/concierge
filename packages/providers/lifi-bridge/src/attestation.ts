@@ -1,17 +1,12 @@
 import { ConciergeError } from '@concierge/sdk';
 import { z } from 'zod';
+import { NON_NEG_INT_STR, NON_ZERO_ADDR, TX_HASH } from './_zod.ts';
 
 export const LIFI_SENT_SCHEMA = 'concierge.lifi.bridge.sent.v1' as const;
 export const LIFI_COMPLETED_SCHEMA = 'concierge.lifi.bridge.completed.v1' as const;
 
-const TX_HASH_REGEX = /^0x[0-9a-fA-F]{64}$/;
-const NON_NEG_INT_STR = z.string().regex(/^\d+$/, 'must be a non-negative integer string');
-const NON_ZERO_ADDR = z
-  .string()
-  .regex(/^0x[0-9a-fA-F]{40}$/)
-  .refine((v) => v !== '0x0000000000000000000000000000000000000000');
-
 // Unix epoch in seconds: plausibility range guards against accidental Date.now() (ms) vs /1000
+// TODO: bump max before 2033-05-18 when 2_000_000_000 seconds elapses
 const UNIX_TS_S = z
   .number()
   .int()
@@ -28,7 +23,7 @@ export const SentAttestationPayloadSchema = z
   .object({
     schema: z.literal(LIFI_SENT_SCHEMA),
     ...CHAIN_PAIR,
-    sourceTxHash: z.string().regex(TX_HASH_REGEX),
+    sourceTxHash: TX_HASH,
     lifiOperationId: z.string().min(1),
     fromToken: NON_ZERO_ADDR,
     toToken: NON_ZERO_ADDR,
@@ -48,8 +43,8 @@ export const CompletedAttestationPayloadSchema = z
   .object({
     schema: z.literal(LIFI_COMPLETED_SCHEMA),
     ...CHAIN_PAIR,
-    sourceTxHash: z.string().regex(TX_HASH_REGEX),
-    destinationTxHash: z.string().regex(TX_HASH_REGEX),
+    sourceTxHash: TX_HASH,
+    destinationTxHash: TX_HASH,
     lifiOperationId: z.string().min(1),
     bridgeUsed: z.string().min(1),
     ts: UNIX_TS_S,

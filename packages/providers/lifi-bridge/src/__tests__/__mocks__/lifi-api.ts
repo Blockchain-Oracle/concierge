@@ -8,7 +8,8 @@ export const DEST_TX_HASH =
   '0x9999999999999999999999999999999999999999999999999999999999999999' as const;
 
 // Raw API response objects for GET /v1/quote — matches the Li.Fi Step schema
-const QUOTE_RESPONSES = [
+// Exported so tests can construct malformed variants via spreading
+export const QUOTE_RESPONSES = [
   {
     id: 'route-stargate-001',
     type: 'cross',

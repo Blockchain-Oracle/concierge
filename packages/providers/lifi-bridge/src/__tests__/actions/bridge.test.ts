@@ -15,6 +15,7 @@ const SOURCE_TX = '0xaaaa0000000000000000000000000000000000000000000000000000000
 function makeWalletClient(txHash: `0x${string}` = SOURCE_TX) {
   return {
     account: { address: '0x1111111111111111111111111111111111111111' as `0x${string}` },
+    chain: { id: 5000 }, // must match route transactionRequest.chainId (fail-closed chain guard)
     sendTransaction: vi.fn().mockResolvedValue(txHash),
     // biome-ignore lint/suspicious/noExplicitAny: minimal mock object — WalletClient is a complex branded type
   } as any;
@@ -149,6 +150,7 @@ describe('bridge — wallet error paths', () => {
   it('throws ConciergeError(RpcError) when sendTransaction fails', async () => {
     const walletClient = {
       account: { address: '0x1111111111111111111111111111111111111111' as `0x${string}` },
+      chain: { id: 5000 },
       sendTransaction: vi.fn().mockRejectedValue(new Error('user rejected')),
       // biome-ignore lint/suspicious/noExplicitAny: minimal mock — WalletClient is a complex branded type
     } as any;
@@ -184,6 +186,65 @@ describe('bridge — API error paths', () => {
       (e: unknown) =>
         e instanceof ConciergeError &&
         (e as InstanceType<typeof ConciergeError>).type === 'InsufficientLiquidity',
+    );
+  });
+});
+
+describe('bridge — chain guard (test_bridge_ChainGuard)', () => {
+  it('throws ConciergeError(ConfigError) when walletClient has no bound chain', async () => {
+    const walletClient = {
+      account: { address: '0x1111111111111111111111111111111111111111' as `0x${string}` },
+      // no chain — fail-closed guard requires bound chain before submission
+      sendTransaction: vi.fn(),
+      // biome-ignore lint/suspicious/noExplicitAny: testing no-chain guard path
+    } as any;
+    // biome-ignore lint/style/noNonNullAssertion: fixture always has at least 1 route
+    const freshRoute: LifiBridgeRoute = { ...FIXTURE_ROUTES[0]!, _receivedAt: Date.now() };
+    const ctx = { ...BASE_CTX, walletClient };
+    const { ConciergeError } = await import('@concierge/sdk');
+    await expect(executeBridge(ctx, { ...BASE_INPUT, route: freshRoute })).rejects.toSatisfy(
+      (e: unknown) =>
+        e instanceof ConciergeError &&
+        (e as InstanceType<typeof ConciergeError>).type === 'ConfigError',
+    );
+  });
+
+  it('throws ConciergeError(NetworkUnsupported) when wallet chain does not match route chain', async () => {
+    const walletClient = {
+      account: { address: '0x1111111111111111111111111111111111111111' as `0x${string}` },
+      chain: { id: 1 }, // Ethereum mainnet, but route is on Mantle (5000)
+      sendTransaction: vi.fn(),
+      // biome-ignore lint/suspicious/noExplicitAny: testing chain mismatch guard
+    } as any;
+    // biome-ignore lint/style/noNonNullAssertion: fixture always has 2 routes
+    const freshRoute: LifiBridgeRoute = { ...FIXTURE_ROUTES[0]!, _receivedAt: Date.now() };
+    const ctx = { ...BASE_CTX, walletClient };
+    const { ConciergeError } = await import('@concierge/sdk');
+    await expect(executeBridge(ctx, { ...BASE_INPUT, route: freshRoute })).rejects.toSatisfy(
+      (e: unknown) =>
+        e instanceof ConciergeError &&
+        (e as InstanceType<typeof ConciergeError>).type === 'NetworkUnsupported',
+    );
+  });
+
+  it('throws ConciergeError(ConfigError) when route targets a non-LIFI_DIAMOND address', async () => {
+    const walletClient = makeWalletClient();
+    const maliciousRoute: LifiBridgeRoute = {
+      // biome-ignore lint/style/noNonNullAssertion: fixture always has at least 1 route
+      ...FIXTURE_ROUTES[0]!,
+      _receivedAt: Date.now(),
+      transactionRequest: {
+        // biome-ignore lint/style/noNonNullAssertion: fixture always has at least 1 route
+        ...FIXTURE_ROUTES[0]!.transactionRequest,
+        to: '0xDeAdDeAdDeAdDeAdDeAdDeAdDeAdDeAdDeAdDeAd',
+      },
+    };
+    const ctx = { ...BASE_CTX, walletClient };
+    const { ConciergeError } = await import('@concierge/sdk');
+    await expect(executeBridge(ctx, { ...BASE_INPUT, route: maliciousRoute })).rejects.toSatisfy(
+      (e: unknown) =>
+        e instanceof ConciergeError &&
+        (e as InstanceType<typeof ConciergeError>).type === 'ConfigError',
     );
   });
 });

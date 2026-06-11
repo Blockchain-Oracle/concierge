@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ADDR, ADDR_REGEX, NON_NEG_INT_STR } from './_zod.ts';
 
 export const LifiGasCostSchema = z.object({
   amount: z.string(),
@@ -7,24 +8,33 @@ export const LifiGasCostSchema = z.object({
 });
 
 export const LifiTransactionRequestSchema = z.object({
-  to: z.string(),
-  data: z.string(),
+  // Typed as 0x${string} so callers (sendTransaction) don't need unsafe casts
+  to: z
+    .string()
+    .regex(ADDR_REGEX)
+    .transform((v) => v as `0x${string}`),
+  data: z
+    .string()
+    .regex(/^0x[0-9a-fA-F]*$/)
+    .transform((v) => v as `0x${string}`),
   value: z.string(),
   gasLimit: z.string().optional(),
   gasPrice: z.string().optional(),
   chainId: z.number(),
 });
 
+// Amount fields are digit-only strings — guards against decimal/scientific notation
+// that would silently produce wrong on-chain attestation values
 export const LifiStepEstimateSchema = z.object({
-  fromAmount: z.string(),
-  toAmount: z.string(),
-  toAmountMin: z.string(),
+  fromAmount: NON_NEG_INT_STR,
+  toAmount: NON_NEG_INT_STR,
+  toAmountMin: NON_NEG_INT_STR,
   executionDuration: z.number(),
   gasCosts: z.array(LifiGasCostSchema).optional(),
 });
 
 export const LifiTokenSchema = z.object({
-  address: z.string(),
+  address: ADDR, // format-only (no non-zero) — native gas tokens use 0x0... in some bridges
   symbol: z.string(),
   decimals: z.number(),
   name: z.string().optional(),

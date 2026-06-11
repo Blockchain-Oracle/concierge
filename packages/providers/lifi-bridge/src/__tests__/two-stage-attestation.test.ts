@@ -20,6 +20,7 @@ const ctx = {
   lifiDiamond: '0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE' as const,
   walletClient: {
     account: { address: '0x1111111111111111111111111111111111111111' as `0x${string}` },
+    chain: { id: 5000 },
     sendTransaction: vi.fn().mockResolvedValue(DEX_TX_HASH),
     // biome-ignore lint/suspicious/noExplicitAny: minimal mock — WalletClient is a complex branded type
   } as any,
