@@ -52,8 +52,11 @@ describe('borrow — E-Mode silent-fail trap', () => {
     // aSUSDe balance > 0 triggers the preflight guard in borrow.ts.
     await mintToken(anvil, mocks.aSUsde, TEST_ACCOUNT, 100n * 10n ** 18n);
 
-    // Supply USDC so TEST_ACCOUNT has collateral (prevents a different revert if preflight skips)
-    await anvil.walletClient.writeContract({
+    // Supply USDC so TEST_ACCOUNT has collateral (prevents a different revert if preflight skips).
+    // Await receipts explicitly so txCountBefore is a stable snapshot of mined txs — if approve
+    // or supply is still in Anvil's mempool when txCountBefore is read, Anvil may mine them while
+    // borrow.invoke runs, making txCountAfter > txCountBefore even though no borrow tx fired.
+    const approveHash = await anvil.walletClient.writeContract({
       address: mocks.usdc,
       abi: erc20Abi,
       functionName: 'approve',
@@ -61,7 +64,8 @@ describe('borrow — E-Mode silent-fail trap', () => {
       account: TEST_ACCOUNT,
       chain: anvil.chain,
     });
-    await anvil.walletClient.writeContract({
+    await anvil.publicClient.waitForTransactionReceipt({ hash: approveHash });
+    const supplyHash = await anvil.walletClient.writeContract({
       address: mocks.pool,
       abi: poolAbi,
       functionName: 'supply',
@@ -69,6 +73,7 @@ describe('borrow — E-Mode silent-fail trap', () => {
       account: TEST_ACCOUNT,
       chain: anvil.chain,
     });
+    await anvil.publicClient.waitForTransactionReceipt({ hash: supplyHash });
 
     // Count txs before the call to verify no new tx is submitted after the throw.
     const txCountBefore = await anvil.publicClient.getTransactionCount({
