@@ -1,0 +1,91 @@
+import { ConciergeError } from '@concierge/sdk';
+import { tool } from '@concierge/tools';
+import { z } from 'zod';
+import type { ActionContext } from '../_context.ts';
+import type { YieldRateResult } from '../_types.ts';
+
+const ETHENA_YIELDS_URL = 'https://api.ethena.fi/yields/protocol-and-staking-yield';
+
+export const GetYieldRateInput = z.object({});
+
+export const GetYieldRateOutput = z.object({
+  protocolYieldBps: z.number().describe('Funding-rate component (bps)'),
+  stakingYieldBps: z.number().describe('Combined protocol + staking yield (bps)'),
+  susdeYieldBps: z.number().describe('Yield used for carry calculations (bps)'),
+});
+
+// Ethena API response shape — either nested under `data` or flat at the root.
+interface EthenaYieldsInner {
+  protocol?: number;
+  staking?: number;
+  protocol_yield?: number;
+  staking_yield?: number;
+}
+
+interface EthenaYieldsResponse {
+  data?: EthenaYieldsInner;
+  protocol?: number;
+  staking?: number;
+  protocol_yield?: number;
+  staking_yield?: number;
+}
+
+function extractBps(raw: number | undefined): number {
+  if (raw === undefined || !Number.isFinite(raw)) return 0;
+  // API returns percentage (e.g. 3.8 = 3.8%) — convert to bps (× 100).
+  return Math.round(raw * 100);
+}
+
+export async function executeGetYieldRate(_ctx: ActionContext): Promise<YieldRateResult> {
+  let json: EthenaYieldsResponse;
+  try {
+    const res = await fetch(ETHENA_YIELDS_URL, {
+      headers: { Accept: 'application/json' },
+    });
+    if (!res.ok) {
+      throw new ConciergeError(
+        'RpcError',
+        `[@concierge/ethena-susde] getYieldRate: Ethena API returned ${res.status}`,
+      );
+    }
+    json = (await res.json()) as EthenaYieldsResponse;
+  } catch (err) {
+    if (err instanceof ConciergeError) throw err;
+    throw new ConciergeError(
+      'RpcError',
+      '[@concierge/ethena-susde] getYieldRate: failed to fetch Ethena yields API',
+      err instanceof Error ? err : undefined,
+    );
+  }
+
+  const inner: EthenaYieldsInner = json.data ?? json;
+  const protocolRaw = inner.protocol ?? inner.protocol_yield;
+  const stakingRaw = inner.staking ?? inner.staking_yield;
+
+  const protocolYieldBps = extractBps(protocolRaw);
+  const stakingYieldBps = extractBps(stakingRaw ?? protocolRaw);
+  // Use the staking (combined) yield as the carry figure; fall back to protocol.
+  const susdeYieldBps = stakingYieldBps > 0 ? stakingYieldBps : protocolYieldBps;
+
+  if (susdeYieldBps === 0) {
+    throw new ConciergeError(
+      'RpcError',
+      '[@concierge/ethena-susde] getYieldRate: could not parse a non-zero yield from Ethena API response',
+    );
+  }
+
+  return { protocolYieldBps, stakingYieldBps, susdeYieldBps };
+}
+
+export function createGetYieldRateTool(ctx: ActionContext) {
+  return tool({
+    name: 'getYieldRate',
+    description:
+      'Fetches the current sUSDe annualised yield from the Ethena public API. ' +
+      'Returns protocol and staking yields in basis points. Pure read — no transaction.',
+    inputSchema: GetYieldRateInput,
+    outputSchema: GetYieldRateOutput,
+    supportsNetwork: (chainId) => chainId === ctx.chainId,
+    invoke: () => executeGetYieldRate(ctx),
+  });
+}
