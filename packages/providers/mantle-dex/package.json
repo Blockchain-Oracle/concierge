@@ -1,0 +1,44 @@
+{
+  "name": "@concierge/mantle-dex",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "src/**/*.ts",
+    "!src/**/*.test.ts",
+    "!src/__tests__/**"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "prepare": "tsup",
+    "prepack": "pnpm run build"
+  },
+  "dependencies": {
+    "@concierge/shared": "workspace:*",
+    "@concierge/sdk": "workspace:*",
+    "@concierge/tools": "workspace:*"
+  },
+  "peerDependencies": {
+    "viem": "^2.52.0",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "tsup": "8.5.0",
+    "viem": "2.52.2",
+    "zod": "4.4.3"
+  }
+}

@@ -27,6 +27,7 @@ export const CONCIERGE_ERROR_TYPES = Object.freeze([
   'UserRejected',
   'NetworkUnsupported',
   'RpcError',
+  'SwapSlippageBreach',
 ] as const);
 
 export type ConciergeErrorType = (typeof CONCIERGE_ERROR_TYPES)[number];

@@ -44,7 +44,15 @@ const EXPECTED_PATHS = [
   'mantleMainnet.erc8004.reputationRegistry',
   'mantleMainnet.lifi.diamond',
   'mantleMainnet.mantleDex.agni.factory',
+  'mantleMainnet.mantleDex.agni.quoterV2',
+  'mantleMainnet.mantleDex.agni.swapRouter',
+  'mantleMainnet.mantleDex.fusionx.factory',
+  'mantleMainnet.mantleDex.fusionx.quoterV2',
+  'mantleMainnet.mantleDex.fusionx.swapRouter',
+  'mantleMainnet.mantleDex.merchantMoe.lbQuoter',
   'mantleMainnet.mantleDex.merchantMoe.lbRouter',
+  'mantleMainnet.mantleDex.woofi.pool',
+  'mantleMainnet.mantleDex.woofi.router',
   'mantleMainnet.tokens.USDC',
   'mantleMainnet.tokens.USDY',
   'mantleMainnet.tokens.USDe',
@@ -61,7 +69,15 @@ const EXPECTED_PATHS = [
   'mantleSepolia.erc8004.reputationRegistry',
   'mantleSepolia.lifi.diamond',
   'mantleSepolia.mantleDex.agni.factory',
+  'mantleSepolia.mantleDex.agni.quoterV2',
+  'mantleSepolia.mantleDex.agni.swapRouter',
+  'mantleSepolia.mantleDex.fusionx.factory',
+  'mantleSepolia.mantleDex.fusionx.quoterV2',
+  'mantleSepolia.mantleDex.fusionx.swapRouter',
+  'mantleSepolia.mantleDex.merchantMoe.lbQuoter',
   'mantleSepolia.mantleDex.merchantMoe.lbRouter',
+  'mantleSepolia.mantleDex.woofi.pool',
+  'mantleSepolia.mantleDex.woofi.router',
   'mantleSepolia.tokens.USDC',
   'mantleSepolia.tokens.USDY',
   'mantleSepolia.tokens.USDe',
@@ -72,7 +88,7 @@ const EXPECTED_PATHS = [
 ] as const;
 
 describe('ADDRESSES shape', () => {
-  it('has the exact 34-path canonical shape (rename breaks consumers)', () => {
+  it('has the exact 50-path canonical shape (rename breaks consumers)', () => {
     const paths = flattenAddresses(ADDRESSES)
       .map((x) => x.path)
       .sort();
@@ -216,7 +232,15 @@ describe('Mainnet pinned values (typo guard)', () => {
     ['erc8004.reputationRegistry', '0x8004BAa17C55a88189AE136b182e5fdA19dE9b63'],
     ['lifi.diamond', '0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE'],
     ['mantleDex.merchantMoe.lbRouter', '0x013e138EF6008ae5FDFDE29700e3f2Bc61d21E3a'],
+    ['mantleDex.merchantMoe.lbQuoter', '0x501b8AFd35df20f531fF45F6f695793AC3316c85'],
     ['mantleDex.agni.factory', '0x25780dc8Fc3cfBD75F33bFDAB65e969b603b2035'],
+    ['mantleDex.agni.swapRouter', '0x319B69888b0d11cEC22caA5034e25FfFBDc88421'],
+    ['mantleDex.agni.quoterV2', '0xc4aaDc921E1cdb66c5300Bc158a313292923C0cb'],
+    ['mantleDex.fusionx.swapRouter', '0x5989FB161568b9F133eDf5Cf6787f5597762797F'],
+    ['mantleDex.fusionx.factory', '0x530d2766D1988CC1c000C8b7d00334c14B69AD71'],
+    ['mantleDex.fusionx.quoterV2', '0x90f72244294E7c5028aFd6a96E18CC2c1E913995'],
+    ['mantleDex.woofi.router', '0x4c4AF8DBc524681930a27b2F1Af5bcC8062E6fB7'],
+    ['mantleDex.woofi.pool', '0x5520385bFcf07Ec87C4c53A7d8d65595Dff69FA4'],
   ])('mainnet %s pins exact value', (path, expected) => {
     const got = path
       .split('.')

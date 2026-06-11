@@ -25,16 +25,24 @@ Verification: `cast call 0x013e138EF6008ae5FDFDE29700e3f2Bc61d21E3a "getFactory(
 |---|---|---|
 | SwapRouter | `0x319B69888b0d11cEC22caA5034e25FfFBDc88421` | `cast call ROUTER "factory()(address)"` → `0x25780dc8...` |
 | Factory | `0x25780dc8Fc3cfBD75F33bFDAB65e969b603b2035` | `cast call FACTORY "owner()(address)"` → `0xD8A4...` |
-| QuoterV2 | `0xc4aaDc921E1cDb66c5300Bc158a313292923C0cb` | [UNVERIFIED — needs cast call from human] |
-| NonfungiblePositionManager | `0x218bf598D1453383e2F4AA7b14fFB9BfB102D637` | [UNVERIFIED — needs cast call from human] |
+| QuoterV2 | `0xc4aaDc921E1cdb66c5300Bc158a313292923C0cb` | VERIFIED: `cast call … "factory()(address)"` → `0x25780dc8...` ✓ |
+| NonfungiblePositionManager | `0x218bf598D1453383e2F4AA7b14fFB9BfB102D637` | [UNVERIFIED — not needed for story-32] |
 
-#### FusionX V3 (Uniswap V3 fork)
+#### FusionX V3 (Algebra V3 fork — NOT Uniswap V3)
 | Contract | Address |
 |---|---|
 | SwapRouter | `0x5989FB161568b9F133eDf5Cf6787f5597762797F` |
 | Factory | `0x530d2766D1988CC1c000C8b7d00334c14B69AD71` |
+| PoolDeployer | `0x8790c2C3BA67223D83C8FCF2a5E3C650059987b4` |
+| QuoterV2 | `0x90f72244294E7c5028aFd6a96E18CC2c1E913995` |
 
 Verification: `cast call 0x5989FB161568b9F133eDf5Cf6787f5597762797F "factory()(address)" --rpc-url https://rpc.mantle.xyz` → `0x530d2766...` ✓
+`cast call 0x90f72244294E7c5028aFd6a96E18CC2c1E913995 "factory()(address)" --rpc-url https://rpc.mantle.xyz` → `0x530d2766...` ✓
+
+NOTE: FusionX is an Algebra V3 fork, NOT a pure Uniswap V3 fork. Key Algebra differences:
+- Dynamic fees (no fixed fee tiers like 500/3000/10000)
+- `quoteExactInputSingle(address tokenIn, address tokenOut, uint256 amountIn, uint160 limitSqrtPrice)` — no fee param
+- `factory()` on QuoterV2 returns factory address (verified above)
 
 #### WOOFi V2 (sPMM)
 | Contract | Address |

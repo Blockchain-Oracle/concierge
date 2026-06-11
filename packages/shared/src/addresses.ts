@@ -66,9 +66,21 @@ export const ADDRESSES = deepFreeze({
     mantleDex: {
       merchantMoe: {
         lbRouter: '0x013e138EF6008ae5FDFDE29700e3f2Bc61d21E3a' as Address,
+        lbQuoter: '0x501b8AFd35df20f531fF45F6f695793AC3316c85' as Address,
       },
       agni: {
         factory: '0x25780dc8Fc3cfBD75F33bFDAB65e969b603b2035' as Address,
+        swapRouter: '0x319B69888b0d11cEC22caA5034e25FfFBDc88421' as Address,
+        quoterV2: '0xc4aaDc921E1cdb66c5300Bc158a313292923C0cb' as Address,
+      },
+      fusionx: {
+        swapRouter: '0x5989FB161568b9F133eDf5Cf6787f5597762797F' as Address,
+        factory: '0x530d2766D1988CC1c000C8b7d00334c14B69AD71' as Address,
+        quoterV2: '0x90f72244294E7c5028aFd6a96E18CC2c1E913995' as Address,
+      },
+      woofi: {
+        router: '0x4c4AF8DBc524681930a27b2F1Af5bcC8062E6fB7' as Address,
+        pool: '0x5520385bFcf07Ec87C4c53A7d8d65595Dff69FA4' as Address,
       },
     },
     // Filled in by story-19 (deploy-mainnet.sh + write-addresses.mjs --network mainnet)
@@ -105,9 +117,21 @@ export const ADDRESSES = deepFreeze({
     mantleDex: {
       merchantMoe: {
         lbRouter: ZERO_ADDRESS,
+        lbQuoter: ZERO_ADDRESS,
       },
       agni: {
         factory: ZERO_ADDRESS,
+        swapRouter: ZERO_ADDRESS,
+        quoterV2: ZERO_ADDRESS,
+      },
+      fusionx: {
+        swapRouter: ZERO_ADDRESS,
+        factory: ZERO_ADDRESS,
+        quoterV2: ZERO_ADDRESS,
+      },
+      woofi: {
+        router: ZERO_ADDRESS,
+        pool: ZERO_ADDRESS,
       },
     },
     // Filled in by story-18 (DeployAll.s.sol + write-addresses.mjs)
@@ -183,7 +207,15 @@ export const SEPOLIA_PENDING_ADDRESS_SLOTS = Object.freeze([
   'conciergeRegistry',
   'lifi.diamond',
   'mantleDex.agni.factory',
+  'mantleDex.agni.quoterV2',
+  'mantleDex.agni.swapRouter',
+  'mantleDex.fusionx.factory',
+  'mantleDex.fusionx.quoterV2',
+  'mantleDex.fusionx.swapRouter',
+  'mantleDex.merchantMoe.lbQuoter',
   'mantleDex.merchantMoe.lbRouter',
+  'mantleDex.woofi.pool',
+  'mantleDex.woofi.router',
   'tokens.USDC',
   'tokens.USDY',
   'tokens.USDe',
