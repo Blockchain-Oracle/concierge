@@ -71,6 +71,8 @@ export const ADDRESSES = deepFreeze({
         factory: '0x25780dc8Fc3cfBD75F33bFDAB65e969b603b2035' as Address,
       },
     },
+    // Filled in by story-19 (deploy-mainnet.sh + write-addresses.mjs --network mainnet)
+    conciergeRegistry: ZERO_ADDRESS,
   },
   mantleSepolia: {
     aave: {
@@ -118,9 +120,8 @@ export const ADDRESSES = deepFreeze({
  *
  * Returns the union of both block shapes — the generic-conditional pattern was
  * decorative (narrowing required an `as never` cast in the impl that could mask
- * a branch-swap typo). The two shapes intentionally diverge: mantleSepolia
- * carries `conciergeRegistry` (Sepolia-only) that mantleMainnet does not.
- * When more chain-specific fields land, promote to overloads.
+ * a branch-swap typo). When chain-specific fields diverge across networks,
+ * promote to overloads.
  *
  * Inputs are validated for type (string from env / bigint from JSON-parse fail
  * with a typed TypeError, not the generic "unsupported chain id" message).
@@ -150,6 +151,9 @@ type LeafPath<T> = T extends Address
         [K in keyof T & string]: LeafPath<T[K]> extends '' ? K : `${K}.${LeafPath<T[K]>}`;
       }[keyof T & string]
     : never;
+
+/** Valid dot-paths on `ADDRESSES.mantleMainnet` (compile-time enforced). */
+export type MainnetAddressPath = LeafPath<typeof ADDRESSES.mantleMainnet>;
 
 /** Valid dot-paths on `ADDRESSES.mantleSepolia` (compile-time enforced). */
 export type SepoliaAddressPath = LeafPath<typeof ADDRESSES.mantleSepolia>;
@@ -188,3 +192,16 @@ export const SEPOLIA_PENDING_ADDRESS_SLOTS = Object.freeze([
   'tokens.mETH',
   'tokens.sUSDe',
 ] as const satisfies readonly SepoliaAddressPath[]);
+
+/**
+ * Slot paths on `ADDRESSES.mantleMainnet` that hold zero-address placeholders until
+ * the Mainnet production deploy (story-19 `deploy-mainnet.sh`) runs. Mirrors the
+ * Sepolia lockbox pattern — deleted entries signal that `write-addresses.mjs
+ * --network mainnet` has populated the real deployed address.
+ *
+ * MUST stay lexically sorted (default JS Array.sort comparator) — the lockbox
+ * test compares against `.sort()`. Asserted in addresses.test.ts.
+ */
+export const MAINNET_PENDING_ADDRESS_SLOTS = Object.freeze([
+  'conciergeRegistry',
+] as const satisfies readonly MainnetAddressPath[]);

@@ -4,6 +4,8 @@ export {
   ADDRESSES,
   type AddressPath,
   addressesFor,
+  MAINNET_PENDING_ADDRESS_SLOTS,
+  type MainnetAddressPath,
   SEPOLIA_PENDING_ADDRESS_SLOTS,
   type SepoliaAddressPath,
   ZERO_ADDRESS,

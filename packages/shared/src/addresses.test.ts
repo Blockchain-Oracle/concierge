@@ -3,7 +3,12 @@
 import { getAddress } from 'viem';
 import { describe, expect, it } from 'vitest';
 import type { Address } from './index.ts';
-import { ADDRESSES, SEPOLIA_PENDING_ADDRESS_SLOTS, ZERO_ADDRESS } from './index.ts';
+import {
+  ADDRESSES,
+  MAINNET_PENDING_ADDRESS_SLOTS,
+  SEPOLIA_PENDING_ADDRESS_SLOTS,
+  ZERO_ADDRESS,
+} from './index.ts';
 
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 const ZERO = '0x0000000000000000000000000000000000000000';
@@ -34,6 +39,7 @@ const EXPECTED_PATHS = [
   'mantleMainnet.aave.oracle',
   'mantleMainnet.aave.pool',
   'mantleMainnet.aave.protocolDataProvider',
+  'mantleMainnet.conciergeRegistry',
   'mantleMainnet.erc8004.identityRegistry',
   'mantleMainnet.erc8004.reputationRegistry',
   'mantleMainnet.lifi.diamond',
@@ -66,7 +72,7 @@ const EXPECTED_PATHS = [
 ] as const;
 
 describe('ADDRESSES shape', () => {
-  it('has the exact 33-path canonical shape (rename breaks consumers)', () => {
+  it('has the exact 34-path canonical shape (rename breaks consumers)', () => {
     const paths = flattenAddresses(ADDRESSES)
       .map((x) => x.path)
       .sort();
@@ -79,15 +85,17 @@ describe('ADDRESSES shape', () => {
     }
   });
 
-  it('Mantle Mainnet has no zero-address placeholders for live contracts', () => {
+  it('Mantle Mainnet has no zero-address placeholders for live contracts (except MAINNET_PENDING_ADDRESS_SLOTS)', () => {
     for (const { path, value } of flattenAddresses(ADDRESSES.mantleMainnet)) {
+      if ((MAINNET_PENDING_ADDRESS_SLOTS as readonly string[]).includes(path)) continue;
       expect(value, `mantleMainnet.${path} must not be the zero address`).not.toBe(ZERO);
     }
   });
 
-  it('Mantle Mainnet addresses satisfy EIP-55 checksum (except canonical WETH vanity)', () => {
+  it('Mantle Mainnet addresses satisfy EIP-55 checksum (except canonical WETH vanity and pending slots)', () => {
     for (const { path, value } of flattenAddresses(ADDRESSES.mantleMainnet)) {
       if (value === WETH_VANITY) continue;
+      if ((MAINNET_PENDING_ADDRESS_SLOTS as readonly string[]).includes(path)) continue;
       expect(getAddress(value), `mantleMainnet.${path} EIP-55 mismatch`).toBe(value);
     }
   });
@@ -152,6 +160,38 @@ describe('SEPOLIA_PENDING_ADDRESS_SLOTS lockbox', () => {
         .reduce<unknown>(
           (acc, key) => (acc as Record<string, unknown>)[key],
           ADDRESSES.mantleSepolia,
+        );
+      expect(typeof value, `${path} must resolve to a leaf`).toBe('string');
+      expect(value as string).toBe(ZERO);
+    }
+  });
+});
+
+describe('MAINNET_PENDING_ADDRESS_SLOTS lockbox', () => {
+  it('matches every zero-valued Mainnet path (story-19 regression guard)', () => {
+    const actual = flattenAddresses(ADDRESSES.mantleMainnet)
+      .filter(({ value }) => value === ZERO)
+      .map(({ path }) => path)
+      .sort();
+    expect(actual).toEqual([...MAINNET_PENDING_ADDRESS_SLOTS]);
+  });
+
+  it('is lex-sorted (canonical diff-stable order)', () => {
+    const sorted = [...MAINNET_PENDING_ADDRESS_SLOTS].sort();
+    expect([...MAINNET_PENDING_ADDRESS_SLOTS]).toEqual(sorted);
+  });
+
+  it('is frozen — `as const` is compile-time only', () => {
+    expect(Object.isFrozen(MAINNET_PENDING_ADDRESS_SLOTS)).toBe(true);
+  });
+
+  it('every entry resolves to a real ADDRESSES.mantleMainnet leaf at runtime', () => {
+    for (const path of MAINNET_PENDING_ADDRESS_SLOTS) {
+      const value = path
+        .split('.')
+        .reduce<unknown>(
+          (acc, key) => (acc as Record<string, unknown>)[key],
+          ADDRESSES.mantleMainnet,
         );
       expect(typeof value, `${path} must resolve to a leaf`).toBe('string');
       expect(value as string).toBe(ZERO);

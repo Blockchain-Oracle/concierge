@@ -1,8 +1,8 @@
 import {
   ADDRESSES,
   type Address,
+  type AddressPath,
   type EvmChainId,
-  type SepoliaAddressPath,
   ZERO_ADDRESS,
 } from '@concierge/shared';
 import type { ConciergeAgentLike } from '@concierge/tools';
@@ -58,7 +58,7 @@ export class ConciergeRegistry implements ConciergeAgentLike {
    * typed `NetworkUnsupported`, so `switch (err.type)` handlers never chase
    * a network problem that is actually a typo.
    */
-  requireAddress(path: SepoliaAddressPath): Address {
+  requireAddress(path: AddressPath): Address {
     // Optional chaining propagates `undefined` for any missing segment, so
     // null/undefined mid-path → undefined leaf → ADDRESS_SHAPE check throws.
     // Prototype-pollution paths like `__proto__.x` resolve via the prototype
@@ -80,9 +80,11 @@ export class ConciergeRegistry implements ConciergeAgentLike {
       );
     }
     if (leaf === ZERO_ADDRESS) {
+      const pendingConst =
+        this.chainId === 5000 ? 'MAINNET_PENDING_ADDRESS_SLOTS' : 'SEPOLIA_PENDING_ADDRESS_SLOTS';
       throw new ConciergeError(
         'NetworkUnsupported',
-        `[@concierge/sdk] address slot "${path}" is not deployed on chain ${this.chainId} — it is a pending zero-address placeholder (see SEPOLIA_PENDING_ADDRESS_SLOTS). Use ConciergeRegistry.mainnet() or wait for the Sepolia mock deploys.`,
+        `[@concierge/sdk] address slot "${path}" is not deployed on chain ${this.chainId} — it is a pending zero-address placeholder (see ${pendingConst} in @concierge/shared).`,
       );
     }
     return leaf as Address;

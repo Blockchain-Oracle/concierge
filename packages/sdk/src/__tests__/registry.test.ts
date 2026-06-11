@@ -1,4 +1,9 @@
-import { ADDRESSES, type AddressPath, SEPOLIA_PENDING_ADDRESS_SLOTS } from '@concierge/shared';
+import {
+  ADDRESSES,
+  type AddressPath,
+  MAINNET_PENDING_ADDRESS_SLOTS,
+  SEPOLIA_PENDING_ADDRESS_SLOTS,
+} from '@concierge/shared';
 import { type ConciergeAgentLike, createConciergeTools } from '@concierge/tools';
 import { describe, expect, it } from 'vitest';
 import { ConciergeError } from '../errors.ts';
@@ -66,18 +71,35 @@ describe('ConciergeRegistry.requireAddress (zero-address enforcement)', () => {
     }
   });
 
-  it('mainnet has NO pending slots — every cross-chain lockbox path resolves there', () => {
+  it('throws NetworkUnsupported (not TypeError) for conciergeRegistry on mainnet — pending mainnet deploy', () => {
+    // conciergeRegistry is in MAINNET_PENDING_ADDRESS_SLOTS: zero-address placeholder on mainnet.
+    // Callers checking switch(err.type) must see NetworkUnsupported, not a false "typo" TypeError.
+    const mainnet = ConciergeRegistry.mainnet();
+    let thrown: unknown;
+    try {
+      mainnet.requireAddress('conciergeRegistry');
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(ConciergeError);
+    expect((thrown as ConciergeError).type).toBe('NetworkUnsupported');
+    expect((thrown as ConciergeError).message).toContain('conciergeRegistry');
+    expect((thrown as ConciergeError).message).toContain('5000');
+  });
+
+  it('mainnet has NO pending slots — every cross-chain lockbox path resolves there (except MAINNET_PENDING_ADDRESS_SLOTS)', () => {
     const mainnet = ConciergeRegistry.mainnet();
     for (const slot of SEPOLIA_PENDING_ADDRESS_SLOTS) {
-      // Some slots (e.g. conciergeRegistry) are Sepolia-only and do not exist on Mainnet.
-      // Skip those — they should throw TypeError on mainnet, which is expected and correct.
       const existsOnMainnet = slot
         .split('.')
         .reduce<unknown>(
           (acc, key) => (acc as Record<string, unknown> | undefined)?.[key],
           ADDRESSES.mantleMainnet,
         );
+      // Skip paths that don't exist on mainnet (no such field in mantleMainnet tree)
       if (typeof existsOnMainnet !== 'string') continue;
+      // Skip mainnet-pending slots (zero-address on mainnet until production deploy)
+      if ((MAINNET_PENDING_ADDRESS_SLOTS as readonly string[]).includes(slot)) continue;
       expect(mainnet.requireAddress(slot)).toMatch(/^0x[0-9a-fA-F]{40}$/);
     }
   });

@@ -59,6 +59,7 @@ for entry in "${CONTRACTS[@]}"; do
   fi
 
   STDERR_OUT=$(mktemp) || { echo "ERROR: mktemp failed — cannot capture forge stderr"; exit 1; }
+  chmod 600 "$STDERR_OUT"
   if forge verify-contract \
       --chain 5003 \
       --rpc-url "$MANTLE_SEPOLIA_RPC_URL" \
