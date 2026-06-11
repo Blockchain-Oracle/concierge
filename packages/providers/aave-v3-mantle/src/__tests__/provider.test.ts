@@ -65,6 +65,18 @@ describe('createAaveV3MantleProvider', () => {
     expect(() => createAaveV3MantleProvider({ walletClient: wc })).toThrow(ConciergeError);
   });
 
+  it('throws ConfigError when walletClient has no bound account', async () => {
+    // Covers the second requireWallet branch: walletClient present but no .account.
+    const { createWalletClient, http: viemHttp } = await import('viem');
+    const wc = createWalletClient({ transport: viemHttp('http://127.0.0.1:8545') }); // no account: param — requireWallet throws before network is used
+    const p = createAaveV3MantleProvider({ chain: 'mantle-sepolia', walletClient: wc });
+    const err = await p.actions.supply
+      .invoke({ asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', amount: '1000000' })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConciergeError);
+    expect((err as InstanceType<typeof ConciergeError>).type).toBe('ConfigError');
+  });
+
   it('each action has name, description, inputSchema, outputSchema', () => {
     const p = createAaveV3MantleProvider({ chain: 'mantle-mainnet' });
     for (const action of Object.values(p.actions)) {

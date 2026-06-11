@@ -6,7 +6,7 @@ import { decodeEventLog, encodeEventTopics, maxUint256, parseAbi } from 'viem';
 import { z } from 'zod';
 import type { ActionContext } from '../_context.ts';
 import { requireWallet } from '../_context.ts';
-import { HEX_ADDRESS, POSITIVE_BIGINT } from '../_schema.ts';
+import { NON_NEG_INT_STR, NON_ZERO_ADDRESS, POSITIVE_BIGINT } from '../_schema.ts';
 import { AttestationPayloadSchema, buildAttestationPayload } from '../attestation.ts';
 import { getUserAccountData, getUserEMode } from '../selectors.ts';
 
@@ -18,7 +18,7 @@ const repayEventAbi = parseAbi([
 const REPAY_TOPIC = encodeEventTopics({ abi: repayEventAbi })[0] as Hex;
 
 const RepayInput = z.object({
-  asset: HEX_ADDRESS.describe('ERC-20 debt token address to repay'),
+  asset: NON_ZERO_ADDRESS.describe('ERC-20 debt token address to repay'),
   amount: z
     .union([POSITIVE_BIGINT, z.literal('max')])
     .describe('Amount to repay in base units, or "max" to fully clear the debt position'),
@@ -26,7 +26,7 @@ const RepayInput = z.object({
 
 const RepayOutput = z.object({
   txHash: z.string().describe('Transaction hash of the repay call'),
-  actualRepaid: z.string().describe('Actual amount repaid (in base units, debt-delta proxy)'),
+  actualRepaid: NON_NEG_INT_STR.describe('Actual amount repaid (in base units, debt-delta proxy)'),
   attestationPayload: AttestationPayloadSchema,
 });
 
@@ -49,14 +49,25 @@ async function executeRepay(ctx: ActionContext, args: z.infer<typeof RepayInput>
     args: [account, poolAddress],
   });
   if (allowance < rawAmount) {
-    const approveTxHash = await walletClient.writeContract({
-      address: asset,
-      abi: erc20Abi,
-      functionName: 'approve',
-      args: [poolAddress, maxUint256],
-      account,
-      chain: walletClient.chain ?? null,
-    });
+    let approveTxHash: `0x${string}`;
+    try {
+      approveTxHash = await walletClient.writeContract({
+        address: asset,
+        abi: erc20Abi,
+        functionName: 'approve',
+        args: [poolAddress, maxUint256],
+        account,
+        chain: walletClient.chain ?? null,
+      });
+    } catch (err) {
+      if (err instanceof ConciergeError) throw err;
+      throw new ConciergeError(
+        'RpcError',
+        `[@concierge/aave-v3-mantle] repay: ERC-20 approve() submission for ${asset} failed. Check wallet connection and gas.`,
+        err instanceof Error ? err : undefined,
+        { asset, poolAddress },
+      );
+    }
     const approveReceipt = await publicClient.waitForTransactionReceipt({ hash: approveTxHash });
     if (approveReceipt.status === 'reverted') {
       throw new ConciergeError(
@@ -79,6 +90,7 @@ async function executeRepay(ctx: ActionContext, args: z.infer<typeof RepayInput>
       chain: walletClient.chain ?? null,
     });
   } catch (err) {
+    if (err instanceof ConciergeError) throw err;
     throw new ConciergeError(
       'RpcError',
       `[@concierge/aave-v3-mantle] repay: Pool.repay() failed. An allowance for ${poolAddress} may be live on ${asset}. Revoke with approve(${poolAddress}, 0) if needed.`,
@@ -102,9 +114,10 @@ async function executeRepay(ctx: ActionContext, args: z.infer<typeof RepayInput>
   // This is race-free: the value comes from what actually executed on-chain, not a
   // pre-tx simulation that could observe different state than what the tx landed on.
   // Filter by both event signature (topics[0]) and reserve address (topics[1], ABI-padded).
-  const assetSuffix = asset.slice(2).toLowerCase();
+  // ABI-encoded address topic: 32 bytes = 24 zero-padding + 20-byte address.
+  const paddedAsset = `0x${'0'.repeat(24)}${asset.slice(2).toLowerCase()}` as Hex;
   const repayLog = receipt.logs.find(
-    (log) => log.topics[0] === REPAY_TOPIC && log.topics[1]?.toLowerCase().endsWith(assetSuffix),
+    (log) => log.topics[0] === REPAY_TOPIC && log.topics[1]?.toLowerCase() === paddedAsset,
   );
   if (!repayLog) {
     throw new ConciergeError(

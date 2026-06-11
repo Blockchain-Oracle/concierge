@@ -127,10 +127,11 @@ describe('repay action', () => {
       amount: 'max',
     });
 
-    // actualRepaid should be ~100 USDC (not maxUint256 = 1.15e77)
+    // actualRepaid should be ~100 USDC + minimal accrued interest. The tight upper bound
+    // (101 USDC) detects parser regressions that return 0 or maxUint256 (two common failure modes).
     const actualRepaid = BigInt(result.actualRepaid);
-    expect(actualRepaid).toBeGreaterThan(0n);
-    expect(actualRepaid).toBeLessThan(200_000_000n);
+    expect(actualRepaid).toBeGreaterThanOrEqual(100_000_000n);
+    expect(actualRepaid).toBeLessThan(101_000_000n);
   });
 
   it('attestation schema is correct and payload validates', async () => {

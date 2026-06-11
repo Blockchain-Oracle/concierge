@@ -15,3 +15,7 @@ export const NON_ZERO_ADDRESS = HEX_ADDRESS.refine(
 export const POSITIVE_BIGINT = z.coerce
   .bigint()
   .refine((v) => v > 0n, { message: 'must be a positive integer' });
+
+export const NON_NEG_INT_STR = z
+  .string()
+  .regex(/^\d+$/, 'must be a non-negative integer decimal string');

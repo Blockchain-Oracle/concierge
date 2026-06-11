@@ -6,7 +6,7 @@ import { decodeEventLog, encodeEventTopics, parseAbi } from 'viem';
 import { z } from 'zod';
 import type { ActionContext } from '../_context.ts';
 import { requireWallet } from '../_context.ts';
-import { NON_ZERO_ADDRESS } from '../_schema.ts';
+import { NON_NEG_INT_STR, NON_ZERO_ADDRESS } from '../_schema.ts';
 import { AttestationPayloadSchema, buildAttestationPayload } from '../attestation.ts';
 import { getUserAccountData, getUserEMode } from '../selectors.ts';
 
@@ -30,7 +30,7 @@ const ClaimRewardsInput = z.object({
 const ClaimRewardsOutput = z.object({
   txHash: z.string().describe('Transaction hash of the claimAllRewards call'),
   rewardsList: z.array(z.string()).describe('Reward token addresses distributed'),
-  claimedAmounts: z.array(z.string()).describe('Amount claimed per reward token (base units)'),
+  claimedAmounts: z.array(NON_NEG_INT_STR).describe('Amount claimed per reward token (base units)'),
   attestationPayload: AttestationPayloadSchema,
 });
 
@@ -56,8 +56,13 @@ function parseRewardsClaimed(receipt: TransactionReceipt): {
         rewardsList.push(args.reward);
         claimedAmounts.push(args.amount.toString());
       }
-    } catch {
-      // Silently skip — a corrupted log should not abort parsing of other valid events.
+    } catch (decodeErr) {
+      // A log that passed the topic filter but failed to decode signals ABI drift — surface loudly.
+      throw new ConciergeError(
+        'RpcError',
+        `[@concierge/aave-v3-mantle] claimRewards: failed to decode RewardsClaimed event. Pool ABI may have changed.`,
+        decodeErr instanceof Error ? decodeErr : undefined,
+      );
     }
   }
   return { rewardsList, claimedAmounts };
@@ -112,12 +117,14 @@ async function executeClaimRewards(ctx: ActionContext, args: z.infer<typeof Clai
 
   const postState = await getUserAccountData(publicClient, poolAddress, account);
   const { rewardsList, claimedAmounts } = parseRewardsClaimed(receipt);
+  const totalClaimed = claimedAmounts.reduce((sum, a) => sum + BigInt(a), 0n);
+  const primaryReward = (rewardsList[0] ?? '0x0000000000000000000000000000000000000000') as Address;
   const attestationPayload = buildAttestationPayload({
     action: 'claimRewards',
     chainId,
     pool: poolAddress,
-    asset: '0x0000000000000000000000000000000000000000' as Address,
-    amountBase: 0n,
+    asset: primaryReward,
+    amountBase: totalClaimed,
     txHash,
     preHF: preState.healthFactor,
     postHF: postState.healthFactor,

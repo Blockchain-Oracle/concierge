@@ -1,7 +1,7 @@
 import type { Address } from '@concierge/shared';
 import { parseAbi } from 'viem';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { getUserAccountData, getUserEMode, maxSafeBorrow } from '../selectors.ts';
+import { getReserveData, getUserAccountData, getUserEMode, maxSafeBorrow } from '../selectors.ts';
 import {
   ANVIL_ACCOUNTS,
   type AnvilInstance,
@@ -139,7 +139,8 @@ describe('maxSafeBorrow', () => {
     expect(safeBorrow).toBeGreaterThan(0n);
 
     // Borrow the computed amount and verify HF ≥ 1.4 (≈1.5 ± 5% due to integer truncation).
-    // Explicitly await the receipt so CI runners don't read state before the block mines.
+    // Await receipt AND check status — a reverted borrow leaves HF at maxUint256 (no debt),
+    // which would make the HF assertions pass vacuously even if safeBorrow was wrong.
     const borrowHash = await walletClient.writeContract({
       address: mocks.pool,
       abi: poolAbi,
@@ -148,9 +149,20 @@ describe('maxSafeBorrow', () => {
       account: addr,
       chain,
     });
-    await publicClient.waitForTransactionReceipt({ hash: borrowHash });
+    const borrowReceipt = await publicClient.waitForTransactionReceipt({ hash: borrowHash });
+    expect(borrowReceipt.status).toBe('success');
     const data = await getUserAccountData(publicClient, mocks.pool, addr);
     expect(data.healthFactor).toBeGreaterThanOrEqual(1_400_000_000_000_000_000n);
     expect(data.healthFactor).toBeLessThanOrEqual(1_600_000_000_000_000_000n);
+  });
+});
+
+describe('getReserveData', () => {
+  it('returns correct aTokenAddress and variableDebtTokenAddress for a known reserve', async () => {
+    const data = await getReserveData(anvil.publicClient, mocks.pool, mocks.usdc);
+    // Pin the tuple index mapping against the mock — catches any ABI index drift before it
+    // silently breaks borrow.ts checkEModePreflight or withdraw.ts amount=max path.
+    expect(data.aTokenAddress.toLowerCase()).toBe(mocks.aUsdc.toLowerCase());
+    expect(data.variableDebtTokenAddress.toLowerCase()).toBe(mocks.debtUsdc.toLowerCase());
   });
 });

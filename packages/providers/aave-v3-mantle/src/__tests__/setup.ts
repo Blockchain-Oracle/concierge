@@ -310,12 +310,12 @@ export async function deployMocks(anvil: AnvilInstance): Promise<MockAddresses> 
     'mockSetReward(wmnt)',
   );
   // Pre-mint WMNT to rewardsController so claimAllRewards can transfer to claimants.
-  // 100 WMNT covers many test claims (each call distributes 10 WMNT).
+  // 1M WMNT gives headroom for long test suites without running the controller dry.
   await writeAndConfirm(
     wmnt,
     mockMintAbi,
     'mint',
-    [rewardsController, 100n * 10n ** 18n],
+    [rewardsController, 1_000_000n * 10n ** 18n],
     'mint(wmnt → rewardsController)',
   );
 

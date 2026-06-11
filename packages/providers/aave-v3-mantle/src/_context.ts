@@ -5,15 +5,15 @@ import type { Address, EvmChainId } from '@concierge/shared';
 import type { PublicClient, WalletClient } from 'viem';
 
 export interface ActionContext {
-  publicClient: PublicClient;
-  walletClient?: WalletClient | undefined;
-  chainId: EvmChainId;
-  poolAddress: Address;
-  oracleAddress: Address;
+  readonly publicClient: PublicClient;
+  readonly walletClient?: WalletClient | undefined;
+  readonly chainId: EvmChainId;
+  readonly poolAddress: Address;
+  readonly oracleAddress: Address;
   // undefined when the rewards controller is not deployed on this chain (e.g. Mantle Sepolia).
-  incentivesControllerAddress: Address | undefined;
+  readonly incentivesControllerAddress: Address | undefined;
   // Used in borrow's E-Mode pre-check to detect sUSDe collateral
-  sUsdeAddress: Address;
+  readonly sUsdeAddress: Address;
 }
 
 /** Guards every write action: throws ConfigError when walletClient is absent or has no account. */

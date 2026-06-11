@@ -105,7 +105,7 @@ describe('borrow — happy path with E-Mode', () => {
     await mintToken(anvil, mocks.aSUsde, borrowerAddr, 200n * 10n ** 18n);
 
     // Supply sUSDe into pool (updates _supplies for collateral computation)
-    await walletClient.writeContract({
+    const sUsdeApproveHash = await walletClient.writeContract({
       address: mocks.sUsde,
       abi: erc20Abi,
       functionName: 'approve',
@@ -113,7 +113,8 @@ describe('borrow — happy path with E-Mode', () => {
       account: borrowerAddr,
       chain,
     });
-    await walletClient.writeContract({
+    await publicClient.waitForTransactionReceipt({ hash: sUsdeApproveHash });
+    const sUsdeSupplyHash = await walletClient.writeContract({
       address: mocks.pool,
       abi: poolAbi,
       functionName: 'supply',
@@ -121,6 +122,7 @@ describe('borrow — happy path with E-Mode', () => {
       account: borrowerAddr,
       chain,
     });
+    await publicClient.waitForTransactionReceipt({ hash: sUsdeSupplyHash });
 
     // Create provider for the borrower (using Anvil's unlocked account)
     const borrowerWC = createWalletClient({
