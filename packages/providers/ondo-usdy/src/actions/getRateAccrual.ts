@@ -1,3 +1,4 @@
+import { ConciergeError } from '@concierge/sdk';
 import { tool } from '@concierge/tools';
 import { z } from 'zod';
 import { computePriceFromSqrt, fetchPoolState } from '../_agni.ts';
@@ -22,7 +23,13 @@ export const GetRateAccrualOutput = z.object({
 export async function executeGetRateAccrual(ctx: ActionContext) {
   const [poolState, blockNumber] = await Promise.all([
     fetchPoolState(ctx.publicClient, ctx.addresses.agniUsdyUsdc, 'getRateAccrual'),
-    ctx.publicClient.getBlockNumber().catch(() => 0n),
+    ctx.publicClient.getBlockNumber().catch((err: unknown) => {
+      throw new ConciergeError(
+        'RpcError',
+        '[@concierge/ondo-usdy] getRateAccrual: failed to fetch block number',
+        err instanceof Error ? err : undefined,
+      );
+    }),
   ]);
 
   const multiplier = computePriceFromSqrt(poolState.sqrtPriceX96);

@@ -37,6 +37,12 @@ export function buildAttestationPayload(ctx: AttestationContext): AttestationPay
       '[@concierge/ondo-usdy] attestation: balance must be non-negative',
     );
   }
+  if (ctx.multiplier <= 0n) {
+    throw new ConciergeError(
+      'ConfigError',
+      '[@concierge/ondo-usdy] attestation: multiplier must be positive (zero means pool price is invalid)',
+    );
+  }
   const raw = {
     schema: ONDO_ATTESTATION_SCHEMA,
     chain: ctx.chainId,

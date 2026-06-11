@@ -15,12 +15,32 @@ const SECONDS_PER_YEAR = 31_536_000;
 // sqrtPriceX96 = sqrt(rawUSDY / rawUSDC) * 2^96
 // price_usdc_per_usdy_1e18 = 10^30 * 2^192 / sqrtPriceX96^2
 export function computePriceFromSqrt(sqrtPriceX96: bigint): bigint {
+  if (sqrtPriceX96 === 0n) {
+    throw new ConciergeError(
+      'RpcError',
+      '[@concierge/ondo-usdy] computePriceFromSqrt: sqrtPriceX96 is zero — pool may be uninitialized',
+    );
+  }
   const Q192 = 2n ** 192n;
   const rawPriceUsdy = (sqrtPriceX96 * sqrtPriceX96) / Q192; // raw USDY per raw USDC
-  if (rawPriceUsdy === 0n) return 0n;
+  if (rawPriceUsdy === 0n) {
+    // sqrtPriceX96 < 2^96 — tick extreme (near min tick), integer truncation to zero
+    throw new ConciergeError(
+      'RpcError',
+      `[@concierge/ondo-usdy] computePriceFromSqrt: sqrtPriceX96 (${sqrtPriceX96}) too small — price not representable`,
+    );
+  }
   // 10^30: compensates for 10^18 (USDY dec) / 10^6 (USDC dec) = 10^12 adjustment
   // plus 10^18 scaling of the output
-  return 10n ** 30n / rawPriceUsdy;
+  const price = 10n ** 30n / rawPriceUsdy;
+  if (price === 0n) {
+    // sqrtPriceX96 near max tick — denominator exceeds 10^30, result underflows
+    throw new ConciergeError(
+      'RpcError',
+      `[@concierge/ondo-usdy] computePriceFromSqrt: sqrtPriceX96 (${sqrtPriceX96}) too large — price underflows`,
+    );
+  }
+  return price;
 }
 
 // Annualised yield in bps from a 7-day TWAP.
@@ -31,7 +51,16 @@ function computeYieldBps(
   tickCumulativeNow: bigint,
   tickCumulativePast: bigint,
 ): number {
-  const tickCumulativeDiff = Number(tickCumulativeNow - tickCumulativePast);
+  const diff = tickCumulativeNow - tickCumulativePast;
+  // Safety: max 7-day tick range = 887272 * 604800 ≈ 5.37e11, well within
+  // Number.MAX_SAFE_INTEGER (2^53 ≈ 9e15). Bigint arithmetic first, then cast.
+  if (diff > 9_007_199_254_740_991n) {
+    throw new ConciergeError(
+      'RpcError',
+      `[@concierge/ondo-usdy] computeYieldBps: tick cumulative diff (${diff}) exceeds safe integer range`,
+    );
+  }
+  const tickCumulativeDiff = Number(diff);
   const meanTick = tickCumulativeDiff / SECONDS_7D;
   const tickDeviation = currentTick - meanTick;
   return Math.round(-2 * tickDeviation * (SECONDS_PER_YEAR / SECONDS_7D));
@@ -48,7 +77,7 @@ export async function fetchPoolState(
     .catch((err: unknown) => {
       throw new ConciergeError(
         'RpcError',
-        `${tag}: failed to read USDY/USDC pool slot0`,
+        `[@concierge/ondo-usdy] ${tag}: failed to read USDY/USDC pool slot0`,
         err instanceof Error ? err : undefined,
       );
     });
@@ -70,9 +99,15 @@ export async function fetchYieldBps(
       args: [[0, SECONDS_7D]],
     });
   } catch (err: unknown) {
+    // "OLD" revert = pool has fewer than 7 days of observations (expected business case).
+    // All other failures are RPC/transport errors and should surface as such.
+    const isOldRevert =
+      err instanceof Error && (err.message.includes('OLD') || err.message.includes('0x001'));
     throw new ConciergeError(
-      'InsufficientLiquidity',
-      `${tag}: USDY/USDC pool has insufficient 7-day TWAP history for yield calculation`,
+      isOldRevert ? 'InsufficientLiquidity' : 'RpcError',
+      isOldRevert
+        ? `[@concierge/ondo-usdy] ${tag}: USDY/USDC pool has fewer than 7 days of observations — yield calculation unavailable`
+        : `[@concierge/ondo-usdy] ${tag}: failed to call observe() on USDY/USDC pool`,
       err instanceof Error ? err : undefined,
     );
   }

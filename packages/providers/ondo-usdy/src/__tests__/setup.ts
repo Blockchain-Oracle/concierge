@@ -8,6 +8,10 @@ import { type Chain, createPublicClient, defineChain, http, type PublicClient } 
 export const MANTLE_MAINNET_RPC = process.env['MANTLE_RPC_URL'] ?? 'https://rpc.mantle.xyz';
 const ANVIL_BIN = process.env['ANVIL_BIN'] ?? 'anvil';
 
+// Block 96_500_000 ≈ 2026-06-10, Agni USDY/USDC pool ~5 days old (<7 days TWAP history).
+// Pinning ensures getYieldRate fork tests remain deterministic (pool never "matures" mid-test).
+export const FORK_BLOCK = 96_500_000;
+
 // Known USDY holder on Mantle Mainnet (verified 2026-06-11, ~278,835 USDY).
 export const KNOWN_USDY_HOLDER = '0xd8169f099ce16c87a99d2a8494023574b5eea9c5' as const;
 
@@ -29,13 +33,16 @@ function getFreePort(): Promise<number> {
   });
 }
 
-export async function startAnvilFork(): Promise<AnvilFork> {
+export async function startAnvilFork(forkBlock?: number): Promise<AnvilFork> {
   const port = await getFreePort();
+  const blockArgs = forkBlock !== undefined ? ['--fork-block-number', String(forkBlock)] : [];
 
   return new Promise((resolve, reject) => {
-    const proc = spawn(ANVIL_BIN, ['--port', String(port), '--fork-url', MANTLE_MAINNET_RPC], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    const proc = spawn(
+      ANVIL_BIN,
+      ['--port', String(port), '--fork-url', MANTLE_MAINNET_RPC, ...blockArgs],
+      { stdio: ['ignore', 'pipe', 'pipe'] },
+    );
 
     let started = false;
     let stopping = false;

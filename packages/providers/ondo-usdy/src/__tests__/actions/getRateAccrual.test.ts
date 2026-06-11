@@ -1,5 +1,6 @@
 // Integration tests for getRateAccrual — tests DEX spot price → multiplier pipeline.
 
+import { ConciergeError } from '@concierge/sdk';
 import { ADDRESSES } from '@concierge/shared';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { executeGetRateAccrual } from '../../actions/getRateAccrual.ts';
@@ -34,6 +35,20 @@ describe('getRateAccrual — fork (real Mantle mainnet state)', () => {
     expect(result.rateMantissa).toBe('0'); // no on-chain accrual rate for Mantle USDY
     expect(Number(result.lastUpdateBlock)).toBeGreaterThan(0);
   }, 30_000);
+});
+
+describe('getRateAccrual — error paths (mocked)', () => {
+  it('throws ConciergeError(RpcError) when pool slot0 reverts', async () => {
+    // biome-ignore lint/suspicious/noExplicitAny: minimal mock
+    const publicClient: any = {
+      readContract: vi.fn().mockRejectedValue(new Error('slot0 revert')),
+      getBlockNumber: vi.fn().mockResolvedValue(99999n),
+    };
+    const ctx = { publicClient, chainId: 5000 as const, addresses };
+    await expect(executeGetRateAccrual(ctx)).rejects.toSatisfy(
+      (e: unknown) => e instanceof ConciergeError && (e as ConciergeError).type === 'RpcError',
+    );
+  });
 });
 
 describe('getRateAccrual — happy path (mocked DEX)', () => {

@@ -32,8 +32,29 @@ describe('computePriceFromSqrt', () => {
     expect(price).toBeLessThan(1_080_000_000_000_000_000n);
   });
 
-  it('returns 0 for sqrtPriceX96 = 0', () => {
-    expect(computePriceFromSqrt(0n)).toBe(0n);
+  it('throws ConciergeError(RpcError) for sqrtPriceX96 = 0 (uninitialized pool)', () => {
+    let thrown: unknown;
+    try {
+      computePriceFromSqrt(0n);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown instanceof ConciergeError && (thrown as ConciergeError).type === 'RpcError').toBe(
+      true,
+    );
+  });
+
+  it('throws ConciergeError(RpcError) when sqrtPriceX96 is too small (integer truncation)', () => {
+    // sqrtPriceX96 = 1n: (1n * 1n) / 2^192 = 0 — triggers truncation guard
+    let thrown: unknown;
+    try {
+      computePriceFromSqrt(1n);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown instanceof ConciergeError && (thrown as ConciergeError).type === 'RpcError').toBe(
+      true,
+    );
   });
 });
 

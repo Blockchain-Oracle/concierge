@@ -10,6 +10,7 @@ export const GetYieldRateOutput = z.object({
     .number()
     .int()
     .positive()
+    .max(10_000)
     .describe('Annualised USDY yield in basis points, derived from 7-day Agni DEX TWAP'),
 });
 

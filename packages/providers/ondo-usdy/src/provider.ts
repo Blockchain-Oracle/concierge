@@ -23,7 +23,7 @@ export interface OndoUsdyProviderOpts {
 }
 
 export interface OndoUsdyProvider {
-  readonly chainId: EvmChainId;
+  readonly chainId: 5000;
   readonly actions: {
     readonly getBalance: ReturnType<typeof createGetBalanceTool>;
     readonly getRateAccrual: ReturnType<typeof createGetRateAccrualTool>;
@@ -76,17 +76,23 @@ export function createOndoUsdyProvider(opts: OndoUsdyProviderOpts = {}): OndoUsd
     usdyBlocklist: ov.usdyBlocklist ?? MANTLE_USDY_BLOCKLIST,
   };
 
-  if (addresses.usdy === ZERO_ADDRESS) {
-    throw new ConciergeError(
-      'ConfigError',
-      '[@concierge/ondo-usdy] USDY address is zero. Pass addresses: { usdy } for custom deployments.',
-    );
+  for (const [name, addr] of [
+    ['usdy', addresses.usdy],
+    ['agniUsdyUsdc', addresses.agniUsdyUsdc],
+    ['usdyBlocklist', addresses.usdyBlocklist],
+  ] as const) {
+    if (addr === ZERO_ADDRESS) {
+      throw new ConciergeError(
+        'ConfigError',
+        `[@concierge/ondo-usdy] address '${name}' is the zero address. Pass addresses: { ${name} } for custom deployments.`,
+      );
+    }
   }
 
   const ctx: ActionContext = { publicClient, chainId, addresses };
 
   return Object.freeze({
-    chainId,
+    chainId: SUPPORTED_CHAIN_ID,
     actions: Object.freeze({
       getBalance: createGetBalanceTool(ctx),
       getRateAccrual: createGetRateAccrualTool(ctx),

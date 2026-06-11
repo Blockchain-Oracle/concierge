@@ -30,5 +30,11 @@ export async function isUserEligible(
         err instanceof Error ? err : undefined,
       );
     });
+  if (typeof blocked !== 'boolean') {
+    throw new ConciergeError(
+      'ConfigError',
+      `[@concierge/ondo-usdy] isUserEligible: blocklist contract at ${blocklistAddress} returned unexpected type (${typeof blocked}); check ABI`,
+    );
+  }
   return !blocked;
 }

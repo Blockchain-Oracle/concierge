@@ -4,7 +4,7 @@ import { type PublicClient, parseAbi } from 'viem';
 import { z } from 'zod';
 import { computePriceFromSqrt, fetchPoolState } from '../_agni.ts';
 import type { ActionContext } from '../_context.ts';
-import { buildAttestationPayload } from '../attestation.ts';
+import { AttestationPayloadSchema, buildAttestationPayload } from '../attestation.ts';
 
 const ERC20_ABI = parseAbi(['function balanceOf(address owner) view returns (uint256)']);
 
@@ -15,15 +15,17 @@ export const GetBalanceInput = z.object({
     .describe('User wallet address'),
 });
 
+const NON_NEG_INT_STR = z.string().regex(/^\d+$/, 'must be a non-negative integer string');
+
 export const GetBalanceOutput = z.object({
-  raw: z.string().describe('Raw USDY balance (18 dec, bigint as string)'),
-  usdValue: z
-    .string()
-    .describe('USD value of balance at DEX spot price (18 dec, bigint as string)'),
-  yieldAccrued: z
-    .string()
-    .describe('Appreciation above $1.00 face value (18 dec, bigint as string)'),
-  attestationPayload: z.record(z.string(), z.unknown()).describe('ERC-8004 attestation payload'),
+  raw: NON_NEG_INT_STR.describe('Raw USDY balance (18 dec, bigint as string)'),
+  usdValue: NON_NEG_INT_STR.describe(
+    'USD value of balance at DEX spot price (18 dec, bigint as string)',
+  ),
+  yieldAccrued: NON_NEG_INT_STR.describe(
+    'Appreciation above $1.00 face value (18 dec, bigint as string)',
+  ),
+  attestationPayload: AttestationPayloadSchema.describe('ERC-8004 attestation payload'),
 });
 
 async function readBalance(
@@ -42,15 +44,24 @@ async function readBalance(
     });
 }
 
-export async function executeGetBalance(ctx: ActionContext, user: `0x${string}`) {
+export async function executeGetBalance(
+  ctx: ActionContext,
+  user: `0x${string}`,
+): Promise<z.infer<typeof GetBalanceOutput>> {
   const [raw, poolState, blockNumber] = await Promise.all([
     readBalance(ctx.publicClient, ctx.addresses.usdy, user),
     fetchPoolState(ctx.publicClient, ctx.addresses.agniUsdyUsdc, 'getBalance'),
-    ctx.publicClient.getBlockNumber().catch(() => 0n),
+    ctx.publicClient.getBlockNumber().catch((err: unknown) => {
+      throw new ConciergeError(
+        'RpcError',
+        '[@concierge/ondo-usdy] getBalance: failed to fetch block number for attestation',
+        err instanceof Error ? err : undefined,
+      );
+    }),
   ]);
 
   const multiplier = computePriceFromSqrt(poolState.sqrtPriceX96);
-  const usdValue = multiplier > 0n ? (raw * multiplier) / 10n ** 18n : raw;
+  const usdValue = (raw * multiplier) / 10n ** 18n;
   const yieldAccrued = usdValue > raw ? usdValue - raw : 0n;
 
   const attestationPayload = buildAttestationPayload({
