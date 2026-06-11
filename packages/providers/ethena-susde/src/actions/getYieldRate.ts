@@ -63,6 +63,8 @@ export async function executeGetYieldRate(_ctx: ActionContext): Promise<YieldRat
     throw new ConciergeError(
       'RpcError',
       '[@concierge/ethena-susde] getYieldRate: malformed Ethena API response',
+      parsed.error,
+      { zodIssues: parsed.error.issues },
     );
   }
 
@@ -72,13 +74,21 @@ export async function executeGetYieldRate(_ctx: ActionContext): Promise<YieldRat
 
   const protocolYieldBps = extractBps(protocolRaw);
   const stakingYieldBps = extractBps(stakingRaw ?? protocolRaw);
+
+  if (protocolYieldBps < 0 || stakingYieldBps < 0) {
+    throw new ConciergeError(
+      'RpcError',
+      `[@concierge/ethena-susde] getYieldRate: negative yield from Ethena API (protocolYieldBps=${protocolYieldBps}, stakingYieldBps=${stakingYieldBps})`,
+    );
+  }
+
   // Use the staking (combined) yield as the carry figure; fall back to protocol.
   const susdeYieldBps = stakingYieldBps > 0 ? stakingYieldBps : protocolYieldBps;
 
   if (susdeYieldBps === 0) {
     throw new ConciergeError(
       'RpcError',
-      '[@concierge/ethena-susde] getYieldRate: could not parse a non-zero yield from Ethena API response',
+      `[@concierge/ethena-susde] getYieldRate: extracted yield is zero (protocolYieldBps=${protocolYieldBps}, stakingYieldBps=${stakingYieldBps}) — Ethena API may be returning genuine zero or field names changed`,
     );
   }
 

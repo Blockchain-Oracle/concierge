@@ -1,3 +1,4 @@
+import { ConciergeError } from '@concierge/sdk';
 import type { Address } from '@concierge/shared';
 import { type PublicClient, parseAbi } from 'viem';
 
@@ -10,12 +11,15 @@ export async function getBalanceUSDe(
   usdeAddress: Address,
   user: Address,
 ): Promise<bigint> {
-  return publicClient.readContract({
-    address: usdeAddress,
-    abi: erc20Abi,
-    functionName: 'balanceOf',
-    args: [user],
-  });
+  return publicClient
+    .readContract({ address: usdeAddress, abi: erc20Abi, functionName: 'balanceOf', args: [user] })
+    .catch((err: unknown) => {
+      throw new ConciergeError(
+        'RpcError',
+        `[@concierge/ethena-susde] getBalanceUSDe: failed to read balance for ${user}`,
+        err instanceof Error ? err : undefined,
+      );
+    });
 }
 
 export async function getBalanceSusde(
@@ -23,12 +27,20 @@ export async function getBalanceSusde(
   susdeAddress: Address,
   user: Address,
 ): Promise<bigint> {
-  return publicClient.readContract({
-    address: susdeAddress,
-    abi: erc20Abi,
-    functionName: 'balanceOf',
-    args: [user],
-  });
+  return publicClient
+    .readContract({
+      address: susdeAddress,
+      abi: erc20Abi,
+      functionName: 'balanceOf',
+      args: [user],
+    })
+    .catch((err: unknown) => {
+      throw new ConciergeError(
+        'RpcError',
+        `[@concierge/ethena-susde] getBalanceSusde: failed to read balance for ${user}`,
+        err instanceof Error ? err : undefined,
+      );
+    });
 }
 
 /**
@@ -41,10 +53,18 @@ export async function getPriceUSD(
   oracleAddress: Address,
   susdeAddress: Address,
 ): Promise<bigint> {
-  return publicClient.readContract({
-    address: oracleAddress,
-    abi: oracleAbi,
-    functionName: 'getAssetPrice',
-    args: [susdeAddress],
-  });
+  return publicClient
+    .readContract({
+      address: oracleAddress,
+      abi: oracleAbi,
+      functionName: 'getAssetPrice',
+      args: [susdeAddress],
+    })
+    .catch((err: unknown) => {
+      throw new ConciergeError(
+        'RpcError',
+        `[@concierge/ethena-susde] getPriceUSD: failed to read oracle price for ${susdeAddress}`,
+        err instanceof Error ? err : undefined,
+      );
+    });
 }
