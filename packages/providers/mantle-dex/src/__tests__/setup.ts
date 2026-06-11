@@ -9,8 +9,11 @@ import {
   createPublicClient,
   createWalletClient,
   defineChain,
+  encodeAbiParameters,
   http,
+  keccak256,
   type PublicClient,
+  parseAbiParameters,
   type WalletClient,
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
@@ -29,7 +32,22 @@ export interface AnvilFork {
   readonly publicClient: PublicClient;
   readonly walletClient: WalletClient;
   readonly stop: () => Promise<void>;
+  /** Directly write an ERC-20 balance via anvil_setStorageAt (no approval needed). */
+  readonly setErc20Balance: (
+    token: Address,
+    account: Address,
+    amount: bigint,
+    mappingSlot: number,
+  ) => Promise<void>;
 }
+
+// ERC-20 balance slot keys differ by implementation (verified via cast storage):
+// - Circle FiatToken (USDC on Mantle): mapping at slot 9
+// - Ethena USDe on Mantle: mapping at slot 5
+export const TOKEN_BALANCE_SLOTS: Record<string, number> = {
+  '0x09bc4e0d864854c6afb6eb9a9cdf58ac190d0df9': 9, // USDC (Circle FiatToken)
+  '0x5d3a1ff2b6bab83b63cd9ad0787074081a52ef34': 5, // USDe (Ethena bridged)
+};
 
 function getFreePort(): Promise<number> {
   return new Promise((res, rej) => {
@@ -88,7 +106,29 @@ export async function startAnvilFork(): Promise<AnvilFork> {
             proc.once('exit', () => res());
             proc.kill('SIGTERM');
           });
-        resolve({ port, chain, publicClient, walletClient, stop });
+
+        const setErc20Balance = async (
+          token: Address,
+          account: Address,
+          amount: bigint,
+          mappingSlot: number,
+        ) => {
+          // slot = keccak256(abi.encode(account, mappingSlot))
+          const storageKey = keccak256(
+            encodeAbiParameters(parseAbiParameters('address, uint256'), [
+              account,
+              BigInt(mappingSlot),
+            ]),
+          );
+          const value = `0x${amount.toString(16).padStart(64, '0')}` as `0x${string}`;
+          await publicClient.request({
+            // @ts-expect-error anvil_setStorageAt is not in viem's standard type list
+            method: 'anvil_setStorageAt',
+            params: [token, storageKey, value],
+          });
+        };
+
+        resolve({ port, chain, publicClient, walletClient, stop, setErc20Balance });
       }
     };
 

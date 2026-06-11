@@ -96,6 +96,25 @@ export async function executeQuote(
     }
   });
 
+  return resolveRouteMap(routeMap, tokenIn, tokenOut);
+}
+
+export type RouteMap = Record<VenueName, VenueQuoteResult | null>;
+
+function toRouteEntry(r: VenueQuoteResult | null) {
+  if (r === null) return { amountOut: null as null, reason: 'no_route' as const };
+  return {
+    amountOut: r.amountOut.toString(),
+    ...(r.gasEstimate !== undefined && { gasEstimate: r.gasEstimate.toString() }),
+    ...(r.approvalAddress !== undefined && { approvalAddress: r.approvalAddress }),
+  };
+}
+
+export async function resolveRouteMap(
+  routeMap: RouteMap,
+  tokenIn: string,
+  tokenOut: string,
+): Promise<QuoteOutputType> {
   const validRoutes = (Object.values(routeMap) as (VenueQuoteResult | null)[])
     .filter((r): r is VenueQuoteResult => r !== null)
     .sort((a, b) => (b.amountOut > a.amountOut ? 1 : -1));
@@ -109,27 +128,16 @@ export async function executeQuote(
     );
   }
 
-  function toRouteEntry(r: VenueQuoteResult | null) {
-    if (r === null) return { amountOut: null as null, reason: 'no_route' as const };
-    return {
-      amountOut: r.amountOut.toString(),
-      ...(r.gasEstimate !== undefined && { gasEstimate: r.gasEstimate.toString() }),
-      ...(r.approvalAddress !== undefined && { approvalAddress: r.approvalAddress }),
-    };
-  }
-
-  const allRoutes = {
-    merchantMoe: toRouteEntry(routeMap.merchantMoe),
-    agni: toRouteEntry(routeMap.agni),
-    fusionx: toRouteEntry(routeMap.fusionx),
-    woofi: toRouteEntry(routeMap.woofi),
-    lifi: toRouteEntry(routeMap.lifi),
-  };
-
   return {
     bestRoute: best.venue,
     bestAmountOut: best.amountOut.toString(),
-    allRoutes,
+    allRoutes: {
+      merchantMoe: toRouteEntry(routeMap.merchantMoe),
+      agni: toRouteEntry(routeMap.agni),
+      fusionx: toRouteEntry(routeMap.fusionx),
+      woofi: toRouteEntry(routeMap.woofi),
+      lifi: toRouteEntry(routeMap.lifi),
+    },
   };
 }
 
