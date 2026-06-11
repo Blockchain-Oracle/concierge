@@ -93,6 +93,7 @@ contract MockAavePool {
         uint16 liquidationThresholdBps,
         bool borrowingEnabled
     ) external onlyAdmin {
+        require(ltvBps <= liquidationThresholdBps, "ltv>lt");
         if (_reserves[asset].aToken == address(0)) _reserveList.push(asset);
         _reserves[asset] = ReserveDataLite({
             aToken: aToken,
@@ -171,7 +172,7 @@ contract MockAavePool {
         if (!r.active) revert AssetNotSupported(asset);
         if (!r.borrowingEnabled) revert BorrowingDisabled(asset);
         _requireSufficientCollateral(onBehalfOf, asset, amount);
-        _debts[onBehalfOf][asset] += amount;
+        _debts[onBehalfOf][asset] = _currentDebt(onBehalfOf, asset) + amount;
         _debtTimestamp[onBehalfOf][asset] = block.timestamp;
         emit Borrow(
             asset,
@@ -195,7 +196,7 @@ contract MockAavePool {
         if (debt == 0) revert InsufficientDebt();
         uint256 actual = (amount == type(uint256).max || amount > debt) ? debt : amount;
         _debts[onBehalfOf][asset] = debt - actual;
-        if (debt == actual) _debtTimestamp[onBehalfOf][asset] = 0;
+        _debtTimestamp[onBehalfOf][asset] = (debt == actual) ? 0 : block.timestamp;
         emit Repay(asset, onBehalfOf, msg.sender, actual, false);
         return actual;
     }
@@ -234,11 +235,14 @@ contract MockAavePool {
     function getReserveData(
         address asset
     ) external view returns (DataTypes.ReserveDataLegacy memory data) {
+        if (!_reserves[asset].active) revert AssetNotSupported(asset);
         ReserveDataLite storage r = _reserves[asset];
         data.aTokenAddress = r.aToken;
         data.variableDebtTokenAddress = r.debtToken;
         data.currentLiquidityRate = MockAavePoolLib.bpsToRay(r.supplyRateBps);
         data.currentVariableBorrowRate = MockAavePoolLib.bpsToRay(r.borrowRateBps);
+        data.liquidityIndex = uint128(MockAavePoolLib.RAY);
+        data.variableBorrowIndex = uint128(MockAavePoolLib.RAY);
         data.lastUpdateTimestamp = uint40(block.timestamp);
     }
 
@@ -281,6 +285,7 @@ contract MockAavePool {
             bool isFrozen
         )
     {
+        if (!_reserves[asset].active) revert AssetNotSupported(asset);
         ReserveDataLite storage r = _reserves[asset];
         decimals_ = _decimals[asset];
         ltv = r.ltvBps;
@@ -321,7 +326,6 @@ contract MockAavePool {
         return false;
     }
 
-    /// @dev Splits supply-side computation out to avoid stack-too-deep in _computeAccountData.
     function _computeSupplySide(
         address user,
         uint8 eModeId
@@ -344,7 +348,6 @@ contract MockAavePool {
         }
     }
 
-    /// @dev Splits debt-side computation out to avoid stack-too-deep in _computeAccountData.
     function _computeDebtSide(
         address user
     ) internal view returns (uint256 totalDebt) {

@@ -8,7 +8,6 @@ library MockAavePoolLib {
     uint256 internal constant RAY = 1e27;
     uint256 internal constant BPS_DENOMINATOR = 10_000;
     uint256 internal constant SECONDS_PER_YEAR = 365 days;
-    uint256 internal constant PRICE_UNIT = 1e8; // Aave oracle base currency unit (USD 1e8)
     uint256 internal constant HF_PRECISION = 1e18; // healthFactor scaled to 1e18
 
     /// @notice Converts basis points to ray (1e27) for Aave-compatible rate representation.
@@ -28,6 +27,8 @@ library MockAavePoolLib {
         uint256 lastUpdate
     ) internal view returns (uint256) {
         if (principal == 0) return 0;
+        // forge-lint: disable-next-line(block-timestamp)
+        if (block.timestamp <= lastUpdate) return principal;
         uint256 elapsed = block.timestamp - lastUpdate;
         uint256 interest = (principal * rateBps * elapsed) / (SECONDS_PER_YEAR * BPS_DENOMINATOR);
         return principal + interest;
@@ -71,16 +72,5 @@ library MockAavePoolLib {
         uint8 eModeId
     ) internal pure returns (uint16) {
         return eModeId > 0 ? eModeLtBps : reserveLtBps;
-    }
-
-    /// @notice Converts a token amount to its USD value then back to a target token amount.
-    /// Used to compute max borrow in target-asset units given USD borrow capacity.
-    function usdToToken(
-        uint256 usdBase,
-        uint256 priceUsd8,
-        uint8 decimals
-    ) internal pure returns (uint256) {
-        if (priceUsd8 == 0) return 0;
-        return (usdBase * (10 ** decimals)) / priceUsd8;
     }
 }

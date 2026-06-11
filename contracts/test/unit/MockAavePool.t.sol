@@ -188,7 +188,7 @@ contract MockAavePoolTest is Test {
 
     // ─── getUserAccountData / healthFactor ────────────────────────────────────
 
-    /// HF = (200e8 * 0.92) / 100e8 = 1.84e18 (±1e15 precision).
+    /// USDC LT=8000 (80%); HF = 200e8 * 80% / 100e8 = 1.6e18 (±1e15 precision).
     function test_getUserAccountData_HealthFactorCorrect() public {
         vm.prank(alice);
         pool.supply(USDC, 200e6, alice, 0); // $200 collateral (USDC @ $1)
@@ -272,5 +272,122 @@ contract MockAavePoolTest is Test {
     function test_getReserveConfigurationData_SusdeNotBorrowable() public view {
         (,,,,,, bool borrowingEnabled,,,) = pool.getReserveConfigurationData(sUSDe);
         assertFalse(borrowingEnabled, "sUSDe should not be borrowable");
+    }
+
+    // ─── Admin access control ─────────────────────────────────────────────────
+
+    function test_mockInitReserve_RevertsForNonAdmin() public {
+        vm.prank(alice);
+        vm.expectRevert("not admin");
+        pool.mockInitReserve(USDC, 6, address(1), address(2), 0, 0, 0, 0, false);
+    }
+
+    function test_mockSetReserveData_RevertsForNonAdmin() public {
+        vm.prank(alice);
+        vm.expectRevert("not admin");
+        pool.mockSetReserveData(USDC, 600, 700);
+    }
+
+    function test_mockSetEmodeCategory_RevertsForNonAdmin() public {
+        vm.prank(alice);
+        vm.expectRevert("not admin");
+        pool.mockSetEmodeCategory(2, 8000, 8500, 10_500, "test");
+    }
+
+    // ─── Error reverts ────────────────────────────────────────────────────────
+
+    function test_supply_RevertsForUnknownAsset() public {
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(AssetNotSupported.selector, makeAddr("unknown")));
+        pool.supply(makeAddr("unknown"), 100e6, alice, 0);
+    }
+
+    function test_borrow_RevertsWhenBorrowingDisabled() public {
+        vm.prank(alice);
+        pool.supply(sUSDe, 1000e18, alice, 0);
+        vm.prank(alice);
+        pool.setUserEMode(1);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(BorrowingDisabled.selector, sUSDe));
+        pool.borrow(sUSDe, 1e18, 2, 0, alice);
+    }
+
+    function test_withdraw_RevertsWhenInsufficientSupply() public {
+        vm.prank(alice);
+        pool.supply(USDC, 100e6, alice, 0);
+        vm.prank(alice);
+        vm.expectRevert(InsufficientSupply.selector);
+        pool.withdraw(USDC, 200e6, alice);
+    }
+
+    function test_repay_RevertsWhenNoDebt() public {
+        vm.prank(alice);
+        vm.expectRevert(InsufficientDebt.selector);
+        pool.repay(USDC, 100e6, 2, alice);
+    }
+
+    // ─── Interest accrual ─────────────────────────────────────────────────────
+
+    function test_debt_AccruesSimpleInterestOverOneYear() public {
+        vm.prank(alice);
+        pool.supply(USDC, 1000e6, alice, 0); // $1000 collateral
+        vm.prank(alice);
+        pool.borrow(USDC, 100e6, 2, 0, alice); // 100 USDC @ 5% borrow rate
+
+        vm.warp(block.timestamp + 365 days);
+
+        (, uint256 debtBase,,,,) = pool.getUserAccountData(alice);
+        // 100 USDC @ $1 = $100 → 100e8 base; 5% interest → 105e8 after 1 year
+        assertApproxEqAbs(debtBase, 105e8, 1e8, "debt should accrue 5% over 1 year");
+    }
+
+    function test_repay_PartialResetsTimestampForFutureAccrual() public {
+        vm.prank(alice);
+        pool.supply(USDC, 1000e6, alice, 0);
+        vm.prank(alice);
+        pool.borrow(USDC, 100e6, 2, 0, alice); // 100 USDC principal
+
+        vm.warp(block.timestamp + 365 days); // 5 USDC accrued → debt = 105 USDC
+        vm.prank(alice);
+        pool.repay(USDC, 50e6, 2, alice); // partial repay — remaining debt ~55 USDC
+
+        // After another year the remaining should grow by ~5%, not by 2 years of interest
+        vm.warp(block.timestamp + 365 days);
+        (, uint256 debtBase,,,,) = pool.getUserAccountData(alice);
+        // ~55 USDC * 1.05 ≈ 57.75 USDC → 5775e6 → 5775e8 base (price $1, 6 dec)
+        assertLt(debtBase, 60e8, "should not double-charge pre-repay interest");
+        assertGt(debtBase, 54e8, "should still accrue post-repay interest");
+    }
+
+    // ─── E-Mode HF computation ────────────────────────────────────────────────
+
+    function test_emode1_HealthFactorUsesEmodeLT() public {
+        vm.prank(alice);
+        pool.supply(sUSDe, 1000e18, alice, 0); // ~$1232 collateral
+        vm.prank(alice);
+        pool.setUserEMode(1);
+        vm.prank(alice);
+        pool.borrow(USDe, 500e18, 2, 0, alice); // $500 debt
+
+        (,,, uint256 lt,, uint256 hf) = pool.getUserAccountData(alice);
+        // E-Mode LT=9200 → HF = 1232 * 0.92 / 500 ≈ 2.27
+        assertEq(lt, EMODE1_LT, "should use E-Mode LT override");
+        assertGt(hf, 2e18, "hf should reflect E-Mode LT");
+    }
+
+    function test_setUserEMode0_DropsBorrowCapacity() public {
+        vm.prank(alice);
+        pool.supply(sUSDe, 1000e18, alice, 0); // ~$1232 collateral
+        vm.prank(alice);
+        pool.setUserEMode(1);
+        (,, uint256 availEMode,,,) = pool.getUserAccountData(alice);
+        assertGt(availEMode, 0, "emode should have borrow capacity");
+
+        vm.prank(alice);
+        pool.setUserEMode(0);
+        (,, uint256 availGeneral,,,) = pool.getUserAccountData(alice);
+        // sUSDe ltvBps=0 in general mode → avail=0
+        assertEq(availGeneral, 0, "general mode sUSDe should have 0 borrow capacity");
+        assertGt(availEMode, availGeneral, "emode capacity > general mode capacity");
     }
 }
