@@ -19,7 +19,7 @@ import { execSync } from 'node:child_process';
  * and mantleSepolia share field names (pool, oracle, USDC, …) and a global
  * regex would silently clobber audited addresses on the other chain.
  */
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -29,7 +29,14 @@ const REPO_ROOT = resolve(__dirname, '..', '..');
 // --- Network selection ---
 
 const networkIdx = process.argv.indexOf('--network');
-const network = networkIdx !== -1 ? process.argv[networkIdx + 1] : 'sepolia';
+const networkArg = networkIdx !== -1 ? process.argv[networkIdx + 1] : undefined;
+
+if (networkIdx !== -1 && (networkArg === undefined || networkArg.startsWith('--'))) {
+  console.error('ERROR: --network requires a value: "sepolia" or "mainnet"');
+  process.exit(1);
+}
+
+const network = networkArg ?? 'sepolia';
 
 if (network !== 'sepolia' && network !== 'mainnet') {
   console.error(`Unknown --network "${network}" — expected "sepolia" or "mainnet"`);
@@ -79,8 +86,8 @@ const PENDING_SLOTS_CONST =
 let artifact;
 try {
   artifact = JSON.parse(readFileSync(artifactPath, 'utf8'));
-} catch {
-  console.error(`Cannot read broadcast artifact at ${artifactPath}`);
+} catch (err) {
+  console.error(`Cannot read broadcast artifact at ${artifactPath}: ${err.message}`);
   console.error(
     `Run: forge script script/DeployAll.s.sol --rpc-url $${network === 'mainnet' ? 'MANTLE_RPC_URL' : 'MANTLE_SEPOLIA_RPC_URL'} --broadcast`,
   );
@@ -103,12 +110,17 @@ for (const tx of artifact.transactions ?? []) {
 
 // --- Resolve updates from broadcast ---
 
+const ADDRESS_FORMAT_RE = /^0x[a-fA-F0-9]{40}$/;
+
 const updates = [];
 const missing = [];
 for (const [contractName, fieldName, pendingPath] of CONTRACT_FIELD_MAP) {
   const addr = deployed[contractName];
   if (!addr) {
     console.error(`  ✗ ${contractName} not found in broadcast artifact`);
+    missing.push(contractName);
+  } else if (!ADDRESS_FORMAT_RE.test(addr)) {
+    console.error(`  ✗ ${contractName}: address "${addr}" is not a valid 40-hex EVM address`);
     missing.push(contractName);
   } else {
     updates.push({ contractName, fieldName, pendingPath, addr });
@@ -195,10 +207,22 @@ for (const { contractName, fieldName, pendingPath, addr } of updates) {
 
     if (network === 'mainnet') {
       // MAINNET_PENDING_ADDRESS_SLOTS lives in the suffix (after the mantleSepolia block).
+      const before = updatedSuffix;
       updatedSuffix = updatedSuffix.replace(slotRe, '');
+      if (updatedSuffix === before) {
+        console.warn(
+          `  ⚠  Lockbox slot '${pendingPath}' not found in ${PENDING_SLOTS_CONST} — already removed or path changed?`,
+        );
+      }
     } else {
       // SEPOLIA_PENDING_ADDRESS_SLOTS is within the sepoliaBlock (runs to EOF).
+      const before = updatedBlock;
       updatedBlock = updatedBlock.replace(slotRe, '');
+      if (updatedBlock === before) {
+        console.warn(
+          `  ⚠  Lockbox slot '${pendingPath}' not found in ${PENDING_SLOTS_CONST} — already removed or path changed?`,
+        );
+      }
     }
   }
 }
@@ -215,7 +239,10 @@ const content = prefix + updatedBlock + updatedSuffix;
 if (content === fullContent) {
   console.log('addresses.ts already up to date — no changes written.');
 } else {
-  writeFileSync(addressesPath, content, 'utf8');
+  // Atomic write: write to .tmp then rename so a process kill mid-write cannot corrupt the file.
+  const tmpPath = `${addressesPath}.tmp`;
+  writeFileSync(tmpPath, content, 'utf8');
+  renameSync(tmpPath, addressesPath);
   console.log(`\nWrote: ${addressesPath}`);
 
   // Verify the updated file passes typecheck AND the addresses lockbox test.
@@ -224,10 +251,12 @@ if (content === fullContent) {
     execSync('pnpm run typecheck', { cwd: REPO_ROOT, stdio: 'inherit' });
     execSync('pnpm --filter @concierge/shared run test', { cwd: REPO_ROOT, stdio: 'inherit' });
     console.log('typecheck + test passed ✓');
-  } catch {
-    console.error('typecheck/test FAILED — reverting addresses.ts');
+  } catch (err) {
+    console.error(`typecheck/test FAILED — reverting addresses.ts: ${err.message}`);
     try {
-      writeFileSync(addressesPath, fullContent, 'utf8');
+      const revertTmp = `${addressesPath}.tmp`;
+      writeFileSync(revertTmp, fullContent, 'utf8');
+      renameSync(revertTmp, addressesPath);
     } catch (revertErr) {
       console.error('FATAL: revert also failed. Restore addresses.ts from git manually.');
       console.error(revertErr);

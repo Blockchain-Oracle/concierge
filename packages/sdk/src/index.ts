@@ -7,12 +7,13 @@
 // package, and stubbing a fake runtime here is a banned hot-path mock. See
 // the deferral addendum in docs/stories/story-22-sdk-skeleton.md.
 
-// SEPOLIA_PENDING_ADDRESS_SLOTS is the programmatic guard for
-// `ConciergeRegistry.sepolia()`'s zero-address placeholders (pending
-// story-192's mock deploys) — SDK-only consumers must be able to detect a
-// pending slot without reading the README.
+// SEPOLIA_PENDING_ADDRESS_SLOTS / MAINNET_PENDING_ADDRESS_SLOTS are the programmatic
+// guards for `ConciergeRegistry.*()` zero-address placeholders — SDK-only consumers
+// must be able to detect pending slots without reading the README.
 export {
   type AddressPath,
+  MAINNET_PENDING_ADDRESS_SLOTS,
+  type MainnetAddressPath,
   SEPOLIA_PENDING_ADDRESS_SLOTS,
   type SepoliaAddressPath,
 } from '@concierge/shared';

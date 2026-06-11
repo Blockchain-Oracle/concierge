@@ -1,8 +1,8 @@
 import {
   ADDRESSES,
   type Address,
+  type AddressPath,
   type EvmChainId,
-  type SepoliaAddressPath,
   ZERO_ADDRESS,
 } from '@concierge/shared';
 import type { ConciergeAgentLike } from '@concierge/tools';
@@ -58,7 +58,7 @@ export class ConciergeRegistry implements ConciergeAgentLike {
    * typed `NetworkUnsupported`, so `switch (err.type)` handlers never chase
    * a network problem that is actually a typo.
    */
-  requireAddress(path: SepoliaAddressPath): Address {
+  requireAddress(path: AddressPath): Address {
     // Optional chaining propagates `undefined` for any missing segment, so
     // null/undefined mid-path → undefined leaf → ADDRESS_SHAPE check throws.
     // Prototype-pollution paths like `__proto__.x` resolve via the prototype

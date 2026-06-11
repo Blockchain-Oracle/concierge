@@ -120,9 +120,8 @@ export const ADDRESSES = deepFreeze({
  *
  * Returns the union of both block shapes — the generic-conditional pattern was
  * decorative (narrowing required an `as never` cast in the impl that could mask
- * a branch-swap typo). The two shapes intentionally diverge: mantleSepolia
- * carries `conciergeRegistry` (Sepolia-only) that mantleMainnet does not.
- * When more chain-specific fields land, promote to overloads.
+ * a branch-swap typo). When chain-specific fields diverge across networks,
+ * promote to overloads.
  *
  * Inputs are validated for type (string from env / bigint from JSON-parse fail
  * with a typed TypeError, not the generic "unsupported chain id" message).
@@ -199,6 +198,9 @@ export const SEPOLIA_PENDING_ADDRESS_SLOTS = Object.freeze([
  * the Mainnet production deploy (story-19 `deploy-mainnet.sh`) runs. Mirrors the
  * Sepolia lockbox pattern — deleted entries signal that `write-addresses.mjs
  * --network mainnet` has populated the real deployed address.
+ *
+ * MUST stay lexically sorted (default JS Array.sort comparator) — the lockbox
+ * test compares against `.sort()`. Asserted in addresses.test.ts.
  */
 export const MAINNET_PENDING_ADDRESS_SLOTS = Object.freeze([
   'conciergeRegistry',
