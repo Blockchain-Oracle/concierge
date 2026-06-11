@@ -1,22 +1,21 @@
 import type { Address, EvmChainId, Hex } from '@concierge/shared';
 import { z } from 'zod';
+import { NON_NEG_INT_STR, NON_ZERO_ADDRESS, TX_HASH } from './_schema.ts';
 
 export const ETHENA_ATTESTATION_SCHEMAS = {
   wrap: 'concierge.ethena.wrap.v1',
   unwrap: 'concierge.ethena.unwrap.v1',
 } as const;
 
-const NON_NEG_INT_STR = z.string().regex(/^\d+$/);
-
 export const AttestationPayloadSchema = z.object({
   schema: z.enum([ETHENA_ATTESTATION_SCHEMAS.wrap, ETHENA_ATTESTATION_SCHEMAS.unwrap]),
-  chain: z.number(),
-  tokenIn: z.string(),
-  tokenOut: z.string(),
+  chain: z.number().int().positive(),
+  tokenIn: NON_ZERO_ADDRESS,
+  tokenOut: NON_ZERO_ADDRESS,
   amountIn: NON_NEG_INT_STR,
   amountOut: NON_NEG_INT_STR,
-  txHash: z.string(),
-  ts: z.number(),
+  txHash: TX_HASH,
+  ts: z.number().int().positive(),
 });
 
 export type AttestationPayload = z.infer<typeof AttestationPayloadSchema>;

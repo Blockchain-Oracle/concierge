@@ -1,11 +1,10 @@
-import { ConciergeError } from '@concierge/sdk';
 import type { Address } from '@concierge/shared';
 import { tool } from '@concierge/tools';
 import { z } from 'zod';
 import type { ActionContext } from '../_context.ts';
 import { requireWallet } from '../_context.ts';
 import { NON_ZERO_ADDRESS, TX_HASH } from '../_schema.ts';
-import { ensureApproval, executeWooFiSwap, WOOFI_ABI } from '../_woofi.ts';
+import { ensureApproval, executeWooFiSwap, queryMinOut } from '../_woofi.ts';
 import { AttestationPayloadSchema, buildAttestationPayload } from '../attestation.ts';
 
 // Mantle sUSDe is a LayerZero V2 OFT — deposit()/redeem()/convertToAssets() all REVERT on Mantle.
@@ -41,20 +40,14 @@ export async function executeWrapToSusde(
   const { walletClient, account } = await requireWallet(ctx, 'wrapToSusde');
   const { usde, susde, woofiRouter } = ctx.addresses;
 
-  const quoted = await ctx.publicClient.readContract({
-    address: woofiRouter,
-    abi: WOOFI_ABI,
-    functionName: 'querySwap',
-    args: [usde, susde, amountUSDe],
-  });
-  if (quoted === 0n) {
-    throw new ConciergeError(
-      'InsufficientLiquidity',
-      '[@concierge/ethena-susde] wrapToSusde: WooFi has no USDe→sUSDe route',
-    );
-  }
-
-  const minOut = (quoted * BigInt(10_000 - slippageBps)) / 10_000n;
+  const minOut = await queryMinOut(
+    ctx,
+    usde,
+    susde,
+    amountUSDe,
+    slippageBps,
+    '[@concierge/ethena-susde] wrapToSusde',
+  );
   await ensureApproval(
     ctx,
     usde,

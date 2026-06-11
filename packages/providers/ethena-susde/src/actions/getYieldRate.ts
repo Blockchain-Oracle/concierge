@@ -14,21 +14,21 @@ export const GetYieldRateOutput = z.object({
   susdeYieldBps: z.number().describe('Yield used for carry calculations (bps)'),
 });
 
-// Ethena API response shape — either nested under `data` or flat at the root.
-interface EthenaYieldsInner {
-  protocol?: number;
-  staking?: number;
-  protocol_yield?: number;
-  staking_yield?: number;
-}
-
-interface EthenaYieldsResponse {
-  data?: EthenaYieldsInner;
-  protocol?: number;
-  staking?: number;
-  protocol_yield?: number;
-  staking_yield?: number;
-}
+// Zod schema for Ethena API — validates both nested { data: {...} } and flat shapes.
+const EthenaApiSchema = z.object({
+  data: z
+    .object({
+      protocol: z.number().optional(),
+      staking: z.number().optional(),
+      protocol_yield: z.number().optional(),
+      staking_yield: z.number().optional(),
+    })
+    .optional(),
+  protocol: z.number().optional(),
+  staking: z.number().optional(),
+  protocol_yield: z.number().optional(),
+  staking_yield: z.number().optional(),
+});
 
 function extractBps(raw: number | undefined): number {
   if (raw === undefined || !Number.isFinite(raw)) return 0;
@@ -37,7 +37,7 @@ function extractBps(raw: number | undefined): number {
 }
 
 export async function executeGetYieldRate(_ctx: ActionContext): Promise<YieldRateResult> {
-  let json: EthenaYieldsResponse;
+  let rawJson: unknown;
   try {
     const res = await fetch(ETHENA_YIELDS_URL, {
       headers: { Accept: 'application/json' },
@@ -48,7 +48,7 @@ export async function executeGetYieldRate(_ctx: ActionContext): Promise<YieldRat
         `[@concierge/ethena-susde] getYieldRate: Ethena API returned ${res.status}`,
       );
     }
-    json = (await res.json()) as EthenaYieldsResponse;
+    rawJson = await res.json();
   } catch (err) {
     if (err instanceof ConciergeError) throw err;
     throw new ConciergeError(
@@ -58,7 +58,15 @@ export async function executeGetYieldRate(_ctx: ActionContext): Promise<YieldRat
     );
   }
 
-  const inner: EthenaYieldsInner = json.data ?? json;
+  const parsed = EthenaApiSchema.safeParse(rawJson);
+  if (!parsed.success) {
+    throw new ConciergeError(
+      'RpcError',
+      '[@concierge/ethena-susde] getYieldRate: malformed Ethena API response',
+    );
+  }
+
+  const inner = parsed.data.data ?? parsed.data;
   const protocolRaw = inner.protocol ?? inner.protocol_yield;
   const stakingRaw = inner.staking ?? inner.staking_yield;
 

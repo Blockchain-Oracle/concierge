@@ -39,12 +39,20 @@ export async function executeGetCarryVsAave(
 ): Promise<CarryVsAaveResult> {
   const [yieldRate, reserveData] = await Promise.all([
     executeGetYieldRate(ctx),
-    ctx.publicClient.readContract({
-      address: ctx.addresses.aavePool,
-      abi: poolAbi,
-      functionName: 'getReserveData',
-      args: [ctx.addresses.usdc],
-    }),
+    ctx.publicClient
+      .readContract({
+        address: ctx.addresses.aavePool,
+        abi: poolAbi,
+        functionName: 'getReserveData',
+        args: [ctx.addresses.usdc],
+      })
+      .catch((err: unknown) => {
+        throw new ConciergeError(
+          'RpcError',
+          '[@concierge/ethena-susde] getCarryVsAave: failed to fetch Aave reserve data',
+          err instanceof Error ? err : undefined,
+        );
+      }),
   ]);
 
   // Index 4 = currentVariableBorrowRate (RAY-scaled, per-year APR).

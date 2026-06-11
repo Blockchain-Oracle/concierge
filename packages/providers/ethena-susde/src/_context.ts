@@ -28,12 +28,12 @@ export async function requireWallet(
       `[@concierge/ethena-susde] ${action}: walletClient is required for write operations.`,
     );
   }
-  const account = ctx.walletClient.account?.address as Address | undefined;
-  if (!account) {
+  const maybeAccount = ctx.walletClient.account?.address;
+  if (!maybeAccount) {
     throw new ConciergeError(
       'ConfigError',
       `[@concierge/ethena-susde] ${action}: walletClient has no bound account. Pass an explicit account to createWalletClient({ account: privateKeyToAccount(...) }).`,
     );
   }
-  return { walletClient: ctx.walletClient, account };
+  return { walletClient: ctx.walletClient, account: maybeAccount };
 }

@@ -1,6 +1,7 @@
 import { ConciergeError } from '@concierge/sdk';
 import type { Address, Hex } from '@concierge/shared';
-import { parseAbi } from 'viem';
+import type { WalletClient } from 'viem';
+import { parseAbi, parseEventLogs } from 'viem';
 import type { ActionContext } from './_context.ts';
 
 export const WOOFI_ABI = parseAbi([
@@ -13,7 +14,39 @@ export const ERC20_ABI = parseAbi([
   'function approve(address spender, uint256 amount) returns (bool)',
 ]);
 
+// WooRouterSwap event — parsed to get ground-truth amountOut from receipt.
+const WOO_SWAP_EVENT_ABI = parseAbi([
+  'event WooRouterSwap(uint8 swapType, address indexed fromToken, address indexed toToken, uint256 fromAmount, uint256 toAmount, address from, address to, address rebateTo)',
+]);
+
 const REBATE_TO = '0x0000000000000000000000000000000000000000' as Address;
+
+export async function queryMinOut(
+  ctx: ActionContext,
+  fromToken: Address,
+  toToken: Address,
+  fromAmount: bigint,
+  slippageBps: number,
+  tag: string,
+): Promise<bigint> {
+  const quoted = await ctx.publicClient.readContract({
+    address: ctx.addresses.woofiRouter,
+    abi: WOOFI_ABI,
+    functionName: 'querySwap',
+    args: [fromToken, toToken, fromAmount],
+  });
+  if (quoted === 0n) {
+    throw new ConciergeError('InsufficientLiquidity', `${tag}: WooFi has no route`);
+  }
+  const minOut = (quoted * BigInt(10_000 - slippageBps)) / 10_000n;
+  if (minOut === 0n) {
+    throw new ConciergeError(
+      'InsufficientLiquidity',
+      `${tag}: minOut computed as 0 — input too small or slippage too high`,
+    );
+  }
+  return minOut;
+}
 
 export async function ensureApproval(
   ctx: ActionContext,
@@ -21,8 +54,7 @@ export async function ensureApproval(
   spender: Address,
   amount: bigint,
   account: Address,
-  // biome-ignore lint/suspicious/noExplicitAny: viem WalletClient is generic
-  walletClient: any,
+  walletClient: WalletClient,
   tag: string,
 ): Promise<void> {
   const allowance = await ctx.publicClient.readContract({
@@ -65,22 +97,32 @@ export async function executeWooFiSwap(
   minOut: bigint,
   recipient: Address,
   account: Address,
-  // biome-ignore lint/suspicious/noExplicitAny: viem WalletClient is generic
-  walletClient: any,
+  walletClient: WalletClient,
   tag: string,
 ): Promise<{ txHash: Hex; amountOut: bigint }> {
-  const { result: amountOut, request } = await ctx.publicClient.simulateContract({
-    address: ctx.addresses.woofiRouter,
-    abi: WOOFI_ABI,
-    functionName: 'swap',
-    args: [tokenIn, tokenOut, amountIn, minOut, recipient, REBATE_TO],
-    account,
-  });
+  const sim = await ctx.publicClient
+    .simulateContract({
+      address: ctx.addresses.woofiRouter,
+      abi: WOOFI_ABI,
+      functionName: 'swap',
+      args: [tokenIn, tokenOut, amountIn, minOut, recipient, REBATE_TO],
+      account,
+    })
+    .catch((err: unknown) => {
+      if (err instanceof ConciergeError) throw err;
+      throw new ConciergeError(
+        'RpcError',
+        `${tag}: WooFi swap simulation failed`,
+        err instanceof Error ? err : undefined,
+      );
+    });
+
+  const simulatedAmountOut = sim.result;
 
   let txHash: Hex;
   try {
     txHash = await walletClient.writeContract({
-      ...request,
+      ...sim.request,
       chain: walletClient.chain ?? null,
       account,
     } as Parameters<typeof walletClient.writeContract>[0]);
@@ -97,5 +139,20 @@ export async function executeWooFiSwap(
   if (receipt.status === 'reverted') {
     throw new ConciergeError('RpcError', `${tag}: swap tx ${txHash} reverted`);
   }
+
+  // Prefer ground-truth amountOut from WooRouterSwap event over simulated estimate.
+  let amountOut = simulatedAmountOut;
+  try {
+    const logs = parseEventLogs({
+      abi: WOO_SWAP_EVENT_ABI,
+      eventName: 'WooRouterSwap',
+      logs: receipt.logs,
+    });
+    const toAmount = logs[0]?.args.toAmount;
+    if (toAmount !== undefined) amountOut = toAmount;
+  } catch {
+    // Non-fatal: event ABI mismatch falls back to simulated result.
+  }
+
   return { txHash, amountOut };
 }

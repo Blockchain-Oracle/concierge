@@ -1,6 +1,5 @@
 import { ConciergeError } from '@concierge/sdk';
 import {
-  type Address,
   addressesFor,
   type EvmChainId,
   mantleMainnet,
@@ -14,14 +13,7 @@ import { createGetYieldRateTool } from './actions/getYieldRate.ts';
 import { createUnwrapToUSDeTool } from './actions/unwrapToUSDe.ts';
 import { createWrapToSusdeTool } from './actions/wrapToSusde.ts';
 
-export interface EthenaSusdeAddressOverrides {
-  usde?: Address;
-  susde?: Address;
-  usdc?: Address;
-  aavePool?: Address;
-  aaveOracle?: Address;
-  woofiRouter?: Address;
-}
+export type EthenaSusdeAddressOverrides = Partial<EthenaAddresses>;
 
 export interface EthenaSusdeProviderOpts {
   walletClient?: WalletClient | undefined;
@@ -71,7 +63,12 @@ export function createEthenaSusdeProvider(opts: EthenaSusdeProviderOpts = {}): E
   const transport = http(opts.rpcUrl ?? viemChain.rpcUrls.default.http[0]);
   const publicClient = opts.publicClient ?? createPublicClient({ chain: viemChain, transport });
 
-  const sharedAddrs = SUPPORTED_CHAIN_IDS.has(chainId) ? addressesFor(chainId) : undefined;
+  let sharedAddrs: ReturnType<typeof addressesFor> | undefined;
+  try {
+    sharedAddrs = SUPPORTED_CHAIN_IDS.has(chainId) ? addressesFor(chainId) : undefined;
+  } catch {
+    sharedAddrs = undefined;
+  }
   const ov = opts.addresses ?? {};
 
   const addresses: EthenaAddresses = {
