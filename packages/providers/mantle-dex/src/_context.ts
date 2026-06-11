@@ -12,7 +12,7 @@ export interface DexAddresses {
 
 export interface ActionContext {
   readonly publicClient: PublicClient;
-  readonly walletClient?: WalletClient | undefined;
+  readonly walletClient?: WalletClient;
   readonly chainId: EvmChainId;
   readonly addresses: DexAddresses;
 }

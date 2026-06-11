@@ -92,6 +92,84 @@ describe('executeSwap — InsufficientLiquidity', () => {
   });
 });
 
+describe('executeSwap — ensureApproval', () => {
+  it('calls approve + waits for receipt when allowance is below amountIn', async () => {
+    const QUOTE_AMOUNT = 1_000_000n;
+    const mockSwap = vi.fn().mockResolvedValue({
+      txHash: `0x${'a'.repeat(64)}`,
+      amountOut: QUOTE_AMOUNT,
+      spender: ADDR(1),
+    });
+    vi.mocked(buildVenues).mockReturnValue([
+      {
+        name: 'merchantMoe',
+        quote: () => Promise.resolve({ venue: 'merchantMoe', amountOut: QUOTE_AMOUNT }),
+        swap: mockSwap,
+      },
+      makeNullVenue('agni'),
+      makeNullVenue('fusionx'),
+      makeNullVenue('woofi'),
+      makeNullVenue('lifi'),
+    ]);
+
+    const mockWriteContract = vi.fn().mockResolvedValue(`0x${'b'.repeat(64)}`);
+    const mockWaitForReceipt = vi.fn().mockResolvedValue({ status: 'success' });
+    const mockPublicClient = {
+      readContract: vi.fn().mockResolvedValue(0n), // allowance = 0 → approve needed
+      waitForTransactionReceipt: mockWaitForReceipt,
+    };
+    const ctx: ActionContext = {
+      publicClient: mockPublicClient as never,
+      chainId: 5000,
+      addresses: mockAddresses,
+      walletClient: {
+        account: { address: ADDR(9) },
+        chain: null,
+        writeContract: mockWriteContract,
+      } as never,
+    };
+
+    await executeSwap(ctx, validArgs);
+    // writeContract should have been called twice: once for approve, once for swap
+    expect(mockWriteContract).toHaveBeenCalledTimes(1); // approve only; swap via venue mock
+    expect(mockWaitForReceipt).toHaveBeenCalledTimes(1); // for approve receipt
+  });
+
+  it('throws RpcError when approve tx is reverted', async () => {
+    const QUOTE_AMOUNT = 1_000_000n;
+    vi.mocked(buildVenues).mockReturnValue([
+      {
+        name: 'merchantMoe',
+        quote: () => Promise.resolve({ venue: 'merchantMoe', amountOut: QUOTE_AMOUNT }),
+        swap: vi.fn(),
+      },
+      makeNullVenue('agni'),
+      makeNullVenue('fusionx'),
+      makeNullVenue('woofi'),
+      makeNullVenue('lifi'),
+    ]);
+
+    const mockPublicClient = {
+      readContract: vi.fn().mockResolvedValue(0n), // allowance = 0 → approve needed
+      waitForTransactionReceipt: vi.fn().mockResolvedValue({ status: 'reverted' }),
+    };
+    const ctx: ActionContext = {
+      publicClient: mockPublicClient as never,
+      chainId: 5000,
+      addresses: mockAddresses,
+      walletClient: {
+        account: { address: ADDR(9) },
+        chain: null,
+        writeContract: vi.fn().mockResolvedValue(`0x${'c'.repeat(64)}`),
+      } as never,
+    };
+
+    await expect(executeSwap(ctx, validArgs)).rejects.toSatisfy(
+      (e: unknown) => e instanceof ConciergeError && e.type === 'RpcError',
+    );
+  });
+});
+
 describe('executeSwap — SwapSlippageBreach', () => {
   it('throws SwapSlippageBreach when venue returns amountOut below computed minimum', async () => {
     const QUOTE_AMOUNT = 1_000_000n;

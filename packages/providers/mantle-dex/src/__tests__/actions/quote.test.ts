@@ -106,22 +106,5 @@ describe('quote action (Mainnet fork integration)', () => {
   }, 60_000);
 });
 
-describe('quote action — WOOFi null route (on-chain)', () => {
-  it('WOOFi returns null cleanly for an unlisted token pair', async () => {
-    // Same nonexistent token ensures WOOFi has no listing — deterministic, not conditional.
-    const NONEXISTENT = '0x1111111111111111111111111111111111111111' as typeof USDC;
-    const result = await makeProvider()
-      .actions.quote.invoke({
-        tokenIn: USDC,
-        tokenOut: NONEXISTENT,
-        amountIn: USDC_AMOUNT,
-        slippageBps: 50,
-      })
-      .catch(() => null); // tolerate InsufficientLiquidity when all venues return null
-
-    // If a result was returned, WOOFi must be null with reason 'no_route'.
-    if (result !== null && result.allRoutes.woofi.amountOut === null) {
-      expect((result.allRoutes.woofi as { reason: string }).reason).toBe('no_route');
-    }
-  }, 60_000);
-});
+// WOOFi null-route behaviour is tested at the venue level in __tests__/venues/woofi.test.ts
+// using a mocked publicClient that can deterministically simulate a revert without a fork.

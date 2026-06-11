@@ -22,16 +22,35 @@ export interface MantleDexProvider {
   };
 }
 
+const MANTLE_CHAIN_IDS = new Set([5000, 5003]);
+
 function resolveChainId(opts: MantleDexProviderOptions): EvmChainId {
   if (opts.chain === 'mantle-mainnet') return 5000;
   if (opts.chain === 'mantle-sepolia') return 5003;
   if (opts.rpcUrl?.toLowerCase().includes('sepolia')) return 5003;
-  if (opts.publicClient?.chain?.id === 5000 || opts.publicClient?.chain?.id === 5003) {
-    return opts.publicClient.chain.id as EvmChainId;
+
+  const pcId = opts.publicClient?.chain?.id;
+  if (pcId !== undefined) {
+    if (!MANTLE_CHAIN_IDS.has(pcId)) {
+      throw new ConciergeError(
+        'NetworkUnsupported',
+        `[@concierge/mantle-dex] publicClient chain id ${pcId} is not Mantle (5000 mainnet, 5003 sepolia).`,
+      );
+    }
+    return pcId as EvmChainId;
   }
-  if (opts.walletClient?.chain?.id === 5000 || opts.walletClient?.chain?.id === 5003) {
-    return opts.walletClient.chain.id as EvmChainId;
+
+  const wcId = opts.walletClient?.chain?.id;
+  if (wcId !== undefined) {
+    if (!MANTLE_CHAIN_IDS.has(wcId)) {
+      throw new ConciergeError(
+        'NetworkUnsupported',
+        `[@concierge/mantle-dex] walletClient chain id ${wcId} is not Mantle (5000 mainnet, 5003 sepolia).`,
+      );
+    }
+    return wcId as EvmChainId;
   }
+
   return 5000;
 }
 
@@ -48,16 +67,6 @@ export function createMantleDexProvider(opts: MantleDexProviderOptions = {}): Ma
           (chainId === 5003 ? 'https://rpc.sepolia.mantle.xyz' : 'https://rpc.mantle.xyz'),
       ),
     });
-
-  if (opts.walletClient?.chain) {
-    const wcId = opts.walletClient.chain.id;
-    if (wcId !== 5000 && wcId !== 5003) {
-      throw new ConciergeError(
-        'NetworkUnsupported',
-        `[@concierge/mantle-dex] walletClient chain id ${wcId} is not Mantle (5000 mainnet, 5003 sepolia).`,
-      );
-    }
-  }
 
   const net = addressesFor(chainId);
   const dex = net.mantleDex;

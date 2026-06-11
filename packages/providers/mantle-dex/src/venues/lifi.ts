@@ -39,10 +39,16 @@ async function fetchLifiQuote(
   const url = `${LIFI_API}?fromChain=${chainId}&toChain=${chainId}&fromToken=${fromToken}&toToken=${toToken}&fromAmount=${fromAmount.toString()}&fromAddress=${fromAddress}&slippage=${slippage}&order=CHEAPEST`;
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      console.warn(`[@concierge/mantle-dex] lifi: HTTP ${res.status} from Li.Fi quote API`);
+      return null;
+    }
     return (await res.json()) as LifiQuoteResponse;
-  } catch {
-    return null;
+  } catch (err) {
+    // Only swallow timeouts — DNS failures, JSON parse errors, etc. must propagate so
+    // Promise.allSettled can log them rather than silently treating them as no-route.
+    if (err instanceof DOMException && err.name === 'AbortError') return null;
+    throw err;
   }
 }
 
@@ -118,9 +124,13 @@ export function createLifiVenue(
         `[@concierge/mantle-dex] lifi.swap: tx ${txHash} reverted`,
       );
     }
-    const amountOut = data.estimate?.toAmount
-      ? BigInt(data.estimate.toAmount)
-      : params.amountOutMin;
+    if (!data.estimate?.toAmount) {
+      throw new ConciergeError(
+        'RpcError',
+        '[@concierge/mantle-dex] lifi.swap: Li.Fi response missing estimate.toAmount — cannot record attestation',
+      );
+    }
+    const amountOut = BigInt(data.estimate.toAmount);
     return {
       txHash,
       amountOut,

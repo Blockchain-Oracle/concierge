@@ -54,12 +54,22 @@ export function createMerchantMoeVenue(
     const { tokenIn, tokenOut, amountIn, amountOutMin, recipient, account, deadline } = params;
 
     // Re-quote to get fresh path data (binSteps, versions).
-    const freshQuote = await publicClient.readContract({
-      address: lbQuoter,
-      abi: lbQuoterAbi,
-      functionName: 'findBestPathFromAmountIn',
-      args: [[tokenIn, tokenOut], amountIn as unknown as bigint],
-    });
+    const freshQuote = await publicClient
+      .readContract({
+        address: lbQuoter,
+        abi: lbQuoterAbi,
+        functionName: 'findBestPathFromAmountIn',
+        args: [[tokenIn, tokenOut], amountIn as unknown as bigint],
+      })
+      .catch((err: unknown) => {
+        if (err instanceof ContractFunctionRevertedError) {
+          throw new ConciergeError(
+            'InsufficientLiquidity',
+            `[@concierge/mantle-dex] merchantMoe.swap: no route at execution time for ${tokenIn} → ${tokenOut}`,
+          );
+        }
+        throw err;
+      });
 
     const path = {
       pairBinSteps: freshQuote.binSteps,

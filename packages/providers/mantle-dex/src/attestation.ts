@@ -37,11 +37,14 @@ export function buildAttestationPayload(params: {
   amountIn: bigint;
   amountOut: bigint;
   quotedOut: bigint;
+  // The configured slippage tolerance from the user's args — not realized slippage.
+  // Realized delta can be negative (price improvement) which breaks schema min(0).
+  slippageBps: number;
   txHash: Hex;
 }): AttestationPayload {
-  const { venue, chainId, tokenIn, tokenOut, amountIn, amountOut, quotedOut, txHash } = params;
-  const slippageBps = quotedOut > 0n ? Number(((quotedOut - amountOut) * 10_000n) / quotedOut) : 0;
-  return {
+  const { venue, chainId, tokenIn, tokenOut, amountIn, amountOut, quotedOut, slippageBps, txHash } =
+    params;
+  const payload = {
     schema: ATTESTATION_SCHEMAS[venue],
     chain: chainId,
     venue,
@@ -49,9 +52,10 @@ export function buildAttestationPayload(params: {
     tokenOut,
     amountIn: amountIn.toString(),
     amountOut: amountOut.toString(),
-    slippageBps,
+    slippageBps: Math.max(0, Math.min(10_000, slippageBps)),
     quotedOut: quotedOut.toString(),
     txHash,
     ts: Math.floor(Date.now() / 1000),
   };
+  return AttestationPayloadSchema.parse(payload);
 }
