@@ -74,21 +74,27 @@ async function resolveRoute(
     fromAddress: input.fromAddress as string,
     toAddress: input.toAddress ? (input.toAddress as string) : undefined,
   });
-  if (!quoteResult.bestRoute) {
+  if (!quoteResult.route) {
     throw new ConciergeError(
       'InsufficientLiquidity',
       '[@concierge/lifi-bridge] bridge: no routes available for this token pair',
     );
   }
-  return quoteResult.bestRoute;
+  return quoteResult.route;
 }
 
 async function submitBridgeTx(
   walletClient: NonNullable<ActionContext['walletClient']>,
   txReq: LifiBridgeRoute['transactionRequest'],
 ): Promise<`0x${string}`> {
+  if (walletClient.chain !== undefined && walletClient.chain.id !== txReq.chainId) {
+    throw new ConciergeError(
+      'NetworkUnsupported',
+      `[@concierge/lifi-bridge] bridge: wallet chain ${walletClient.chain.id} ≠ route chain ${txReq.chainId} — switch networks before bridging`,
+    );
+  }
   try {
-    // biome-ignore lint/suspicious/noExplicitAny: sendTransaction overloads vary by account binding
+    // biome-ignore lint/suspicious/noExplicitAny: sendTransaction overloads vary by account/chain binding
     return await (walletClient as any).sendTransaction({
       to: txReq.to as `0x${string}`,
       data: txReq.data as `0x${string}`,

@@ -36,7 +36,7 @@ export function createLifiBridgeProvider(opts: LifiBridgeProviderOptions = {}): 
 
   const ctx: ActionContext = {
     publicClient,
-    ...(opts.walletClient && { walletClient: opts.walletClient }),
+    walletClient: opts.walletClient,
     chainId,
     apiKey: opts.apiKey,
     integrator: opts.integrator ?? 'concierge',

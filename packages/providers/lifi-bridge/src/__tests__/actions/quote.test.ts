@@ -12,6 +12,8 @@ afterAll(() => server.close());
 const ctx = {
   chainId: 5000 as const,
   apiKey: undefined,
+  publicClient: undefined,
+  walletClient: undefined,
   integrator: 'concierge',
   lifiDiamond: '0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE' as const,
 };
@@ -27,70 +29,62 @@ const BASE_INPUT = {
 };
 
 describe('quote — happy path (test_quote_HappyPath)', () => {
-  it('returns 3 routes, bestRoute is first, estimatedDuration from fixture', async () => {
+  it('returns best route with correct id and estimatedDuration from fixture', async () => {
     const result = await executeQuote(ctx, BASE_INPUT);
-    expect(result.routes.length).toBe(3);
-    expect(result.bestRoute).not.toBeNull();
-    expect(result.bestRoute?.id).toBe(FIXTURE_ROUTES[0]?.id);
+    expect(result.route).not.toBeNull();
+    expect(result.route?.id).toBe(FIXTURE_ROUTES[0]?.id);
     expect(result.estimatedDuration).toBe(600);
     expect(result.bridges.length).toBeGreaterThan(0);
   });
 
-  it('all returned routes have transactionRequest (executable)', async () => {
+  it('route has transactionRequest (executable)', async () => {
     const result = await executeQuote(ctx, BASE_INPUT);
-    for (const route of result.routes) {
-      expect(route.transactionRequest).toBeDefined();
-      expect(route.transactionRequest.to.toLowerCase()).toBe(
-        '0x1231deb6f5749ef6ce6943a275a1d3e7486f4eae',
-      );
-    }
+    expect(result.route?.transactionRequest).toBeDefined();
+    expect(result.route?.transactionRequest.to.toLowerCase()).toBe(
+      '0x1231deb6f5749ef6ce6943a275a1d3e7486f4eae',
+    );
   });
 
-  it('routes have _receivedAt timestamp for staleness tracking', async () => {
+  it('route has _receivedAt timestamp for staleness tracking', async () => {
     const before = Date.now();
     const result = await executeQuote(ctx, BASE_INPUT);
     const after = Date.now();
-    for (const route of result.routes) {
-      expect(route._receivedAt).toBeGreaterThanOrEqual(before);
-      expect(route._receivedAt).toBeLessThanOrEqual(after);
-    }
+    expect(result.route?._receivedAt).toBeGreaterThanOrEqual(before);
+    expect(result.route?._receivedAt).toBeLessThanOrEqual(after);
   });
 });
 
 describe('quote — filtered bridges (test_quote_FilteredBridges)', () => {
-  it('excludes routes using the specified bridge', async () => {
-    const result = await executeQuote(ctx, { ...BASE_INPUT, excludeBridges: ['connext'] });
-    for (const route of result.routes) {
-      const tools = route.steps.map((s) => s.tool.toLowerCase());
-      expect(tools).not.toContain('connext');
-    }
-    // 2 routes remain (stargate + across), connext filtered
-    expect(result.routes.length).toBe(2);
+  it('excludes a specific bridge — returns alternative route', async () => {
+    // stargate is default; excluding it should yield the across route
+    const result = await executeQuote(ctx, { ...BASE_INPUT, excludeBridges: ['stargate'] });
+    expect(result.route).not.toBeNull();
+    expect(result.route?.tool.toLowerCase()).not.toBe('stargate');
   });
 
-  it('excludeBridges removes all routes → routes: [], bestRoute: null', async () => {
+  it('excludeBridges removes all routes → route: null, estimatedDuration: 0', async () => {
     const result = await executeQuote(ctx, {
       ...BASE_INPUT,
-      excludeBridges: ['stargate', 'across', 'connext'],
+      excludeBridges: ['stargate', 'across'],
     });
-    expect(result.routes).toEqual([]);
-    expect(result.bestRoute).toBeNull();
+    expect(result.route).toBeNull();
     expect(result.estimatedDuration).toBe(0);
+    expect(result.bridges).toEqual([]);
   });
 });
 
 describe('quote — no available routes (test_quote_NoRoute)', () => {
-  it('returns routes: [], bestRoute: null when API returns empty', async () => {
-    server.use(http.post(`${LIFI_API}/routes`, () => HttpResponse.json({ routes: [] })));
+  it('returns route: null when API returns 422 (no route available)', async () => {
+    server.use(http.get(`${LIFI_API}/quote`, () => new HttpResponse(null, { status: 422 })));
     const result = await executeQuote(ctx, BASE_INPUT);
-    expect(result.routes).toEqual([]);
-    expect(result.bestRoute).toBeNull();
+    expect(result.route).toBeNull();
+    expect(result.estimatedDuration).toBe(0);
   });
 });
 
 describe('quote — error paths', () => {
   it('throws ConciergeError(RpcError) on network failure', async () => {
-    server.use(http.post(`${LIFI_API}/routes`, () => HttpResponse.error()));
+    server.use(http.get(`${LIFI_API}/quote`, () => HttpResponse.error()));
     const { ConciergeError } = await import('@concierge/sdk');
     await expect(executeQuote(ctx, BASE_INPUT)).rejects.toSatisfy(
       (e: unknown) =>
@@ -100,7 +94,7 @@ describe('quote — error paths', () => {
   });
 
   it('throws ConciergeError(RpcError) on HTTP 429', async () => {
-    server.use(http.post(`${LIFI_API}/routes`, () => new HttpResponse(null, { status: 429 })));
+    server.use(http.get(`${LIFI_API}/quote`, () => new HttpResponse(null, { status: 429 })));
     const { ConciergeError } = await import('@concierge/sdk');
     await expect(executeQuote(ctx, BASE_INPUT)).rejects.toSatisfy(
       (e: unknown) =>

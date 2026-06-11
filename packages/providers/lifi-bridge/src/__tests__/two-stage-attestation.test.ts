@@ -15,6 +15,7 @@ afterAll(() => server.close());
 const ctx = {
   chainId: 5000 as const,
   apiKey: undefined,
+  publicClient: undefined,
   integrator: 'concierge',
   lifiDiamond: '0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE' as const,
   walletClient: {
@@ -34,7 +35,7 @@ const BRIDGE_INPUT = {
   fromAddress: '0x1111111111111111111111111111111111111111' as `0x${string}`,
 };
 
-describe('two-stage attestation — sent + completed (test_twoStage_AttestationLinkage)', () => {
+describe('two-stage attestation — linkage (test_twoStage_AttestationLinkage)', () => {
   it('sent.v1 and completed.v1 share the same lifiOperationId', async () => {
     const bridgeResult = await executeBridge(ctx, BRIDGE_INPUT);
     const { lifiOperationId, sourceTxHash, attestationPayload: sentAttestation } = bridgeResult;
@@ -54,7 +55,9 @@ describe('two-stage attestation — sent + completed (test_twoStage_AttestationL
     expect(sentAttestation.sourceTxHash).toBe(completedAttestation.sourceTxHash);
     expect(completedAttestation.destinationTxHash).toBe(DEST_TX_HASH);
   });
+});
 
+describe('two-stage attestation — schema and metadata (test_twoStage_AttestationMetadata)', () => {
   it('sent attestation has schema concierge.lifi.bridge.sent.v1', async () => {
     const { attestationPayload } = await executeBridge(ctx, BRIDGE_INPUT);
     expect(attestationPayload.schema).toBe('concierge.lifi.bridge.sent.v1');
@@ -83,7 +86,6 @@ describe('two-stage attestation — sent + completed (test_twoStage_AttestationL
       fromChain: BRIDGE_INPUT.fromChain,
       toChain: BRIDGE_INPUT.toChain,
     });
-
     expect(sentAttestation.fromChain).toBe(5000);
     expect(sentAttestation.toChain).toBe(1);
     expect(completedAttestation?.fromChain).toBe(5000);
@@ -94,8 +96,6 @@ describe('two-stage attestation — sent + completed (test_twoStage_AttestationL
     const before = Math.floor(Date.now() / 1000);
     const { attestationPayload } = await executeBridge(ctx, BRIDGE_INPUT);
     const after = Math.floor(Date.now() / 1000);
-
-    // Unix epoch seconds are ~1.7e9; milliseconds would be ~1.7e12 (3 orders of magnitude larger)
     expect(attestationPayload.ts).toBeGreaterThanOrEqual(before);
     expect(attestationPayload.ts).toBeLessThanOrEqual(after + 1);
     // Guard against accidental Date.now() (ms) instead of Math.floor(Date.now()/1000)

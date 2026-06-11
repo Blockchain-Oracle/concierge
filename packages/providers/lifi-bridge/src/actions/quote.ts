@@ -1,6 +1,6 @@
 import { tool } from '@concierge/tools';
 import { z } from 'zod';
-import { fetchRoutes, type GetRoutesParams } from '../_api.ts';
+import { fetchQuote, type GetQuoteParams } from '../_api.ts';
 import type { ActionContext } from '../_context.ts';
 import { LifiBridgeRouteSchema } from '../_types.ts';
 
@@ -36,25 +36,22 @@ export const QuoteInput = z.object({
 });
 
 export const QuoteOutput = z.object({
-  routes: z
-    .array(LifiBridgeRouteSchema)
-    .describe('Available bridge routes sorted by RECOMMENDED order'),
-  bestRoute: LifiBridgeRouteSchema.nullable().describe(
-    'Best route (routes[0]) or null if none available',
+  route: LifiBridgeRouteSchema.nullable().describe(
+    'Best available bridge route, or null if none found for this token pair',
   ),
   estimatedDuration: z
     .number()
     .int()
     .nonnegative()
-    .describe('Estimated bridge completion time in seconds'),
-  bridges: z.array(z.string()).describe('Bridge protocols included in the best route'),
+    .describe('Estimated bridge completion time in seconds (0 if no route)'),
+  bridges: z.array(z.string()).describe('Bridge protocol names in the route'),
 });
 
 export async function executeQuote(
   ctx: ActionContext,
   input: z.infer<typeof QuoteInput>,
 ): Promise<z.infer<typeof QuoteOutput>> {
-  const params: GetRoutesParams = {
+  const params: GetQuoteParams = {
     fromChainId: input.fromChain,
     toChainId: input.toChain,
     fromTokenAddress: input.fromToken,
@@ -65,29 +62,23 @@ export async function executeQuote(
     slippage: input.slippageBps / 10_000,
     integrator: ctx.integrator,
     apiKey: ctx.apiKey,
+    denyBridges: input.excludeBridges,
   };
 
-  let routes = await fetchRoutes(params);
+  const route = await fetchQuote(params);
+  const estimatedDuration = route?.estimate.executionDuration ?? 0;
+  const bridges = route ? [route.toolDetails.name] : [];
 
-  if (input.excludeBridges && input.excludeBridges.length > 0) {
-    const excluded = new Set(input.excludeBridges.map((b) => b.toLowerCase()));
-    routes = routes.filter((r) => !r.steps.some((s) => excluded.has(s.tool.toLowerCase())));
-  }
-
-  const bestRoute = routes[0] ?? null;
-  const estimatedDuration = bestRoute?.estimate.executionDuration ?? 0;
-  const bridges = bestRoute ? [...new Set(bestRoute.steps.map((s) => s.toolDetails.name))] : [];
-
-  return { routes, bestRoute, estimatedDuration, bridges };
+  return { route, estimatedDuration, bridges };
 }
 
 export function createQuoteTool(ctx: ActionContext) {
   return tool({
     name: 'quote',
     description:
-      'Returns available bridge routes for a cross-chain asset transfer via Li.Fi. ' +
+      'Returns the best available bridge route for a cross-chain asset transfer via Li.Fi. ' +
       'Covers Mantle ↔ Ethereum / Base / Arbitrum / Polygon / Optimism. ' +
-      'Pure read — no transaction. Routes expire after 30 seconds.',
+      'Pure read — no transaction. Route expires after 30 seconds.',
     inputSchema: QuoteInput,
     outputSchema: QuoteOutput,
     supportsNetwork: () => true,

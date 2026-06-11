@@ -16,6 +16,8 @@ const OPERATION_ID = 'route-stargate-001' as const;
 const ctx = {
   chainId: 5000 as const,
   apiKey: undefined,
+  publicClient: undefined,
+  walletClient: undefined,
   integrator: 'concierge',
   lifiDiamond: '0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE' as const,
 };

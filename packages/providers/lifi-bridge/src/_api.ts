@@ -2,28 +2,15 @@ import { ConciergeError } from '@concierge/sdk';
 import { LIFI_API } from './_context.ts';
 import {
   type LifiBridgeRoute,
-  LifiRoutesResponseSchema,
+  LifiQuoteResponseSchema,
   type LifiStatusResponse,
   LifiStatusResponseSchema,
 } from './_types.ts';
 
 function apiHeaders(apiKey?: string): Record<string, string> {
-  const h: Record<string, string> = { 'Content-Type': 'application/json' };
+  const h: Record<string, string> = {};
   if (apiKey) h['x-lifi-api-key'] = apiKey;
   return h;
-}
-
-export interface GetRoutesParams {
-  fromChainId: number;
-  toChainId: number;
-  fromTokenAddress: string;
-  toTokenAddress: string;
-  fromAmount: string;
-  fromAddress: string;
-  toAddress: string;
-  slippage: number;
-  integrator: string;
-  apiKey: string | undefined;
 }
 
 async function doFetch(url: string, init: RequestInit, label: string): Promise<unknown> {
@@ -37,8 +24,21 @@ async function doFetch(url: string, init: RequestInit, label: string): Promise<u
       err instanceof Error ? err : undefined,
     );
   }
-  if (!res.ok)
-    throw new ConciergeError('RpcError', `[@concierge/lifi-bridge] ${label}: HTTP ${res.status}`);
+
+  if (!res.ok) {
+    let detail = '';
+    try {
+      const body = (await res.json()) as Record<string, unknown>;
+      if (typeof body['message'] === 'string') detail = ` — ${body['message']}`;
+    } catch {
+      // error body may not be JSON (e.g. gateway HTML) — omit detail
+    }
+    throw new ConciergeError(
+      'RpcError',
+      `[@concierge/lifi-bridge] ${label}: HTTP ${res.status}${detail}`,
+    );
+  }
+
   try {
     return await res.json();
   } catch (err) {
@@ -50,64 +50,86 @@ async function doFetch(url: string, init: RequestInit, label: string): Promise<u
   }
 }
 
-function normalizeRoute(
-  raw: ReturnType<typeof LifiRoutesResponseSchema.parse>['routes'][number],
+export interface GetQuoteParams {
+  fromChainId: number;
+  toChainId: number;
+  fromTokenAddress: string;
+  toTokenAddress: string;
+  fromAmount: string;
+  fromAddress: string;
+  toAddress: string;
+  slippage: number;
+  integrator: string;
+  apiKey: string | undefined;
+  denyBridges: string[] | undefined;
+}
+
+function normalizeQuote(
+  raw: ReturnType<typeof LifiQuoteResponseSchema.parse>,
   receivedAt: number,
 ): LifiBridgeRoute | null {
-  const txReq = raw.transactionRequest ?? raw.steps[0]?.transactionRequest;
-  if (!txReq) return null;
+  const { fromAmount, toAmount, toAmountMin, executionDuration } = raw.estimate;
+  // Reject routes with missing amounts — '0' is not a safe fallback for on-chain attestation
+  if (!fromAmount || !toAmount || !toAmountMin || executionDuration === undefined) return null;
+
   return {
     id: raw.id,
-    fromChainId: raw.fromChainId,
-    toChainId: raw.toChainId,
-    fromToken: raw.fromToken,
-    toToken: raw.toToken,
+    tool: raw.tool,
+    toolDetails: raw.toolDetails,
+    fromChainId: raw.action.fromChainId,
+    toChainId: raw.action.toChainId,
+    fromToken: raw.action.fromToken,
+    toToken: raw.action.toToken,
     estimate: {
-      fromAmount: raw.estimate.fromAmount ?? '0',
-      toAmount: raw.estimate.toAmount ?? '0',
-      toAmountMin: raw.estimate.toAmountMin ?? '0',
-      executionDuration: raw.estimate.executionDuration ?? 0,
+      fromAmount,
+      toAmount,
+      toAmountMin,
+      executionDuration,
       gasCosts: raw.estimate.gasCosts,
     },
-    steps: raw.steps,
-    tags: raw.tags,
-    transactionRequest: txReq,
+    transactionRequest: raw.transactionRequest,
     _receivedAt: receivedAt,
   };
 }
 
-export async function fetchRoutes(params: GetRoutesParams): Promise<LifiBridgeRoute[]> {
-  const body = {
-    fromChainId: params.fromChainId,
-    toChainId: params.toChainId,
-    fromTokenAddress: params.fromTokenAddress,
-    toTokenAddress: params.toTokenAddress,
-    fromAmount: params.fromAmount,
-    fromAddress: params.fromAddress,
-    toAddress: params.toAddress,
-    options: {
-      slippage: params.slippage,
-      order: 'RECOMMENDED' as const,
-      integrator: params.integrator,
-    },
-  };
+export async function fetchQuote(params: GetQuoteParams): Promise<LifiBridgeRoute | null> {
+  const url = new URL(`${LIFI_API}/quote`);
+  url.searchParams.set('fromChain', String(params.fromChainId));
+  url.searchParams.set('toChain', String(params.toChainId));
+  url.searchParams.set('fromToken', params.fromTokenAddress);
+  url.searchParams.set('toToken', params.toTokenAddress);
+  url.searchParams.set('fromAmount', params.fromAmount);
+  url.searchParams.set('fromAddress', params.fromAddress);
+  url.searchParams.set('toAddress', params.toAddress);
+  url.searchParams.set('slippage', String(params.slippage));
+  url.searchParams.set('integrator', params.integrator);
+  if (params.denyBridges && params.denyBridges.length > 0) {
+    url.searchParams.set('denyBridges', params.denyBridges.join(','));
+  }
 
-  const json = await doFetch(
-    `${LIFI_API}/routes`,
-    { method: 'POST', headers: apiHeaders(params.apiKey), body: JSON.stringify(body) },
-    'fetchRoutes',
-  );
-  const parsed = LifiRoutesResponseSchema.safeParse(json);
+  let json: unknown;
+  try {
+    json = await doFetch(url.toString(), { headers: apiHeaders(params.apiKey) }, 'fetchQuote');
+  } catch (err) {
+    // Li.Fi returns HTTP 422 when no route is available for the pair — surface as null, not error
+    if (err instanceof ConciergeError && /HTTP 422/.test(err.message)) return null;
+    throw err;
+  }
+
+  const parsed = LifiQuoteResponseSchema.safeParse(json);
   if (!parsed.success)
     throw new ConciergeError(
       'RpcError',
-      `[@concierge/lifi-bridge] fetchRoutes: unexpected response shape — ${parsed.error.message}`,
+      `[@concierge/lifi-bridge] fetchQuote: unexpected response shape — ${parsed.error.message}`,
     );
 
-  const receivedAt = Date.now();
-  return parsed.data.routes
-    .map((r) => normalizeRoute(r, receivedAt))
-    .filter((r): r is LifiBridgeRoute => r !== null);
+  const route = normalizeQuote(parsed.data, Date.now());
+  if (!route)
+    throw new ConciergeError(
+      'RpcError',
+      '[@concierge/lifi-bridge] fetchQuote: Li.Fi returned a route missing required amount fields',
+    );
+  return route;
 }
 
 export interface GetStatusParams {

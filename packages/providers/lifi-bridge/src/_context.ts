@@ -6,8 +6,8 @@ export const LIFI_API = 'https://li.quest/v1' as const;
 export const ROUTE_TTL_MS = 30_000;
 
 export interface ActionContext {
-  readonly publicClient?: PublicClient;
-  readonly walletClient?: WalletClient;
+  readonly publicClient: PublicClient | undefined;
+  readonly walletClient: WalletClient | undefined;
   readonly chainId: EvmChainId;
   readonly apiKey: string | undefined;
   readonly integrator: string;

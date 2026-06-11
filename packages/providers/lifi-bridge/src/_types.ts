@@ -11,6 +11,7 @@ export const LifiTransactionRequestSchema = z.object({
   data: z.string(),
   value: z.string(),
   gasLimit: z.string().optional(),
+  gasPrice: z.string().optional(),
   chainId: z.number(),
 });
 
@@ -22,19 +23,6 @@ export const LifiStepEstimateSchema = z.object({
   gasCosts: z.array(LifiGasCostSchema).optional(),
 });
 
-export const LifiStepSchema = z.object({
-  id: z.string(),
-  type: z.string(),
-  tool: z.string(),
-  toolDetails: z.object({
-    name: z.string(),
-    key: z.string(),
-    logoURI: z.string().optional(),
-  }),
-  estimate: LifiStepEstimateSchema,
-  transactionRequest: LifiTransactionRequestSchema.optional(),
-});
-
 export const LifiTokenSchema = z.object({
   address: z.string(),
   symbol: z.string(),
@@ -43,38 +31,50 @@ export const LifiTokenSchema = z.object({
   chainId: z.number().optional(),
 });
 
-// Internal enriched route — transactionRequest lifted from steps[0] and _receivedAt added.
+// The action field on a Li.Fi Step — carries fromToken/toToken/chain info
+const LifiActionSchema = z.object({
+  fromChainId: z.number(),
+  toChainId: z.number(),
+  fromToken: LifiTokenSchema,
+  toToken: LifiTokenSchema,
+  fromAmount: z.string(),
+  fromAddress: z.string(),
+  toAddress: z.string().optional(),
+  slippage: z.number(),
+});
+
+// Response schema for GET /v1/quote — a single Step object with transactionRequest inline
+export const LifiQuoteResponseSchema = z.object({
+  id: z.string(),
+  type: z.string(),
+  tool: z.string(),
+  toolDetails: z.object({
+    name: z.string(),
+    key: z.string(),
+    logoURI: z.string().optional(),
+  }),
+  action: LifiActionSchema,
+  estimate: LifiStepEstimateSchema,
+  transactionRequest: LifiTransactionRequestSchema,
+  includedSteps: z.array(z.unknown()).optional(),
+});
+
+// Internal enriched route — fromToken/toToken promoted from action, _receivedAt added
 export const LifiBridgeRouteSchema = z.object({
   id: z.string(),
+  tool: z.string(),
+  toolDetails: z.object({ name: z.string(), key: z.string(), logoURI: z.string().optional() }),
   fromChainId: z.number(),
   toChainId: z.number(),
   fromToken: LifiTokenSchema,
   toToken: LifiTokenSchema,
   estimate: LifiStepEstimateSchema,
-  steps: z.array(LifiStepSchema),
-  tags: z.array(z.string()).optional(),
   transactionRequest: LifiTransactionRequestSchema,
   _receivedAt: z.number(),
 });
 
 export type LifiBridgeRoute = z.infer<typeof LifiBridgeRouteSchema>;
 export type LifiTransactionRequest = z.infer<typeof LifiTransactionRequestSchema>;
-
-export const LifiRoutesResponseSchema = z.object({
-  routes: z.array(
-    z.object({
-      id: z.string(),
-      fromChainId: z.number(),
-      toChainId: z.number(),
-      fromToken: LifiTokenSchema,
-      toToken: LifiTokenSchema,
-      estimate: LifiStepEstimateSchema.partial(),
-      steps: z.array(LifiStepSchema),
-      tags: z.array(z.string()).optional(),
-      transactionRequest: LifiTransactionRequestSchema.optional(),
-    }),
-  ),
-});
 
 export const LifiStatusResponseSchema = z.object({
   status: z.enum(['PENDING', 'DONE', 'FAILED', 'NOT_FOUND']),

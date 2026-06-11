@@ -1,8 +1,13 @@
+import { ConciergeError } from '@concierge/sdk';
 import { tool } from '@concierge/tools';
 import { z } from 'zod';
 import { fetchBridgeStatus } from '../_api.ts';
 import type { ActionContext } from '../_context.ts';
-import { buildCompletedAttestation, CompletedAttestationPayloadSchema } from '../attestation.ts';
+import {
+  buildCompletedAttestation,
+  type CompletedAttestationPayload,
+  CompletedAttestationPayloadSchema,
+} from '../attestation.ts';
 
 const TX_HASH_REGEX = /^0x[0-9a-fA-F]{64}$/;
 
@@ -53,14 +58,24 @@ export async function executeGetStatus(
     };
   }
 
-  const completedAttestation = buildCompletedAttestation({
-    fromChain: input.fromChain,
-    toChain: input.toChain,
-    sourceTxHash: input.sourceTxHash,
-    destinationTxHash,
-    lifiOperationId: input.lifiOperationId,
-    bridgeUsed,
-  });
+  let completedAttestation: CompletedAttestationPayload;
+  try {
+    completedAttestation = buildCompletedAttestation({
+      fromChain: input.fromChain,
+      toChain: input.toChain,
+      sourceTxHash: input.sourceTxHash,
+      destinationTxHash,
+      lifiOperationId: input.lifiOperationId,
+      bridgeUsed,
+    });
+  } catch (err) {
+    throw new ConciergeError(
+      'AttestationFailed',
+      `[@concierge/lifi-bridge] getStatus: bridge DONE (destinationTxHash: ${destinationTxHash}) ` +
+        'but completed attestation failed — record concierge.lifi.bridge.completed.v1 manually',
+      err instanceof Error ? err : undefined,
+    );
+  }
 
   return { status, destinationTxHash, bridgeUsed, completedAttestation };
 }

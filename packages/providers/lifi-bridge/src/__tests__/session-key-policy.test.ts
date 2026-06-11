@@ -9,6 +9,9 @@ const SD = '(address,address,address,address,uint256,bytes,bool)[]' as const;
 const EXPECTED_ACROSS_START = toFunctionSelector(
   `startBridgeTokensViaAcrossV3(${BD},(address,address,address,uint256,uint256,uint32,int64,uint32,bytes))`,
 );
+const EXPECTED_ACROSS_SWAP_AND_START = toFunctionSelector(
+  `swapAndStartBridgeTokensViaAcrossV3(${BD},${SD},(address,address,address,uint256,uint256,uint32,int64,uint32,bytes))`,
+);
 const EXPECTED_STARGATE_START = toFunctionSelector(
   `startBridgeTokensViaStargate(${BD},(uint32,uint16,address,uint256,uint256,bytes,address))`,
 );
@@ -32,10 +35,11 @@ describe('callPolicy — restrictive session key policy (test_sessionKey_PolicyR
     }
   });
 
-  it('BRIDGE_FUNCTION_SELECTORS contains at least the Across, Stargate, and Hop bridge selectors', () => {
+  it('BRIDGE_FUNCTION_SELECTORS contains all known bridge + swap-and-bridge selectors', () => {
     expect(BRIDGE_FUNCTION_SELECTORS.length).toBeGreaterThanOrEqual(4);
     // Verify specific known selectors by value (not just count)
     expect(BRIDGE_FUNCTION_SELECTORS).toContain(EXPECTED_ACROSS_START);
+    expect(BRIDGE_FUNCTION_SELECTORS).toContain(EXPECTED_ACROSS_SWAP_AND_START);
     expect(BRIDGE_FUNCTION_SELECTORS).toContain(EXPECTED_STARGATE_START);
     expect(BRIDGE_FUNCTION_SELECTORS).toContain(EXPECTED_HOP_START);
     // All are unique
