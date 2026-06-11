@@ -1,3 +1,4 @@
+import { ConciergeError } from '@concierge/sdk';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ActionContext } from '../../_context.ts';
 import { executeGetCarryVsAave } from '../../actions/getCarryVsAave.ts';
@@ -58,7 +59,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('executeGetCarryVsAave — unit', () => {
+describe('executeGetCarryVsAave — carry math', () => {
   it('positive carry: sUSDe 380 bps, USDC borrow 351 bps → carryBps 29, passing', async () => {
     stubEthenaYield(380);
     const result = await executeGetCarryVsAave(makeCtx(351), 0);
@@ -97,13 +98,26 @@ describe('executeGetCarryVsAave — unit', () => {
     expect(result.carryBps).toBe(50);
     expect(result.spreadFloorPassing).toBe(true);
   });
+});
 
-  it('fetches Aave USDC reserve data and Ethena API in parallel', async () => {
+describe('executeGetCarryVsAave — contract interaction', () => {
+  it('calls Aave getReserveData with USDC address', async () => {
     stubEthenaYield(380);
     const ctx = makeCtx(351);
     await executeGetCarryVsAave(ctx, 0);
     expect(ctx.publicClient.readContract).toHaveBeenCalledWith(
       expect.objectContaining({ functionName: 'getReserveData', args: [USDC] }),
+    );
+  });
+
+  it('throws ConciergeError(RpcError) when Aave readContract fails', async () => {
+    stubEthenaYield(380);
+    const ctx = makeCtx(351);
+    (ctx.publicClient.readContract as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error('rpc timeout'),
+    );
+    await expect(executeGetCarryVsAave(ctx, 0)).rejects.toSatisfy(
+      (e: unknown) => e instanceof ConciergeError && e.type === 'RpcError',
     );
   });
 });

@@ -51,8 +51,16 @@ function resolveChain(opts: EthenaSusdeProviderOpts): { viemChain: Chain; chainI
   if (opts.chain) {
     if (opts.chain === 'mantle-mainnet') return { viemChain: mantleMainnet, chainId: 5000 };
     if (opts.chain === 'mantle-sepolia') return { viemChain: mantleSepolia, chainId: 5003 };
-    const id = opts.chain.id as EvmChainId;
-    return { viemChain: opts.chain, chainId: id };
+    const id = opts.chain.id;
+    if (!SUPPORTED_CHAIN_IDS.has(id)) {
+      throw new ConciergeError(
+        'NetworkUnsupported',
+        `[@concierge/ethena-susde] expected Mantle Mainnet (5000) or Mantle Sepolia (5003), got chainId ${id}.`,
+        undefined,
+        { chainId: id },
+      );
+    }
+    return { viemChain: opts.chain, chainId: id as EvmChainId };
   }
   if (opts.rpcUrl?.includes('sepolia')) return { viemChain: mantleSepolia, chainId: 5003 };
   return { viemChain: mantleMainnet, chainId: 5000 };
@@ -64,10 +72,16 @@ export function createEthenaSusdeProvider(opts: EthenaSusdeProviderOpts = {}): E
   const publicClient = opts.publicClient ?? createPublicClient({ chain: viemChain, transport });
 
   let sharedAddrs: ReturnType<typeof addressesFor> | undefined;
-  try {
-    sharedAddrs = SUPPORTED_CHAIN_IDS.has(chainId) ? addressesFor(chainId) : undefined;
-  } catch {
-    sharedAddrs = undefined;
+  if (SUPPORTED_CHAIN_IDS.has(chainId)) {
+    try {
+      sharedAddrs = addressesFor(chainId);
+    } catch (err) {
+      throw new ConciergeError(
+        'ConfigError',
+        `[@concierge/ethena-susde] failed to load shared addresses for chainId ${chainId} — @concierge/shared may be out of sync`,
+        err instanceof Error ? err : undefined,
+      );
+    }
   }
   const ov = opts.addresses ?? {};
 

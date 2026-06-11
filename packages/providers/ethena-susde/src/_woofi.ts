@@ -83,9 +83,34 @@ export async function ensureApproval(
       err instanceof Error ? err : undefined,
     );
   }
-  const receipt = await ctx.publicClient.waitForTransactionReceipt({ hash: approveHash });
+  const receipt = await ctx.publicClient
+    .waitForTransactionReceipt({ hash: approveHash })
+    .catch((err: unknown) => {
+      throw new ConciergeError(
+        'RpcError',
+        `${tag}: timed out waiting for approve tx ${approveHash}`,
+        err instanceof Error ? err : undefined,
+      );
+    });
   if (receipt.status === 'reverted') {
     throw new ConciergeError('RpcError', `${tag}: approve tx ${approveHash} reverted`);
+  }
+}
+
+function parseSwapAmountOut(
+  logs: Parameters<typeof parseEventLogs>[0]['logs'],
+  simulatedAmountOut: bigint,
+  tag: string,
+): bigint {
+  // Prefer ground-truth amountOut from the on-chain WooRouterSwap event over simulated estimate.
+  try {
+    const parsed = parseEventLogs({ abi: WOO_SWAP_EVENT_ABI, eventName: 'WooRouterSwap', logs });
+    const toAmount = parsed[0]?.args.toAmount;
+    return toAmount !== undefined ? toAmount : simulatedAmountOut;
+  } catch (err) {
+    // Non-fatal: ABI mismatch on router upgrade falls back to simulated result.
+    console.error(`${tag}: WooRouterSwap event parse failed — using simulated amountOut:`, err);
+    return simulatedAmountOut;
   }
 }
 
@@ -135,24 +160,18 @@ export async function executeWooFiSwap(
     );
   }
 
-  const receipt = await ctx.publicClient.waitForTransactionReceipt({ hash: txHash });
+  const receipt = await ctx.publicClient
+    .waitForTransactionReceipt({ hash: txHash })
+    .catch((err: unknown) => {
+      throw new ConciergeError(
+        'RpcError',
+        `${tag}: timed out waiting for swap tx ${txHash}`,
+        err instanceof Error ? err : undefined,
+      );
+    });
   if (receipt.status === 'reverted') {
     throw new ConciergeError('RpcError', `${tag}: swap tx ${txHash} reverted`);
   }
 
-  // Prefer ground-truth amountOut from WooRouterSwap event over simulated estimate.
-  let amountOut = simulatedAmountOut;
-  try {
-    const logs = parseEventLogs({
-      abi: WOO_SWAP_EVENT_ABI,
-      eventName: 'WooRouterSwap',
-      logs: receipt.logs,
-    });
-    const toAmount = logs[0]?.args.toAmount;
-    if (toAmount !== undefined) amountOut = toAmount;
-  } catch {
-    // Non-fatal: event ABI mismatch falls back to simulated result.
-  }
-
-  return { txHash, amountOut };
+  return { txHash, amountOut: parseSwapAmountOut(receipt.logs, simulatedAmountOut, tag) };
 }

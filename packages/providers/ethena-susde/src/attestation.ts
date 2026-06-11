@@ -1,3 +1,4 @@
+import { ConciergeError } from '@concierge/sdk';
 import type { Address, EvmChainId, Hex } from '@concierge/shared';
 import { z } from 'zod';
 import { NON_NEG_INT_STR, NON_ZERO_ADDRESS, TX_HASH } from './_schema.ts';
@@ -31,7 +32,19 @@ export interface AttestationContext {
 }
 
 export function buildAttestationPayload(ctx: AttestationContext): AttestationPayload {
-  return {
+  if (ctx.amountIn <= 0n) {
+    throw new ConciergeError(
+      'ConfigError',
+      '[@concierge/ethena-susde] attestation: amountIn must be positive',
+    );
+  }
+  if (ctx.amountOut <= 0n) {
+    throw new ConciergeError(
+      'ConfigError',
+      '[@concierge/ethena-susde] attestation: amountOut must be positive',
+    );
+  }
+  const raw = {
     schema: ETHENA_ATTESTATION_SCHEMAS[ctx.action],
     chain: ctx.chainId,
     tokenIn: ctx.tokenIn,
@@ -41,4 +54,5 @@ export function buildAttestationPayload(ctx: AttestationContext): AttestationPay
     txHash: ctx.txHash,
     ts: Math.floor(Date.now() / 1000),
   };
+  return AttestationPayloadSchema.parse(raw);
 }
