@@ -1,13 +1,14 @@
 import { ConciergeError } from '@concierge/sdk';
 import { erc20Abi, ipoolAbi } from '@concierge/shared/abi';
 import { tool } from '@concierge/tools';
-import { maxUint256 } from 'viem';
+import { maxUint256, UserRejectedRequestError } from 'viem';
 import { z } from 'zod';
 import type { ActionContext } from '../_context.ts';
+import { requireWallet } from '../_context.ts';
 import { NON_ZERO_ADDRESS, POSITIVE_BIGINT } from '../_schema.ts';
 import { AttestationPayloadSchema, buildAttestationPayload } from '../attestation.ts';
 import type { UserAccountData } from '../selectors.ts';
-import { getReserveData, getUserAccountData } from '../selectors.ts';
+import { getReserveData, getUserAccountData, getUserEMode } from '../selectors.ts';
 
 // HF policy floor: 1.5 in 1e18-scaled units. Aave liquidates at <1.0; 1.5 is the agent's safe floor.
 const HF_FLOOR = 1_500_000_000_000_000_000n;
@@ -53,14 +54,15 @@ export function assertHFAboveFloor(preState: UserAccountData, amount: bigint | '
 
 // Extracted to satisfy biome noExcessiveLinesPerFunction (≤50 lines each).
 async function executeWithdraw(ctx: ActionContext, args: z.infer<typeof WithdrawInput>) {
-  const { publicClient, walletClient, chainId, poolAddress } = ctx;
-  if (!walletClient) throw new Error('[@concierge/aave-v3-mantle] withdraw: walletClient required');
-  const [account] = await walletClient.getAddresses();
-  if (!account) throw new Error('[@concierge/aave-v3-mantle] withdraw: no account in walletClient');
+  const { publicClient, chainId, poolAddress } = ctx;
+  const { walletClient, account } = await requireWallet(ctx, 'withdraw');
 
   const { asset, amount, to } = args;
   const rawAmount = amount === 'max' ? maxUint256 : amount;
-  const preState = await getUserAccountData(publicClient, poolAddress, account);
+  const [preState, eMode] = await Promise.all([
+    getUserAccountData(publicClient, poolAddress, account),
+    getUserEMode(publicClient, poolAddress, account),
+  ]);
   assertHFAboveFloor(preState, amount);
 
   // For 'max', read the exact aToken balance for accurate attestation amountBase.
@@ -75,16 +77,41 @@ async function executeWithdraw(ctx: ActionContext, args: z.infer<typeof Withdraw
     });
   }
 
-  const txHash = await walletClient.writeContract({
-    address: poolAddress,
-    abi: ipoolAbi,
-    functionName: 'withdraw',
-    args: [asset, rawAmount, to],
-    account,
-    chain: walletClient.chain ?? null,
-  });
+  let txHash: `0x${string}`;
+  try {
+    txHash = await walletClient.writeContract({
+      address: poolAddress,
+      abi: ipoolAbi,
+      functionName: 'withdraw',
+      args: [asset, rawAmount, to],
+      account,
+      chain: walletClient.chain ?? null,
+    });
+  } catch (err) {
+    if (err instanceof UserRejectedRequestError) {
+      throw new ConciergeError(
+        'UserRejected',
+        '[@concierge/aave-v3-mantle] withdraw: transaction rejected by the user.',
+        err,
+      );
+    }
+    throw new ConciergeError(
+      'RpcError',
+      `[@concierge/aave-v3-mantle] withdraw: Pool.withdraw() failed. Verify the aToken balance for ${asset} is sufficient.`,
+      err instanceof Error ? err : undefined,
+      { asset, poolAddress },
+    );
+  }
 
-  await publicClient.waitForTransactionReceipt({ hash: txHash });
+  const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+  if (receipt.status === 'reverted') {
+    throw new ConciergeError(
+      'RpcError',
+      `[@concierge/aave-v3-mantle] withdraw: tx ${txHash} was mined but REVERTED. Verify the aToken balance for ${asset}.`,
+      undefined,
+      { txHash, asset },
+    );
+  }
   const postState = await getUserAccountData(publicClient, poolAddress, account);
 
   // The tx is already mined at this point — return a warning rather than throwing.
@@ -102,7 +129,7 @@ async function executeWithdraw(ctx: ActionContext, args: z.infer<typeof Withdraw
     txHash,
     preHF: preState.healthFactor,
     postHF: postState.healthFactor,
-    eMode: 0,
+    eMode,
   });
   return { txHash, attestationPayload, warning };
 }

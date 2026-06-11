@@ -4,12 +4,15 @@ import { tool } from '@concierge/tools';
 import { maxUint256 } from 'viem';
 import { z } from 'zod';
 import type { ActionContext } from '../_context.ts';
-import { HEX_ADDRESS, POSITIVE_BIGINT } from '../_schema.ts';
+import { requireWallet } from '../_context.ts';
+import { NON_ZERO_ADDRESS, POSITIVE_BIGINT } from '../_schema.ts';
 import { AttestationPayloadSchema, buildAttestationPayload } from '../attestation.ts';
-import { getUserAccountData } from '../selectors.ts';
+import { getUserAccountData, getUserEMode } from '../selectors.ts';
 
 const SupplyInput = z.object({
-  asset: HEX_ADDRESS.describe('ERC-20 token address to supply (USDC, USDe, sUSDe, USDY, or mETH)'),
+  asset: NON_ZERO_ADDRESS.describe(
+    'ERC-20 token address to supply (USDC, USDe, sUSDe, USDY, or mETH)',
+  ),
   amount: POSITIVE_BIGINT.describe('Amount in token base units (e.g. 1_000_000 for 1 USDC)'),
 });
 
@@ -40,18 +43,27 @@ async function ensureApproval(
     account,
     chain: walletClient!.chain ?? null,
   });
-  await publicClient.waitForTransactionReceipt({ hash: approveTxHash });
+  const approveReceipt = await publicClient.waitForTransactionReceipt({ hash: approveTxHash });
+  if (approveReceipt.status === 'reverted') {
+    throw new ConciergeError(
+      'RpcError',
+      `[@concierge/aave-v3-mantle] supply: ERC-20 approve() for ${asset} was mined but REVERTED. Some tokens (e.g. USDT) require zeroing the allowance first: call approve(${poolAddress}, 0) then retry.`,
+      undefined,
+      { asset, poolAddress },
+    );
+  }
 }
 
 // Extracted to satisfy biome noExcessiveLinesPerFunction (≤50 lines each).
 async function executeSupply(ctx: ActionContext, args: z.infer<typeof SupplyInput>) {
-  const { publicClient, walletClient, chainId, poolAddress } = ctx;
-  if (!walletClient) throw new Error('[@concierge/aave-v3-mantle] supply: walletClient required');
-  const [account] = await walletClient.getAddresses();
-  if (!account) throw new Error('[@concierge/aave-v3-mantle] supply: no account in walletClient');
+  const { publicClient, chainId, poolAddress } = ctx;
+  const { walletClient, account } = await requireWallet(ctx, 'supply');
 
   const { asset, amount } = args;
-  const preState = await getUserAccountData(publicClient, poolAddress, account);
+  const [preState, eMode] = await Promise.all([
+    getUserAccountData(publicClient, poolAddress, account),
+    getUserEMode(publicClient, poolAddress, account),
+  ]);
   await ensureApproval(ctx, asset, amount, account);
 
   let txHash: `0x${string}`;
@@ -73,7 +85,15 @@ async function executeSupply(ctx: ActionContext, args: z.infer<typeof SupplyInpu
     );
   }
 
-  await publicClient.waitForTransactionReceipt({ hash: txHash });
+  const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+  if (receipt.status === 'reverted') {
+    throw new ConciergeError(
+      'RpcError',
+      `[@concierge/aave-v3-mantle] supply: tx ${txHash} was mined but REVERTED. Verify the ${asset} supply cap has not been reached.`,
+      undefined,
+      { txHash, asset },
+    );
+  }
   const postState = await getUserAccountData(publicClient, poolAddress, account);
   const attestationPayload = buildAttestationPayload({
     action: 'supply',
@@ -84,7 +104,7 @@ async function executeSupply(ctx: ActionContext, args: z.infer<typeof SupplyInpu
     txHash,
     preHF: preState.healthFactor,
     postHF: postState.healthFactor,
-    eMode: 0,
+    eMode,
   });
   return { txHash, attestationPayload };
 }

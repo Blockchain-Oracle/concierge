@@ -18,6 +18,7 @@ export {
 export {
   getReserveData,
   getUserAccountData,
+  getUserEMode,
   type MaxSafeBorrowOpts,
   maxSafeBorrow,
   type ReserveData,

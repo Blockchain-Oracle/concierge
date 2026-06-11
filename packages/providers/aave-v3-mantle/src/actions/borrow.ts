@@ -8,18 +8,18 @@ import type { Address } from '@concierge/shared';
 import { erc20Abi, ipoolAbi } from '@concierge/shared/abi';
 import { tool } from '@concierge/tools';
 import type { PublicClient } from 'viem';
-import { parseAbi } from 'viem';
+import { UserRejectedRequestError } from 'viem';
 import { z } from 'zod';
 import type { ActionContext } from '../_context.ts';
-import { HEX_ADDRESS, POSITIVE_BIGINT } from '../_schema.ts';
+import { requireWallet } from '../_context.ts';
+import { NON_ZERO_ADDRESS, POSITIVE_BIGINT } from '../_schema.ts';
 import { AttestationPayloadSchema, buildAttestationPayload } from '../attestation.ts';
-import { getReserveData, getUserAccountData } from '../selectors.ts';
-
-// getUserEMode is not in the shared ipoolAbi — add inline to avoid modifying shared package.
-const getUserEModeAbi = parseAbi(['function getUserEMode(address user) view returns (uint256)']);
+import { getReserveData, getUserAccountData, getUserEMode } from '../selectors.ts';
 
 const BorrowInput = z.object({
-  asset: HEX_ADDRESS.describe('ERC-20 token address to borrow (USDC, USDe, or USDT0 in E-Mode 1)'),
+  asset: NON_ZERO_ADDRESS.describe(
+    'ERC-20 token address to borrow (USDC, USDe, or USDT0 in E-Mode 1)',
+  ),
   amount: POSITIVE_BIGINT.describe('Amount in token base units'),
 });
 
@@ -35,18 +35,15 @@ async function checkEModePreflight(
   sUsdeAddress: Address,
   account: Address,
 ): Promise<number> {
-  const { aTokenAddress: aSUsdeAddress } = await getReserveData(
-    publicClient,
-    poolAddress,
-    sUsdeAddress,
-  );
+  let aSUsdeAddress: Address;
+  try {
+    const rd = await getReserveData(publicClient, poolAddress, sUsdeAddress);
+    aSUsdeAddress = rd.aTokenAddress;
+  } catch (err) {
+    throw ConciergeError.fromUnknown(err, 'OracleUnavailable');
+  }
   const [eModeCategoryRaw, aSUsdeBalance] = await Promise.all([
-    publicClient.readContract({
-      address: poolAddress,
-      abi: getUserEModeAbi,
-      functionName: 'getUserEMode',
-      args: [account],
-    }),
+    getUserEMode(publicClient, poolAddress, account),
     publicClient.readContract({
       address: aSUsdeAddress,
       abi: erc20Abi,
@@ -54,16 +51,15 @@ async function checkEModePreflight(
       args: [account],
     }),
   ]);
-  const eModeCategory = Number(eModeCategoryRaw);
-  if (eModeCategory === 0 && aSUsdeBalance > 0n) {
+  if (eModeCategoryRaw === 0 && aSUsdeBalance > 0n) {
     throw new ConciergeError(
       'EModeNotEnabled',
       '[@concierge/aave-v3-mantle] borrow: user has sUSDe collateral (aSUSDe > 0) but E-Mode 1 is not active. Call setUserEMode(1) to avoid a silent zero-return from Pool.borrow().',
       undefined,
-      { aSUsdeBalance: aSUsdeBalance.toString(), eModeCategory },
+      { aSUsdeBalance: aSUsdeBalance.toString(), eModeCategory: eModeCategoryRaw },
     );
   }
-  return eModeCategory;
+  return eModeCategoryRaw;
 }
 
 export function createBorrowTool(ctx: ActionContext) {
@@ -76,12 +72,8 @@ export function createBorrowTool(ctx: ActionContext) {
     outputSchema: BorrowOutput,
     supportsNetwork: (chainId) => chainId === ctx.chainId,
     async invoke({ asset, amount }) {
-      const { publicClient, walletClient, chainId, poolAddress, sUsdeAddress } = ctx;
-      if (!walletClient)
-        throw new Error('[@concierge/aave-v3-mantle] borrow: walletClient required');
-      const [account] = await walletClient.getAddresses();
-      if (!account)
-        throw new Error('[@concierge/aave-v3-mantle] borrow: no account in walletClient');
+      const { publicClient, chainId, poolAddress, sUsdeAddress } = ctx;
+      const { walletClient, account } = await requireWallet(ctx, 'borrow');
 
       const eModeCategory = await checkEModePreflight(
         publicClient,
@@ -91,16 +83,41 @@ export function createBorrowTool(ctx: ActionContext) {
       );
       const preState = await getUserAccountData(publicClient, poolAddress, account);
 
-      const txHash = await walletClient.writeContract({
-        address: poolAddress,
-        abi: ipoolAbi,
-        functionName: 'borrow',
-        args: [asset, amount, 2n, 0, account], // interestRateMode=2 (variable); referralCode=0
-        account,
-        chain: walletClient.chain ?? null,
-      });
+      let txHash: `0x${string}`;
+      try {
+        txHash = await walletClient.writeContract({
+          address: poolAddress,
+          abi: ipoolAbi,
+          functionName: 'borrow',
+          args: [asset, amount, 2n, 0, account], // interestRateMode=2 (variable); referralCode=0
+          account,
+          chain: walletClient.chain ?? null,
+        });
+      } catch (err) {
+        if (err instanceof UserRejectedRequestError) {
+          throw new ConciergeError(
+            'UserRejected',
+            '[@concierge/aave-v3-mantle] borrow: transaction rejected by the user.',
+            err,
+          );
+        }
+        throw new ConciergeError(
+          'RpcError',
+          `[@concierge/aave-v3-mantle] borrow: Pool.borrow() failed. Verify E-Mode ${eModeCategory} is active and the borrow cap for ${asset} has not been reached.`,
+          err instanceof Error ? err : undefined,
+          { asset, poolAddress },
+        );
+      }
 
-      await publicClient.waitForTransactionReceipt({ hash: txHash });
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+      if (receipt.status === 'reverted') {
+        throw new ConciergeError(
+          'RpcError',
+          `[@concierge/aave-v3-mantle] borrow: tx ${txHash} was mined but REVERTED. Verify borrow cap and E-Mode eligibility for ${asset}.`,
+          undefined,
+          { txHash, asset },
+        );
+      }
       const postState = await getUserAccountData(publicClient, poolAddress, account);
       const attestationPayload = buildAttestationPayload({
         action: 'borrow',

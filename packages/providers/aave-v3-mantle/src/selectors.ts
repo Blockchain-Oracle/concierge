@@ -3,6 +3,7 @@
 
 import { ipoolAbi } from '@concierge/shared/abi';
 import type { Address, PublicClient } from 'viem';
+import { parseAbi } from 'viem';
 
 export interface UserAccountData {
   totalCollateralBase: bigint;
@@ -76,6 +77,23 @@ export async function getReserveData(
     aTokenAddress: r[9],
     variableDebtTokenAddress: r[11],
   };
+}
+
+// getUserEMode is not in the shared ipoolAbi — inline to avoid modifying the shared package.
+const getUserEModeAbi = parseAbi(['function getUserEMode(address user) view returns (uint256)']);
+
+export async function getUserEMode(
+  publicClient: PublicClient,
+  poolAddress: Address,
+  user: Address,
+): Promise<number> {
+  const raw = await publicClient.readContract({
+    address: poolAddress,
+    abi: getUserEModeAbi,
+    functionName: 'getUserEMode',
+    args: [user],
+  });
+  return Number(raw);
 }
 
 export interface MaxSafeBorrowOpts {

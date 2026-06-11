@@ -1,3 +1,4 @@
+import { ConciergeError } from '@concierge/sdk';
 import {
   type Address,
   addressesFor,
@@ -46,18 +47,29 @@ export interface AaveV3MantleProvider {
   };
 }
 
+const SUPPORTED_CHAIN_IDS = new Set([5000, 5003]);
+
 function resolveChain(opts: AaveV3MantleProviderOpts): { viemChain: Chain; chainId: EvmChainId } {
   if (opts.walletClient?.chain) {
-    const id = opts.walletClient.chain.id as EvmChainId;
-    return { viemChain: opts.walletClient.chain, chainId: id };
+    const id = opts.walletClient.chain.id;
+    if (!SUPPORTED_CHAIN_IDS.has(id)) {
+      throw new ConciergeError(
+        'NetworkUnsupported',
+        `[@concierge/aave-v3-mantle] expected Mantle Mainnet (5000) or Mantle Sepolia (5003), got chainId ${id}. Connect a Mantle wallet or pass chain: "mantle-mainnet".`,
+        undefined,
+        { chainId: id },
+      );
+    }
+    return { viemChain: opts.walletClient.chain, chainId: id as EvmChainId };
   }
   if (opts.chain) {
     if (opts.chain === 'mantle-mainnet') return { viemChain: mantleMainnet, chainId: 5000 };
     if (opts.chain === 'mantle-sepolia') return { viemChain: mantleSepolia, chainId: 5003 };
+    // Custom Chain object (e.g. Anvil fork with address overrides): trust the caller.
     const id = opts.chain.id as EvmChainId;
     return { viemChain: opts.chain, chainId: id };
   }
-  // Infer from rpcUrl pattern; fall back to mainnet.
+  // rpcUrl heuristic — best-effort only; non-standard URLs should pass chain explicitly.
   if (opts.rpcUrl?.includes('sepolia')) return { viemChain: mantleSepolia, chainId: 5003 };
   return { viemChain: mantleMainnet, chainId: 5000 };
 }
@@ -75,7 +87,7 @@ export function createAaveV3MantleProvider(
 
   const poolAddress = ov?.pool ?? sharedAddrs.aave.pool;
   const oracleAddress = ov?.oracle ?? sharedAddrs.aave.oracle;
-  // Sepolia: incentives controller not deployed — claimRewards will throw NotSupportedOnChain.
+  // Sepolia: incentives controller not deployed — claimRewards will throw NetworkUnsupported.
   const incentivesControllerAddress: Address | undefined =
     ov?.incentivesController ?? (chainId === 5000 ? MAINNET_INCENTIVES_CONTROLLER : undefined);
   const sUsdeAddress = ov?.sUsde ?? sharedAddrs.tokens.sUSDe;

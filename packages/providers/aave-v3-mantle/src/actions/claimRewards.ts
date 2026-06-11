@@ -2,12 +2,13 @@ import { ConciergeError } from '@concierge/sdk';
 import type { Address, Hex } from '@concierge/shared';
 import { tool } from '@concierge/tools';
 import type { TransactionReceipt } from 'viem';
-import { decodeEventLog, parseAbi } from 'viem';
+import { decodeEventLog, encodeEventTopics, parseAbi } from 'viem';
 import { z } from 'zod';
 import type { ActionContext } from '../_context.ts';
+import { requireWallet } from '../_context.ts';
 import { NON_ZERO_ADDRESS } from '../_schema.ts';
 import { AttestationPayloadSchema, buildAttestationPayload } from '../attestation.ts';
-import { getUserAccountData } from '../selectors.ts';
+import { getUserAccountData, getUserEMode } from '../selectors.ts';
 
 const rewardsControllerAbi = parseAbi([
   'function claimAllRewards(address[] calldata assets, address to) external returns (address[] rewardsList, uint256[] claimedAmounts)',
@@ -33,6 +34,9 @@ const ClaimRewardsOutput = z.object({
   attestationPayload: AttestationPayloadSchema,
 });
 
+// Pre-compute the RewardsClaimed topic hash so we only decode matching logs.
+const REWARDS_CLAIMED_TOPIC = encodeEventTopics({ abi: rewardsClaimedEventAbi })[0];
+
 function parseRewardsClaimed(receipt: TransactionReceipt): {
   rewardsList: string[];
   claimedAmounts: string[];
@@ -40,19 +44,16 @@ function parseRewardsClaimed(receipt: TransactionReceipt): {
   const rewardsList: string[] = [];
   const claimedAmounts: string[] = [];
   for (const log of receipt.logs) {
-    try {
-      const { args } = decodeEventLog({
-        abi: rewardsClaimedEventAbi,
-        data: log.data as Hex,
-        topics: log.topics as [Hex, ...Hex[]],
-        strict: false,
-      });
-      if (args?.reward && args?.amount !== undefined) {
-        rewardsList.push(args.reward as string);
-        claimedAmounts.push((args.amount as bigint).toString());
-      }
-    } catch {
-      /* not a RewardsClaimed event */
+    if (log.topics[0] !== REWARDS_CLAIMED_TOPIC) continue;
+    const { args } = decodeEventLog({
+      abi: rewardsClaimedEventAbi,
+      data: log.data as Hex,
+      topics: log.topics as [Hex, ...Hex[]],
+      strict: false,
+    });
+    if (args?.reward && args?.amount !== undefined) {
+      rewardsList.push(args.reward as string);
+      claimedAmounts.push((args.amount as bigint).toString());
     }
   }
   return { rewardsList, claimedAmounts };
@@ -60,22 +61,20 @@ function parseRewardsClaimed(receipt: TransactionReceipt): {
 
 // Extracted to satisfy biome noExcessiveLinesPerFunction (≤50 lines each).
 async function executeClaimRewards(ctx: ActionContext, args: z.infer<typeof ClaimRewardsInput>) {
-  const { publicClient, walletClient, chainId, poolAddress, incentivesControllerAddress } = ctx;
+  const { publicClient, chainId, poolAddress, incentivesControllerAddress } = ctx;
   if (!incentivesControllerAddress) {
     throw new ConciergeError(
       'NetworkUnsupported',
       '[@concierge/aave-v3-mantle] claimRewards: incentives controller is not deployed on this chain. Use Mantle Mainnet or provide an incentivesController override.',
     );
   }
-  if (!walletClient)
-    throw new Error('[@concierge/aave-v3-mantle] claimRewards: walletClient required');
-
-  const [account] = await walletClient.getAddresses();
-  if (!account)
-    throw new Error('[@concierge/aave-v3-mantle] claimRewards: no account in walletClient');
+  const { walletClient, account } = await requireWallet(ctx, 'claimRewards');
 
   const { assets, to } = args;
-  const preState = await getUserAccountData(publicClient, poolAddress, account);
+  const [preState, eMode] = await Promise.all([
+    getUserAccountData(publicClient, poolAddress, account),
+    getUserEMode(publicClient, poolAddress, account),
+  ]);
 
   const txHash = await walletClient.writeContract({
     address: incentivesControllerAddress as Address,
@@ -86,11 +85,7 @@ async function executeClaimRewards(ctx: ActionContext, args: z.infer<typeof Clai
     chain: walletClient.chain ?? null,
   });
 
-  const [postState, receipt] = await Promise.all([
-    getUserAccountData(publicClient, poolAddress, account),
-    publicClient.waitForTransactionReceipt({ hash: txHash }),
-  ]);
-
+  const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
   if (receipt.status === 'reverted') {
     throw new ConciergeError(
       'RpcError',
@@ -100,6 +95,7 @@ async function executeClaimRewards(ctx: ActionContext, args: z.infer<typeof Clai
     );
   }
 
+  const postState = await getUserAccountData(publicClient, poolAddress, account);
   const { rewardsList, claimedAmounts } = parseRewardsClaimed(receipt);
   const attestationPayload = buildAttestationPayload({
     action: 'claimRewards',
@@ -110,7 +106,7 @@ async function executeClaimRewards(ctx: ActionContext, args: z.infer<typeof Clai
     txHash,
     preHF: preState.healthFactor,
     postHF: postState.healthFactor,
-    eMode: 0,
+    eMode,
   });
   return { txHash, rewardsList, claimedAmounts, attestationPayload };
 }

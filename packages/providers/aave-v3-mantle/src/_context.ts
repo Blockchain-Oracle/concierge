@@ -1,5 +1,6 @@
 // Internal shared context passed to every action factory — not part of the public API.
 
+import { ConciergeError } from '@concierge/sdk';
 import type { Address, EvmChainId } from '@concierge/shared';
 import type { PublicClient, WalletClient } from 'viem';
 
@@ -13,4 +14,25 @@ export interface ActionContext {
   incentivesControllerAddress: Address | undefined;
   // Used in borrow's E-Mode pre-check to detect sUSDe collateral
   sUsdeAddress: Address;
+}
+
+/** Guards every write action: throws ConfigError when walletClient is absent or has no account. */
+export async function requireWallet(
+  ctx: ActionContext,
+  action: string,
+): Promise<{ walletClient: WalletClient; account: Address }> {
+  if (!ctx.walletClient) {
+    throw new ConciergeError(
+      'ConfigError',
+      `[@concierge/aave-v3-mantle] ${action}: walletClient is required for write operations. Initialise AaveV3MantleProvider with a connected WalletClient.`,
+    );
+  }
+  const [account] = await ctx.walletClient.getAddresses();
+  if (!account) {
+    throw new ConciergeError(
+      'ConfigError',
+      `[@concierge/aave-v3-mantle] ${action}: no account found in walletClient. Connect a wallet account before calling write operations.`,
+    );
+  }
+  return { walletClient: ctx.walletClient, account };
 }
