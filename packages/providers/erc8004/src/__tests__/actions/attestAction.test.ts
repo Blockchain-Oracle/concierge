@@ -226,7 +226,7 @@ describe('attestAction — fork: live Sepolia ReputationRegistry', () => {
   });
 
   afterAll(async () => {
-    await fork.stop();
+    await fork?.stop();
   });
 
   // ERC-8004 enforces "Self-feedback not allowed": the agent owner cannot attest on itself.

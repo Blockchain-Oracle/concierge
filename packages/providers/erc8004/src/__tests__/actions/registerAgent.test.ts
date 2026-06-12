@@ -185,7 +185,7 @@ describe('registerAgent — fork: live Sepolia IdentityRegistry', () => {
   });
 
   afterAll(async () => {
-    await fork.stop();
+    await fork?.stop();
   });
 
   function makeForkedCtx(): ActionContext {
