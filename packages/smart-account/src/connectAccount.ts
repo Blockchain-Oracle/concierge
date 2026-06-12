@@ -72,6 +72,12 @@ export async function connectToConciergeAccount(
     kernelVersion: KERNEL_V3_1,
     address: config.address,
   }).catch(rpcCatch('connectToConciergeAccount: kernel account init failed', config.chain));
+  if (kernelAccount.address.toLowerCase() !== config.address.toLowerCase()) {
+    throw new ConciergeError(
+      'ConfigError',
+      `[@concierge/smart-account] connectToConciergeAccount: address mismatch — supplied '${config.address}' but kernel account resolved to '${kernelAccount.address}'. Verify the owner key matches this smart account address.`,
+    );
+  }
   const smartAccountAddress = kernelAccount.address;
   const paymasterStrategy =
     config.paymaster ?? (config.chain === 'mantle-sepolia' ? 'pimlico' : 'none');
@@ -96,10 +102,14 @@ export async function connectToConciergeAccount(
       }),
     }) as unknown as KernelClientStub & object;
   } catch (err) {
+    const cause =
+      err instanceof Error && err.message.includes(apiKey)
+        ? new Error(err.message.replaceAll(apiKey, '[REDACTED]'))
+        : err;
     throw new ConciergeError(
       'RpcError',
       `[@concierge/smart-account] connectToConciergeAccount: kernel client init failed (chain: '${config.chain}')`,
-      err,
+      cause,
     );
   }
   return { smartAccountAddress, kernelAccount, kernelClient };

@@ -324,7 +324,9 @@ describe('createConciergeAccount — security', () => {
       (e: unknown) =>
         e instanceof ConciergeError &&
         e.type === 'RpcError' &&
-        !String(e.message).includes(TEST_PIMLICO_KEY),
+        !String(e.message).includes(TEST_PIMLICO_KEY) &&
+        // biome-ignore lint/suspicious/noExplicitAny: checking cause.message for API key leak
+        !String((e as any).cause?.message ?? '').includes(TEST_PIMLICO_KEY),
     );
   });
 });

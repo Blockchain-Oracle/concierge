@@ -34,7 +34,7 @@ function parseTier(
   if (data.error) {
     throw new ConciergeError(
       'RpcError',
-      `[@concierge/smart-account] getUserOpGasPrice: Pimlico RPC error ${data.error.code}: ${data.error.message} (chain: '${chain}')`,
+      `[@concierge/smart-account] getUserOpGasPrice: Pimlico RPC error ${data.error.code}: ${data.error.message.slice(0, 200)} (chain: '${chain}')`,
     );
   }
   if (!data.result?.standard) {
@@ -53,7 +53,7 @@ function parseTier(
   if (!rawMax.startsWith('0x') || !rawPriority.startsWith('0x')) {
     throw new ConciergeError(
       'RpcError',
-      `[@concierge/smart-account] getUserOpGasPrice: expected 0x-prefixed hex strings — maxFeePerGas="${rawMax}" maxPriorityFeePerGas="${rawPriority}" (chain: '${chain}')`,
+      `[@concierge/smart-account] getUserOpGasPrice: expected 0x-prefixed hex strings — maxFeePerGas="${rawMax.slice(0, 80)}" maxPriorityFeePerGas="${rawPriority.slice(0, 80)}" (chain: '${chain}')`,
     );
   }
   let maxFeePerGas: bigint;
@@ -64,7 +64,7 @@ function parseTier(
   } catch (_err) {
     throw new ConciergeError(
       'RpcError',
-      `[@concierge/smart-account] getUserOpGasPrice: BigInt conversion failed — maxFeePerGas="${rawMax}" maxPriorityFeePerGas="${rawPriority}" (chain: '${chain}')`,
+      `[@concierge/smart-account] getUserOpGasPrice: BigInt conversion failed — maxFeePerGas="${rawMax.slice(0, 80)}" maxPriorityFeePerGas="${rawPriority.slice(0, 80)}" (chain: '${chain}')`,
       _err,
     );
   }
@@ -150,7 +150,7 @@ export async function getUserOpGasPrice(config: GetUserOpGasPriceConfig): Promis
       `[@concierge/smart-account] getUserOpGasPrice: UnsupportedChain('${config.chain}') — supported: ${Object.keys(CHAIN_CONFIGS).join(', ')}`,
     );
   }
-  const url = `${chainConfig.bundlerBaseUrl}?apikey=${apiKey}`;
+  const url = `${chainConfig.bundlerBaseUrl}?apikey=${encodeURIComponent(apiKey)}`;
   let res: Response;
   try {
     res = await fetch(url, {
@@ -163,11 +163,15 @@ export async function getUserOpGasPrice(config: GetUserOpGasPriceConfig): Promis
         params: [],
       }),
     });
-  } catch (_err) {
+  } catch (fetchErr) {
+    const cause =
+      fetchErr instanceof Error && fetchErr.message.includes(apiKey)
+        ? new Error(fetchErr.message.replaceAll(apiKey, '[REDACTED]'))
+        : fetchErr;
     throw new ConciergeError(
       'RpcError',
       `[@concierge/smart-account] getUserOpGasPrice: network error reaching Pimlico (chain: '${config.chain}')`,
-      _err,
+      cause,
     );
   }
   if (!res.ok) {

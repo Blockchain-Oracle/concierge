@@ -40,5 +40,9 @@ export function resolveChainConfig(
       `[@concierge/smart-account] ${callerName}: MissingEnvVar('PIMLICO_API_KEY') — set this env var or pass apiKey in config.`,
     );
   }
-  return { chainConfig, apiKey, bundlerUrl: `${chainConfig.bundlerBaseUrl}?apikey=${apiKey}` };
+  return {
+    chainConfig,
+    apiKey,
+    bundlerUrl: `${chainConfig.bundlerBaseUrl}?apikey=${encodeURIComponent(apiKey)}`,
+  };
 }

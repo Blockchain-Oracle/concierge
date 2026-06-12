@@ -92,7 +92,8 @@ describe('getUserOpGasPrice — value constraints', () => {
       (e: unknown) =>
         e instanceof ConciergeError &&
         e.type === 'RpcError' &&
-        String(e.message).includes('BigInt conversion failed'),
+        String(e.message).includes('BigInt conversion failed') &&
+        e.cause instanceof Error,
     );
   });
 
@@ -113,14 +114,28 @@ describe('getUserOpGasPrice — value constraints', () => {
         String(e.message).includes('EIP-1559 invariant violated'),
     );
   });
+});
 
-  it('network error message does not expose the API key', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network failure')));
+describe('getUserOpGasPrice — security', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubEnv('PIMLICO_API_KEY', TEST_PIMLICO_KEY);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it('network error message and cause do not expose the API key', async () => {
+    const urlWithKey = `https://api.pimlico.io/v2/mantle-sepolia/rpc?apikey=${TEST_PIMLICO_KEY}`;
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error(`fetch failed: ${urlWithKey}`)));
     await expect(getUserOpGasPrice({ chain: 'mantle-sepolia' })).rejects.toSatisfy(
       (e: unknown) =>
         e instanceof ConciergeError &&
         e.type === 'RpcError' &&
-        !String(e.message).includes(TEST_PIMLICO_KEY),
+        !String(e.message).includes(TEST_PIMLICO_KEY) &&
+        // biome-ignore lint/suspicious/noExplicitAny: checking cause.message for API key leak
+        !String((e as any).cause?.message ?? '').includes(TEST_PIMLICO_KEY),
     );
   });
 });

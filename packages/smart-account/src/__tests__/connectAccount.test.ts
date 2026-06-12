@@ -318,7 +318,40 @@ describe('connectToConciergeAccount — security', () => {
       (e: unknown) =>
         e instanceof ConciergeError &&
         e.type === 'RpcError' &&
-        !String(e.message).includes(TEST_PIMLICO_KEY),
+        !String(e.message).includes(TEST_PIMLICO_KEY) &&
+        // biome-ignore lint/suspicious/noExplicitAny: checking cause.message for API key leak
+        !String((e as any).cause?.message ?? '').includes(TEST_PIMLICO_KEY),
+    );
+  });
+});
+
+describe('connectToConciergeAccount — address consistency', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubEnv('PIMLICO_API_KEY', TEST_PIMLICO_KEY);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('throws ConfigError when kernelAccount.address does not match supplied address', async () => {
+    const { createKernelAccount } = await import('@zerodev/sdk');
+    const mismatchedAddress = '0xDeAdBeEf00000000000000000000000000000000' as const;
+    vi.mocked(createKernelAccount).mockResolvedValueOnce({
+      address: mismatchedAddress,
+      // biome-ignore lint/suspicious/noExplicitAny: minimal KernelAccount stub for mismatch test
+    } as any);
+    await expect(
+      connectToConciergeAccount({
+        address: EXISTING_ADDRESS,
+        owner: MOCK_OWNER,
+        chain: 'mantle-sepolia',
+      }),
+    ).rejects.toSatisfy(
+      (e: unknown) =>
+        e instanceof ConciergeError &&
+        e.type === 'ConfigError' &&
+        String(e.message).includes('address mismatch'),
     );
   });
 });
