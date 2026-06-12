@@ -34,7 +34,7 @@ function parseTier(
   if (data.error) {
     throw new ConciergeError(
       'RpcError',
-      `[@concierge/smart-account] getUserOpGasPrice: ${data.error.message}`,
+      `[@concierge/smart-account] getUserOpGasPrice: Pimlico RPC error ${data.error.code}: ${data.error.message} (chain: '${chain}')`,
     );
   }
   if (!data.result?.standard) {
@@ -99,9 +99,9 @@ async function readAndParseBody(res: Response, chain: SupportedChain): Promise<P
       _err,
     );
   }
-  let parsed: Record<string, unknown>;
+  let parsed: unknown;
   try {
-    parsed = JSON.parse(rawBody) as Record<string, unknown>;
+    parsed = JSON.parse(rawBody);
   } catch (_err) {
     throw new ConciergeError(
       'RpcError',
@@ -109,8 +109,13 @@ async function readAndParseBody(res: Response, chain: SupportedChain): Promise<P
       _err,
     );
   }
-  const isEnvelope = 'result' in parsed || 'error' in parsed;
-  if (typeof parsed !== 'object' || parsed === null || !isEnvelope) {
+  if (typeof parsed !== 'object' || parsed === null) {
+    throw new ConciergeError(
+      'RpcError',
+      `[@concierge/smart-account] getUserOpGasPrice: Pimlico response is not a JSON-RPC envelope (chain: '${chain}') — body: ${rawBody.slice(0, 200)}`,
+    );
+  }
+  if (!('result' in parsed) && !('error' in parsed)) {
     throw new ConciergeError(
       'RpcError',
       `[@concierge/smart-account] getUserOpGasPrice: Pimlico response is not a JSON-RPC envelope (chain: '${chain}') — body: ${rawBody.slice(0, 200)}`,
