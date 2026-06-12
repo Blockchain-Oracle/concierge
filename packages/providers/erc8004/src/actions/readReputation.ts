@@ -45,7 +45,7 @@ async function fetchFeedbackArrays(
   ctx: ActionContext,
   agentId: bigint,
   clients: readonly `0x${string}`[],
-): Promise<FeedbackArrays | null> {
+): Promise<FeedbackArrays> {
   // readAllFeedback returns: (clients[], feedbackIndexes[], values[], valueDecimals[], tag1s[], tag2s[], revokedStatuses[])
   const feedback = await (async () => {
     try {
@@ -69,8 +69,8 @@ async function fetchFeedbackArrays(
   const tag2s = feedback[5];
   const revokedStatuses = feedback[6];
 
-  if (feedbackIndexes.length === 0) return null;
-
+  // Length guard before the empty-check: catches malformed tuples where one array is
+  // non-empty but others are not (would silently collapse to "no feedback" without this).
   if (
     values.length !== feedbackIndexes.length ||
     tag2s.length !== feedbackIndexes.length ||
@@ -85,12 +85,8 @@ async function fetchFeedbackArrays(
   return { feedbackIndexes, values, tag2s, revokedStatuses };
 }
 
-function summarizeFeedback(
-  feedbackIndexes: readonly bigint[],
-  values: readonly bigint[],
-  tag2s: readonly string[],
-  revokedStatuses: readonly boolean[],
-): FeedbackSummary {
+function summarizeFeedback(arrays: FeedbackArrays): FeedbackSummary {
+  const { feedbackIndexes, values, tag2s, revokedStatuses } = arrays;
   const schemaCounts: Record<string, number> = {};
   let latestAttestation: z.infer<typeof LatestAttestationSchema> | null = null;
   for (let i = 0; i < feedbackIndexes.length; i++) {
@@ -114,7 +110,11 @@ function summarizeFeedback(
   return { schemaCounts, latestAttestation, totalAttestations };
 }
 
-const EMPTY_RESULT = { totalAttestations: 0, latestAttestation: null, schemaCounts: {} } as const;
+const EMPTY_RESULT = Object.freeze({
+  totalAttestations: 0,
+  latestAttestation: null,
+  schemaCounts: Object.freeze({}) as Record<string, number>,
+});
 
 export async function executeReadReputation(
   ctx: ActionContext,
@@ -140,15 +140,9 @@ export async function executeReadReputation(
   if (clients.length === 0) return EMPTY_RESULT;
 
   const arrays = await fetchFeedbackArrays(ctx, input.agentId, clients);
-  if (arrays === null) return EMPTY_RESULT;
+  if (arrays.feedbackIndexes.length === 0) return EMPTY_RESULT;
 
-  const { feedbackIndexes, values, tag2s, revokedStatuses } = arrays;
-  const { schemaCounts, latestAttestation, totalAttestations } = summarizeFeedback(
-    feedbackIndexes,
-    values,
-    tag2s,
-    revokedStatuses,
-  );
+  const { schemaCounts, latestAttestation, totalAttestations } = summarizeFeedback(arrays);
   return { totalAttestations, latestAttestation, schemaCounts };
 }
 

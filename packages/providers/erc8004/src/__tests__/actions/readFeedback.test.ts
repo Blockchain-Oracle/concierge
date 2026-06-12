@@ -118,6 +118,24 @@ describe('readFeedback — edge cases', () => {
     expect(result.entries).toHaveLength(2);
   });
 
+  it('throws RpcError when getContractEvents rejects for NewFeedback', async () => {
+    const ctx: ActionContext = {
+      walletClient: undefined,
+      publicClient: {
+        getContractEvents: vi.fn().mockRejectedValue(new Error('rpc timeout')),
+        // biome-ignore lint/suspicious/noExplicitAny: minimal mock for error path
+      } as any,
+      identityRegistry: IDENTITY_REGISTRY,
+      reputationRegistry: REPUTATION_REGISTRY,
+      chainId: 5000,
+    };
+    await expect(executeReadFeedback(ctx, { agentId: AGENT_ID })).rejects.toSatisfy(
+      (e: unknown) => e instanceof ConciergeError && e.type === 'RpcError',
+    );
+  });
+});
+
+describe('readFeedback — call parameters', () => {
   it('calls getContractEvents with fromBlock = 0n when not specified', async () => {
     const ctx = makeCtx([]);
     await executeReadFeedback(ctx, { agentId: AGENT_ID });
@@ -143,20 +161,22 @@ describe('readFeedback — edge cases', () => {
     expect(call.address).toBe(REPUTATION_REGISTRY);
   });
 
-  it('throws RpcError when getContractEvents rejects for NewFeedback', async () => {
-    const ctx: ActionContext = {
-      walletClient: undefined,
-      publicClient: {
-        getContractEvents: vi.fn().mockRejectedValue(new Error('rpc timeout')),
-        // biome-ignore lint/suspicious/noExplicitAny: minimal mock for error path
-      } as any,
-      identityRegistry: IDENTITY_REGISTRY,
-      reputationRegistry: REPUTATION_REGISTRY,
-      chainId: 5000,
-    };
-    await expect(executeReadFeedback(ctx, { agentId: AGENT_ID })).rejects.toSatisfy(
-      (e: unknown) => e instanceof ConciergeError && e.type === 'RpcError',
-    );
+  it('passes fromBlock to the FeedbackRevoked call', async () => {
+    const ctx = makeCtx([]);
+    await executeReadFeedback(ctx, { agentId: AGENT_ID, fromBlock: 5000n });
+    // biome-ignore lint/suspicious/noExplicitAny: accessing mock fn
+    const revokedCall = (ctx.publicClient as any).getContractEvents.mock.calls[1][0];
+    expect(revokedCall.eventName).toBe('FeedbackRevoked');
+    expect(revokedCall.fromBlock).toBe(5000n);
+  });
+
+  it('calls FeedbackRevoked on the reputation registry with the correct agentId', async () => {
+    const ctx = makeCtx([]);
+    await executeReadFeedback(ctx, { agentId: AGENT_ID });
+    // biome-ignore lint/suspicious/noExplicitAny: accessing mock fn
+    const revokedCall = (ctx.publicClient as any).getContractEvents.mock.calls[1][0];
+    expect(revokedCall.address).toBe(REPUTATION_REGISTRY);
+    expect(revokedCall.args.agentId).toBe(AGENT_ID);
   });
 });
 

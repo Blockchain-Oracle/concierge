@@ -97,3 +97,35 @@ describe('hashActionPayload — payload serialization', () => {
     ).not.toThrow();
   });
 });
+
+describe('hashActionPayload — non-serializable payload guards', () => {
+  it('throws TypeError when payload contains an undefined field', () => {
+    expect(() =>
+      hashActionPayload(
+        { schema: 'x', val: undefined } as unknown as Record<string, unknown> & { schema: string },
+        AGENT_ID,
+        CHAIN_ID,
+      ),
+    ).toThrow(TypeError);
+  });
+
+  it('throws TypeError when payload contains a Date object', () => {
+    expect(() =>
+      hashActionPayload(
+        { schema: 'x', val: new Date() } as unknown as Record<string, unknown> & { schema: string },
+        AGENT_ID,
+        CHAIN_ID,
+      ),
+    ).toThrow(TypeError);
+  });
+
+  it('throws TypeError when payload contains a Map', () => {
+    expect(() =>
+      hashActionPayload(
+        { schema: 'x', val: new Map() } as unknown as Record<string, unknown> & { schema: string },
+        AGENT_ID,
+        CHAIN_ID,
+      ),
+    ).toThrow(TypeError);
+  });
+});

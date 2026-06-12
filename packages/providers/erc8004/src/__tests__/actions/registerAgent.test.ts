@@ -155,4 +155,17 @@ describe('registerAgent — log parsing', () => {
     const result = await executeRegisterAgent(ctx, {});
     expect(result.agentId).toBe(AGENT_ID);
   });
+
+  it('skips Transfer logs from contracts other than identityRegistry', async () => {
+    const OTHER_CONTRACT = '0x4444444444444444444444444444444444444444' as const;
+    const foreignLog = { ...makeTransferLog(), address: OTHER_CONTRACT };
+    const ctx = makeCtx(undefined, {
+      waitForTransactionReceipt: vi.fn().mockResolvedValue({
+        status: 'success',
+        logs: [foreignLog, makeTransferLog()],
+      }),
+    });
+    const result = await executeRegisterAgent(ctx, {});
+    expect(result.agentId).toBe(AGENT_ID);
+  });
 });

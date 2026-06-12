@@ -1,9 +1,15 @@
 import { ConciergeError } from '@concierge/sdk';
 import { identityRegistryAbi } from '@concierge/shared/abi';
 import { tool } from '@concierge/tools';
-import { decodeEventLog, zeroAddress } from 'viem';
+import {
+  AbiEventSignatureEmptyTopicsError,
+  AbiEventSignatureNotFoundError,
+  decodeEventLog,
+  zeroAddress,
+} from 'viem';
 import { z } from 'zod';
 import type { ActionContext } from '../_context.ts';
+import type { ReceiptLog } from '../_types.ts';
 
 export const RegisterAgentInput = z.object({
   agentURI: z.string().optional().describe('Optional metadata URI for the agent NFT'),
@@ -17,13 +23,12 @@ export const RegisterAgentOutput = z.object({
     .describe('Transaction hash on the source chain'),
 });
 
-type ReceiptLog = { address: `0x${string}`; topics: readonly `0x${string}`[]; data: `0x${string}` };
-
 function findMintAgentId(
   logs: readonly ReceiptLog[],
   identityRegistry: `0x${string}`,
 ): bigint | undefined {
   for (const log of logs) {
+    if (log.removed === true) continue;
     if (log.address.toLowerCase() !== identityRegistry.toLowerCase()) continue;
     try {
       const decoded = decodeEventLog({
@@ -34,8 +39,18 @@ function findMintAgentId(
         data: log.data,
       });
       if (decoded.args.from === zeroAddress) return decoded.args.tokenId;
-    } catch {
-      // IdentityRegistry log but not a Transfer mint — skip
+    } catch (err) {
+      // Expected: log from IdentityRegistry is not a Transfer event (Approval, ApprovalForAll, etc.)
+      if (
+        err instanceof AbiEventSignatureEmptyTopicsError ||
+        err instanceof AbiEventSignatureNotFoundError
+      )
+        continue;
+      throw new ConciergeError(
+        'RpcError',
+        '[@concierge/erc8004] registerAgent: unexpected error decoding IdentityRegistry log',
+        err,
+      );
     }
   }
   return undefined;
@@ -70,15 +85,17 @@ export async function executeRegisterAgent(
     );
   }
 
-  const receipt = await ctx.publicClient
-    .waitForTransactionReceipt({ hash: txHash })
-    .catch((err: unknown) => {
+  const receipt = await (async () => {
+    try {
+      return await ctx.publicClient.waitForTransactionReceipt({ hash: txHash });
+    } catch (err) {
       throw new ConciergeError(
         'RpcError',
         `[@concierge/erc8004] registerAgent: waitForTransactionReceipt failed — ${txHash}`,
         err,
       );
-    });
+    }
+  })();
 
   if (receipt.status === 'reverted') {
     throw new ConciergeError(

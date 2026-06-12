@@ -1,9 +1,14 @@
 import { ConciergeError } from '@concierge/sdk';
 import { reputationRegistryAbi } from '@concierge/shared/abi';
 import { tool } from '@concierge/tools';
-import { decodeEventLog } from 'viem';
+import {
+  AbiEventSignatureEmptyTopicsError,
+  AbiEventSignatureNotFoundError,
+  decodeEventLog,
+} from 'viem';
 import { z } from 'zod';
 import type { ActionContext } from '../_context.ts';
+import type { ReceiptLog } from '../_types.ts';
 import { hashActionPayload } from '../eip712.ts';
 
 export const AttestActionInput = z.object({
@@ -29,13 +34,12 @@ export const AttestActionOutput = z.object({
     .describe('EIP-712 hash committed on-chain as the tamper-evident payload commitment'),
 });
 
-type ReceiptLog = { address: `0x${string}`; topics: readonly `0x${string}`[]; data: `0x${string}` };
-
 function scanForFeedbackIndex(
   logs: readonly ReceiptLog[],
   registryAddress: `0x${string}`,
 ): bigint | undefined {
   for (const log of logs) {
+    if (log.removed === true) continue;
     if (log.address.toLowerCase() !== registryAddress.toLowerCase()) continue;
     try {
       return decodeEventLog({
@@ -45,8 +49,18 @@ function scanForFeedbackIndex(
         topics: log.topics as any,
         data: log.data,
       }).args.feedbackIndex;
-    } catch {
-      // Registry log but not a NewFeedback — skip
+    } catch (err) {
+      // Expected: registry log is not a NewFeedback event
+      if (
+        err instanceof AbiEventSignatureEmptyTopicsError ||
+        err instanceof AbiEventSignatureNotFoundError
+      )
+        continue;
+      throw new ConciergeError(
+        'RpcError',
+        '[@concierge/erc8004] attestAction: unexpected error decoding ReputationRegistry log',
+        err,
+      );
     }
   }
   return undefined;

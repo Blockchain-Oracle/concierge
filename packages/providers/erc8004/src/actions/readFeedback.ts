@@ -50,7 +50,15 @@ async function fetchRevokedIndexes(
       );
     });
   return new Set(
-    logs.flatMap((log) => (log.args.feedbackIndex !== undefined ? [log.args.feedbackIndex] : [])),
+    logs.map((log) => {
+      if (log.args.feedbackIndex === undefined) {
+        throw new ConciergeError(
+          'RpcError',
+          `[@concierge/erc8004] readFeedback: FeedbackRevoked log missing feedbackIndex — ABI mismatch for agent ${agentId}`,
+        );
+      }
+      return log.args.feedbackIndex;
+    }),
   );
 }
 
