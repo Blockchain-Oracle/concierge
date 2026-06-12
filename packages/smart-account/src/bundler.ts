@@ -59,7 +59,11 @@ export function createBundlerClient(config: CreateBundlerClientConfig): BundlerB
       transport: http(bundlerUrl),
     });
   } catch (err) {
-    throw ConciergeError.fromUnknown(err, 'RpcError');
+    throw new ConciergeError(
+      'RpcError',
+      `[@concierge/smart-account] createBundlerClient: bundler transport init failed (chain: '${config.chain}')`,
+      err,
+    );
   }
   if (config.chain === 'mantle-mainnet') {
     return { chain: 'mantle-mainnet', bundlerClient, paymasterClient: null };
@@ -69,7 +73,11 @@ export function createBundlerClient(config: CreateBundlerClientConfig): BundlerB
     try {
       paymasterClient = viemCreatePaymasterClient({ transport: http(bundlerUrl) });
     } catch (err) {
-      throw ConciergeError.fromUnknown(err, 'RpcError');
+      throw new ConciergeError(
+        'RpcError',
+        `[@concierge/smart-account] createBundlerClient: paymaster transport init failed (chain: '${config.chain}')`,
+        err,
+      );
     }
     return { chain: 'mantle-sepolia', bundlerClient, paymasterClient };
   }

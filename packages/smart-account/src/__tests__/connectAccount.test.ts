@@ -37,7 +37,9 @@ vi.mock('@zerodev/sdk', async () => {
           return Promise.resolve({ address: addr, type: 'kernelAccount' });
         },
       ),
-    createKernelAccountClient: vi.fn().mockReturnValue({ type: 'kernelClient' }),
+    createKernelAccountClient: vi
+      .fn()
+      .mockReturnValue({ type: 'kernelClient', chain: { id: 5003 } }),
   };
 });
 
@@ -79,6 +81,9 @@ describe('connectToConciergeAccount — shape', () => {
     vi.clearAllMocks();
     vi.stubEnv('PIMLICO_API_KEY', TEST_PIMLICO_KEY);
   });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
 
   it('returns same shape as createConciergeAccount', async () => {
     const result = await connectToConciergeAccount({
@@ -111,6 +116,16 @@ describe('connectToConciergeAccount — shape', () => {
       expect.anything(),
       expect.objectContaining({ address: EXISTING_ADDRESS }),
     );
+  });
+
+  it('kernelClient satisfies KernelClientStub — chain.id is a number', async () => {
+    const result = await connectToConciergeAccount({
+      address: EXISTING_ADDRESS,
+      owner: MOCK_OWNER,
+      chain: 'mantle-sepolia',
+    });
+    // biome-ignore lint/suspicious/noExplicitAny: asserting KernelClientStub shape on mock return
+    expect(typeof (result.kernelClient as any).chain?.id).toBe('number');
   });
 });
 
@@ -246,6 +261,37 @@ describe('connectToConciergeAccount — rpcWrap error classification', () => {
         chain: 'mantle-sepolia',
       }),
     ).rejects.toSatisfy((e: unknown) => e instanceof ConciergeError && e.type === 'RpcError');
+  });
+});
+
+describe('connectToConciergeAccount — security', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubEnv('PIMLICO_API_KEY', TEST_PIMLICO_KEY);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('kernel client init error message does not expose the API key', async () => {
+    const { createKernelAccountClient } = await import('@zerodev/sdk');
+    vi.mocked(createKernelAccountClient).mockImplementationOnce(() => {
+      throw new TypeError(
+        `transport error https://api.pimlico.io/v2/mantle-sepolia/rpc?apikey=${TEST_PIMLICO_KEY}`,
+      );
+    });
+    await expect(
+      connectToConciergeAccount({
+        address: EXISTING_ADDRESS,
+        owner: MOCK_OWNER,
+        chain: 'mantle-sepolia',
+      }),
+    ).rejects.toSatisfy(
+      (e: unknown) =>
+        e instanceof ConciergeError &&
+        e.type === 'RpcError' &&
+        !String(e.message).includes(TEST_PIMLICO_KEY),
+    );
   });
 });
 

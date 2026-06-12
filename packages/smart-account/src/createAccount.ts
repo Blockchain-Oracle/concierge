@@ -26,9 +26,7 @@ const rpcWrap = (err: unknown) => {
   throw ConciergeError.fromUnknown(err, 'RpcError');
 };
 
-export async function createConciergeAccount(
-  config: CreateConciergeAccountConfig,
-): Promise<ConciergeAccount> {
+function resolveCreateConfig(config: CreateConciergeAccountConfig) {
   const chainConfig = CHAIN_CONFIGS[config.chain];
   if (!chainConfig) {
     throw new ConciergeError(
@@ -44,6 +42,13 @@ export async function createConciergeAccount(
       "[@concierge/smart-account] createConciergeAccount: MissingEnvVar('PIMLICO_API_KEY') — set this env var or pass apiKey in config before creating a smart account.",
     );
   }
+  return { chainConfig, apiKey, bundlerUrl: `${chainConfig.bundlerBaseUrl}?apikey=${apiKey}` };
+}
+
+export async function createConciergeAccount(
+  config: CreateConciergeAccountConfig,
+): Promise<ConciergeAccount> {
+  const { chainConfig, apiKey, bundlerUrl } = resolveCreateConfig(config);
   const publicClient = createPublicClient({
     chain: chainConfig.chain,
     transport: http(chainConfig.chain.rpcUrls.default.http[0]),
@@ -61,7 +66,6 @@ export async function createConciergeAccount(
     kernelVersion: KERNEL_V3_1,
   }).catch(rpcWrap);
   const smartAccountAddress = kernelAccount.address;
-  const bundlerUrl = `${chainConfig.bundlerBaseUrl}?apikey=${apiKey}`;
   const paymasterStrategy =
     config.paymaster ?? (config.chain === 'mantle-sepolia' ? 'pimlico' : 'none');
   const paymasterClient = createPaymasterClient(
@@ -83,10 +87,13 @@ export async function createConciergeAccount(
           getPaymasterStubData: paymasterClient.getPaymasterStubData,
         },
       }),
-      // biome-ignore lint/suspicious/noExplicitAny: KernelAccountClient satisfies KernelClientStub at runtime; cast avoids viem peer-dep version skew
-    }) as any;
+    }) as unknown as KernelClientStub & object;
   } catch (err) {
-    throw ConciergeError.fromUnknown(err, 'RpcError');
+    throw new ConciergeError(
+      'RpcError',
+      `[@concierge/smart-account] createConciergeAccount: kernel client init failed (chain: '${config.chain}')`,
+      err,
+    );
   }
   return { smartAccountAddress, kernelAccount, kernelClient };
 }

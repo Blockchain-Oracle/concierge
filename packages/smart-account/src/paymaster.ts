@@ -51,6 +51,10 @@ export function createPaymasterClient(config: CreatePaymasterClientConfig): Paym
   try {
     return viemCreatePaymasterClient({ transport: http(paymasterUrl) });
   } catch (err) {
-    throw ConciergeError.fromUnknown(err, 'RpcError');
+    throw new ConciergeError(
+      'RpcError',
+      `[@concierge/smart-account] createPaymasterClient: paymaster transport init failed (chain: '${config.chain}')`,
+      err,
+    );
   }
 }

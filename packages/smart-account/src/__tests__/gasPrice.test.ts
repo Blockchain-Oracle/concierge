@@ -18,7 +18,7 @@ function mockFetchOk(body: unknown): void {
     'fetch',
     vi.fn().mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve(body),
+      text: () => Promise.resolve(JSON.stringify(body)),
     }),
   );
 }
@@ -187,14 +187,16 @@ describe('getUserOpGasPrice — HTTP errors', () => {
       'fetch',
       vi.fn().mockResolvedValue({
         ok: true,
-        json: () => Promise.reject(new SyntaxError('Unexpected token < in JSON')),
+        text: () => Promise.resolve('<html>Service Unavailable</html>'),
       }),
     );
     await expect(getUserOpGasPrice({ chain: 'mantle-sepolia' })).rejects.toSatisfy(
       (e: unknown) =>
         e instanceof ConciergeError &&
         e.type === 'RpcError' &&
-        String(e.message).includes('failed to parse JSON'),
+        String(e.message).includes('failed to parse JSON') &&
+        String(e.message).includes('<html>') &&
+        e.cause instanceof SyntaxError,
     );
   });
 });
@@ -355,7 +357,8 @@ describe('getUserOpGasPrice — body read failure', () => {
         e instanceof ConciergeError &&
         e.type === 'RpcError' &&
         String(e.message).includes('body unreadable') &&
-        String(e.message).includes('connection reset'),
+        String(e.message).includes('connection reset') &&
+        e.cause instanceof Error,
     );
   });
 });

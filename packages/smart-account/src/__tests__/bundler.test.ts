@@ -155,4 +155,19 @@ describe('createBundlerClient — error classification', () => {
       expect.objectContaining({ type: 'RpcError' }) as unknown as Error,
     );
   });
+
+  it('bundler transport error message does not expose the API key', async () => {
+    const { createBundlerClient: viemMock } = await import('viem/account-abstraction');
+    vi.mocked(viemMock).mockImplementationOnce(() => {
+      throw new TypeError(
+        `transport error https://api.pimlico.io/v2/mantle/rpc?apikey=${TEST_PIMLICO_KEY}`,
+      );
+    });
+    expect(() => createBundlerClient({ chain: 'mantle-mainnet' })).toThrowError(
+      expect.objectContaining({
+        type: 'RpcError',
+        message: expect.not.stringContaining(TEST_PIMLICO_KEY),
+      }) as unknown as Error,
+    );
+  });
 });
