@@ -57,9 +57,10 @@ function mergePermissions(perms: readonly CallPermission[]): CallPermission[] {
       const existingHasRules = existing.rules !== undefined && existing.rules.length > 0;
       const newHasRules = p.rules !== undefined && p.rules.length > 0;
       if (existingHasRules || newHasRules) {
+        const which = existingHasRules && newHasRules ? 'both sides' : 'one side';
         throw new ConciergeError(
           'ConfigError',
-          `[@concierge/smart-account] createConciergePolicy: InvalidPolicy: conflicting permissions on (target=${target}, selector=${sel}) — both carry rules and would silently drop one.`,
+          `[@concierge/smart-account] createConciergePolicy: InvalidPolicy: conflicting permissions on (target=${target}, selector=${sel}) — ${which} carries rules; merging would silently drop a constraint.`,
         );
       }
       continue;
@@ -70,7 +71,7 @@ function mergePermissions(perms: readonly CallPermission[]): CallPermission[] {
     if (targetsWithSpecific.has(t)) {
       throw new ConciergeError(
         'ConfigError',
-        `[@concierge/smart-account] createConciergePolicy: InvalidPolicy: target ${t} has both a wildcard (no selector) and specific-selector permission — wildcard would void the specific restriction.`,
+        `[@concierge/smart-account] createConciergePolicy: InvalidPolicy: target ${t} has both a wildcard permission (no selector) and a specific-selector permission — the wildcard would void the specific restriction. Either remove the wildcard or list specific selectors explicitly.`,
       );
     }
   }
