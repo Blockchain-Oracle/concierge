@@ -20,11 +20,23 @@ const ACTION_ATTESTATION_TYPES = {
 // Recursively serialize with sorted object keys for deterministic hashing.
 // BigInt → quoted decimal string (JSON.stringify throws on BigInt).
 // Arrays recurse element-by-element so nested key order is also normalized.
+// Throws on non-serializable values (undefined, functions, built-in objects)
+// so callers don't silently ship a corrupted hash commitment.
 function sortedJsonStringify(value: unknown): string {
   if (value === null) return 'null';
+  if (value === undefined || typeof value === 'function' || typeof value === 'symbol') {
+    throw new TypeError(
+      `[@concierge/erc8004] hashActionPayload: non-serializable value (${typeof value}) in payload`,
+    );
+  }
   if (typeof value === 'bigint') return `"${value.toString()}"`;
   if (typeof value !== 'object') return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(sortedJsonStringify).join(',')}]`;
+  if (Object.getPrototypeOf(value) !== Object.prototype) {
+    throw new TypeError(
+      `[@concierge/erc8004] hashActionPayload: non-plain-object ${Object.prototype.toString.call(value)} in payload`,
+    );
+  }
   const sorted = Object.keys(value as Record<string, unknown>)
     .sort()
     .map((k) => {

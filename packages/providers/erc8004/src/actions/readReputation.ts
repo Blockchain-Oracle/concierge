@@ -28,11 +28,62 @@ export const ReadReputationOutput = z.object({
     .describe('Counts per schema name (tag2), revoked entries excluded'),
 });
 
+type FeedbackArrays = {
+  feedbackIndexes: readonly bigint[];
+  values: readonly bigint[];
+  tag2s: readonly string[];
+  revokedStatuses: readonly boolean[];
+};
+
 type FeedbackSummary = {
   schemaCounts: Record<string, number>;
   latestAttestation: z.infer<typeof LatestAttestationSchema> | null;
   totalAttestations: number;
 };
+
+async function fetchFeedbackArrays(
+  ctx: ActionContext,
+  agentId: bigint,
+  clients: readonly `0x${string}`[],
+): Promise<FeedbackArrays | null> {
+  // readAllFeedback returns: (clients[], feedbackIndexes[], values[], valueDecimals[], tag1s[], tag2s[], revokedStatuses[])
+  const feedback = await (async () => {
+    try {
+      return await ctx.publicClient.readContract({
+        address: ctx.reputationRegistry,
+        abi: reputationRegistryAbi,
+        functionName: 'readAllFeedback',
+        args: [agentId, clients, '', '', false],
+      });
+    } catch (err) {
+      throw new ConciergeError(
+        'RpcError',
+        `[@concierge/erc8004] readReputation: readAllFeedback failed for agent ${agentId}`,
+        err,
+      );
+    }
+  })();
+
+  const feedbackIndexes = feedback[1];
+  const values = feedback[2];
+  const tag2s = feedback[5];
+  const revokedStatuses = feedback[6];
+
+  if (feedbackIndexes.length === 0) return null;
+
+  if (
+    values.length !== feedbackIndexes.length ||
+    tag2s.length !== feedbackIndexes.length ||
+    revokedStatuses.length !== feedbackIndexes.length
+  ) {
+    throw new ConciergeError(
+      'RpcError',
+      `[@concierge/erc8004] readReputation: readAllFeedback returned inconsistent array lengths for agent ${agentId}`,
+    );
+  }
+
+  return { feedbackIndexes, values, tag2s, revokedStatuses };
+}
 
 function summarizeFeedback(
   feedbackIndexes: readonly bigint[],
@@ -54,11 +105,16 @@ function summarizeFeedback(
       );
     }
     schemaCounts[schema] = (schemaCounts[schema] ?? 0) + 1;
-    latestAttestation = { schema, feedbackIndex, value };
+    // feedbackIndex is monotonically assigned per agent — highest = most recent
+    if (latestAttestation === null || feedbackIndex > latestAttestation.feedbackIndex) {
+      latestAttestation = { schema, feedbackIndex, value };
+    }
   }
   const totalAttestations = Object.values(schemaCounts).reduce((sum, n) => sum + n, 0);
   return { schemaCounts, latestAttestation, totalAttestations };
 }
+
+const EMPTY_RESULT = { totalAttestations: 0, latestAttestation: null, schemaCounts: {} } as const;
 
 export async function executeReadReputation(
   ctx: ActionContext,
@@ -81,37 +137,12 @@ export async function executeReadReputation(
     }
   })();
 
-  if (clients.length === 0) {
-    return { totalAttestations: 0, latestAttestation: null, schemaCounts: {} };
-  }
+  if (clients.length === 0) return EMPTY_RESULT;
 
-  // readAllFeedback returns: (clients[], feedbackIndexes[], values[], valueDecimals[], tag1s[], tag2s[], revokedStatuses[])
-  const feedback = await (async () => {
-    try {
-      return await ctx.publicClient.readContract({
-        address: ctx.reputationRegistry,
-        abi: reputationRegistryAbi,
-        functionName: 'readAllFeedback',
-        args: [input.agentId, clients, '', '', false],
-      });
-    } catch (err) {
-      throw new ConciergeError(
-        'RpcError',
-        `[@concierge/erc8004] readReputation: readAllFeedback failed for agent ${input.agentId}`,
-        err,
-      );
-    }
-  })();
+  const arrays = await fetchFeedbackArrays(ctx, input.agentId, clients);
+  if (arrays === null) return EMPTY_RESULT;
 
-  const feedbackIndexes = feedback[1];
-  const values = feedback[2];
-  const tag2s = feedback[5];
-  const revokedStatuses = feedback[6];
-
-  if (feedbackIndexes.length === 0) {
-    return { totalAttestations: 0, latestAttestation: null, schemaCounts: {} };
-  }
-
+  const { feedbackIndexes, values, tag2s, revokedStatuses } = arrays;
   const { schemaCounts, latestAttestation, totalAttestations } = summarizeFeedback(
     feedbackIndexes,
     values,

@@ -1,3 +1,4 @@
+import { ConciergeError } from '@concierge/sdk';
 import { describe, expect, it, vi } from 'vitest';
 import type { ActionContext } from '../../_context.ts';
 import { executeReadFeedback } from '../../actions/readFeedback.ts';
@@ -51,11 +52,15 @@ function makeFakeLogs() {
   ];
 }
 
-function makeCtx(logs: unknown[]): ActionContext {
+// Discriminates by eventName: NewFeedback returns the provided logs, FeedbackRevoked returns []
+function makeCtx(logs: unknown[], revokedLogs: unknown[] = []): ActionContext {
   return {
     walletClient: undefined,
     publicClient: {
-      getContractEvents: vi.fn().mockResolvedValue(logs),
+      getContractEvents: vi.fn().mockImplementation((params: unknown) => {
+        const p = params as { eventName: string };
+        return Promise.resolve(p.eventName === 'NewFeedback' ? logs : revokedLogs);
+      }),
       // biome-ignore lint/suspicious/noExplicitAny: minimal mock — PublicClient is a complex branded type
     } as any,
     identityRegistry: IDENTITY_REGISTRY,
@@ -136,5 +141,57 @@ describe('readFeedback — edge cases', () => {
     const call = (ctx.publicClient as any).getContractEvents.mock.calls[0][0];
     expect(call.args.agentId).toBe(AGENT_ID);
     expect(call.address).toBe(REPUTATION_REGISTRY);
+  });
+
+  it('throws RpcError when getContractEvents rejects for NewFeedback', async () => {
+    const ctx: ActionContext = {
+      walletClient: undefined,
+      publicClient: {
+        getContractEvents: vi.fn().mockRejectedValue(new Error('rpc timeout')),
+        // biome-ignore lint/suspicious/noExplicitAny: minimal mock for error path
+      } as any,
+      identityRegistry: IDENTITY_REGISTRY,
+      reputationRegistry: REPUTATION_REGISTRY,
+      chainId: 5000,
+    };
+    await expect(executeReadFeedback(ctx, { agentId: AGENT_ID })).rejects.toSatisfy(
+      (e: unknown) => e instanceof ConciergeError && e.type === 'RpcError',
+    );
+  });
+});
+
+describe('readFeedback — revoked entries', () => {
+  it('marks entries present in FeedbackRevoked as revoked=true', async () => {
+    const revokedLogs = [{ args: { feedbackIndex: 0n } }];
+    const ctx = makeCtx(makeFakeLogs(), revokedLogs);
+    const result = await executeReadFeedback(ctx, { agentId: AGENT_ID });
+    expect(result.entries[0]?.revoked).toBe(true);
+    expect(result.entries[1]?.revoked).toBe(false);
+  });
+
+  it('marks all entries non-revoked when FeedbackRevoked returns empty', async () => {
+    const ctx = makeCtx(makeFakeLogs());
+    const result = await executeReadFeedback(ctx, { agentId: AGENT_ID });
+    expect(result.entries.every((e) => e.revoked === false)).toBe(true);
+  });
+
+  it('throws RpcError when FeedbackRevoked fetch fails', async () => {
+    const ctx: ActionContext = {
+      walletClient: undefined,
+      publicClient: {
+        getContractEvents: vi.fn().mockImplementation((params: unknown) => {
+          const p = params as { eventName: string };
+          if (p.eventName === 'NewFeedback') return Promise.resolve(makeFakeLogs());
+          return Promise.reject(new Error('rpc timeout'));
+        }),
+        // biome-ignore lint/suspicious/noExplicitAny: minimal mock for error path
+      } as any,
+      identityRegistry: IDENTITY_REGISTRY,
+      reputationRegistry: REPUTATION_REGISTRY,
+      chainId: 5000,
+    };
+    await expect(executeReadFeedback(ctx, { agentId: AGENT_ID })).rejects.toSatisfy(
+      (e: unknown) => e instanceof ConciergeError && e.type === 'RpcError',
+    );
   });
 });

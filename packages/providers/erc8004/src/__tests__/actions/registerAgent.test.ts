@@ -99,9 +99,18 @@ describe('registerAgent — error paths', () => {
     );
   });
 
-  it('throws RpcError when receipt has no Transfer mint event', async () => {
+  it('throws RpcError when writeContract rejects', async () => {
+    const ctx = makeCtx({
+      writeContract: vi.fn().mockRejectedValue(new Error('execution reverted')),
+    });
+    await expect(executeRegisterAgent(ctx, {})).rejects.toSatisfy(
+      (e: unknown) => e instanceof ConciergeError && e.type === 'RpcError',
+    );
+  });
+
+  it('throws RpcError when waitForTransactionReceipt rejects', async () => {
     const ctx = makeCtx(undefined, {
-      waitForTransactionReceipt: vi.fn().mockResolvedValue({ status: 'success', logs: [] }),
+      waitForTransactionReceipt: vi.fn().mockRejectedValue(new Error('network timeout')),
     });
     await expect(executeRegisterAgent(ctx, {})).rejects.toSatisfy(
       (e: unknown) => e instanceof ConciergeError && e.type === 'RpcError',
@@ -117,15 +126,17 @@ describe('registerAgent — error paths', () => {
     );
   });
 
-  it('throws RpcError when writeContract rejects', async () => {
-    const ctx = makeCtx({
-      writeContract: vi.fn().mockRejectedValue(new Error('execution reverted')),
+  it('throws RpcError when receipt has no Transfer mint event', async () => {
+    const ctx = makeCtx(undefined, {
+      waitForTransactionReceipt: vi.fn().mockResolvedValue({ status: 'success', logs: [] }),
     });
     await expect(executeRegisterAgent(ctx, {})).rejects.toSatisfy(
       (e: unknown) => e instanceof ConciergeError && e.type === 'RpcError',
     );
   });
+});
 
+describe('registerAgent — log parsing', () => {
   it('skips non-mint Transfer events and extracts agentId only from the mint', async () => {
     const OTHER = '0x3333333333333333333333333333333333333333' as const;
     const nonMintTopics = encodeEventTopics({
