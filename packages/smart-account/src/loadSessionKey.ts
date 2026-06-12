@@ -1,45 +1,59 @@
-import { createDecipheriv } from 'node:crypto';
 import { type DbClient, sessionKeys } from '@concierge/db';
 import { ConciergeError } from '@concierge/sdk';
 import { eq } from 'drizzle-orm';
 import type { Hex } from 'viem';
-
-const IV_BYTES = 12;
-const TAG_BYTES = 16;
-const REQUIRED_KEY_BYTES = 32;
+import { policyJsonSchema } from './crypto/policyJsonSchema.ts';
+import { assertEncryptionKey, decryptEnvelope, envelopeAad } from './crypto/sessionKeyEnvelope.ts';
+import { SessionKeySecret } from './crypto/sessionKeySecret.ts';
 
 export interface LoadSessionKeyConfig {
   readonly db: DbClient;
   readonly sessionKeyId: string;
-  /** Owner-derived per-account 32-byte encryption key — same one used at persist time. */
+  /**
+   * Expected agent owner — REQUIRED. Without this, loadSessionKey is an IDOR
+   * existence-oracle (CWE-639). The function checks `row.agentId === expectedAgentId`
+   * BEFORE crypto so a row-binding mismatch fails closed with the same
+   * `DecryptionFailed` shape as a wrong-key mismatch — no timing or error-type
+   * distinction between "exists but wrong agent" and "wrong key for right row".
+   */
+  readonly expectedAgentId: string;
+  /** Owner-derived per-account 32-byte AES-256 key — same as persist-time. */
   readonly encryptionKey: Buffer;
 }
 
 export interface LoadedSessionKey {
-  readonly privateKey: Hex;
+  /**
+   * Single-use `SessionKeySecret` handle wrapping the decrypted 32-byte
+   * private key. Caller MUST `consume()` exactly once and pass the resulting
+   * Buffer directly into `privateKeyToAccount` / signer creation. Double-use
+   * throws.
+   */
+  readonly privateKey: SessionKeySecret;
   readonly encodedPolicy: Hex;
+  readonly enableTypedDataHash: Hex;
   readonly signature: Hex;
   readonly validUntil: Date;
+  readonly validAfter: number;
 }
 
 /**
  * Reads a row from `session_keys`, checks the kill switches (revoked,
- * expired), decrypts the private key with the owner-derived encryption key.
+ * expired, not-yet-valid), and decrypts the private key with the
+ * owner-derived encryption key.
  *
- * Each failure mode throws a DISTINCT typed error so the runtime can map them
- * to the right recovery action:
- *   - `DecryptionFailed`        ⇒ suspect tampering; escalate / re-issue
- *   - `SessionKeyExpired`       ⇒ silent re-auth (UX-positive)
- *   - `SessionKeyRevoked`       ⇒ silent re-auth + audit log entry
- *   - `ConfigError` (not-found) ⇒ programmer error; never on hot path
+ * Distinct typed errors for each failure mode so the runtime can route to
+ * the right recovery action:
+ *   - `DecryptionFailed`        — suspect tampering / wrong key / wrong agent
+ *   - `SessionKeyExpired`       — silent re-auth (UX-positive)
+ *   - `SessionKeyRevoked`       — silent re-auth + audit log
+ *   - `ConfigError` (not-found) — programmer error; never on hot path
+ *
+ * Note: existence/state enumeration via timing is mitigated by the required
+ * `expectedAgentId` check, which fails closed as `DecryptionFailed` (the same
+ * shape an attacker would get for a wrong-key load of a real row).
  */
 export async function loadSessionKey(config: LoadSessionKeyConfig): Promise<LoadedSessionKey> {
-  if (config.encryptionKey.length !== REQUIRED_KEY_BYTES) {
-    throw new ConciergeError(
-      'ConfigError',
-      `[@concierge/smart-account] loadSessionKey: encryptionKey must be exactly ${REQUIRED_KEY_BYTES} bytes (AES-256), got ${config.encryptionKey.length}.`,
-    );
-  }
+  assertEncryptionKey(config.encryptionKey, 'loadSessionKey');
   const rows = await config.db
     .select()
     .from(sessionKeys)
@@ -50,6 +64,16 @@ export async function loadSessionKey(config: LoadSessionKeyConfig): Promise<Load
     throw new ConciergeError(
       'ConfigError',
       `[@concierge/smart-account] loadSessionKey: session key '${config.sessionKeyId}' not found.`,
+    );
+  }
+  // Owner binding check BEFORE crypto — prevents cross-tenant decryption attempts
+  // and existence-oracle timing distinction. Mismatch raises the SAME error
+  // shape a wrong-key load would produce, so an attacker probing IDs cannot
+  // distinguish "wrong agent" from "wrong key for right agent".
+  if (row.agentId !== config.expectedAgentId) {
+    throw new ConciergeError(
+      'DecryptionFailed',
+      `[@concierge/smart-account] loadSessionKey: row agent binding mismatch for session key '${config.sessionKeyId}'.`,
     );
   }
   if (row.revokedAt !== null) {
@@ -68,41 +92,40 @@ export async function loadSessionKey(config: LoadSessionKeyConfig): Promise<Load
       { expiredAt: row.validUntil.toISOString() },
     );
   }
-  const envelope = row.encryptedPrivateKey;
-  if (envelope.length < IV_BYTES + TAG_BYTES + 1) {
+  // Parse policy JSON via Zod — schema drift surfaces as a typed error here
+  // instead of a TypeError deep in the worker.
+  const parsed = policyJsonSchema.safeParse(row.policyJson);
+  if (!parsed.success) {
     throw new ConciergeError(
       'DecryptionFailed',
-      `[@concierge/smart-account] loadSessionKey: encrypted_private_key envelope is malformed (length ${envelope.length}, minimum ${IV_BYTES + TAG_BYTES + 1}).`,
+      `[@concierge/smart-account] loadSessionKey: policy_json shape drift — ${parsed.error.message}`,
     );
   }
-  const iv = envelope.subarray(0, IV_BYTES);
-  const tag = envelope.subarray(IV_BYTES, IV_BYTES + TAG_BYTES);
-  const ciphertext = envelope.subarray(IV_BYTES + TAG_BYTES);
-  let plaintext: Buffer;
-  try {
-    const decipher = createDecipheriv('aes-256-gcm', config.encryptionKey, iv);
-    decipher.setAuthTag(tag);
-    plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
-  } catch (err) {
+  const policy = parsed.data;
+  // Not-yet-valid kill switch (validAfter is stored in policyJson).
+  const nowSecs = Math.floor(Date.now() / 1000);
+  if (policy.validAfter > nowSecs) {
     throw new ConciergeError(
-      'DecryptionFailed',
-      '[@concierge/smart-account] loadSessionKey: AES-256-GCM decryption failed — wrong encryption key, tampered ciphertext, or corrupted envelope.',
-      err,
+      'SessionKeyExpired',
+      `[@concierge/smart-account] loadSessionKey: session key is not yet valid (validAfter=${policy.validAfter}, now=${nowSecs}).`,
+      undefined,
+      { notValidUntil: policy.validAfter },
     );
   }
-  if (plaintext.length !== 32) {
-    throw new ConciergeError(
-      'DecryptionFailed',
-      `[@concierge/smart-account] loadSessionKey: decrypted plaintext is not a 32-byte private key (got ${plaintext.length} bytes).`,
-    );
-  }
-  const privateKey = `0x${plaintext.toString('hex')}` as Hex;
-  // biome-ignore lint/suspicious/noExplicitAny: policyJson stored as jsonb; cast at boundary
-  const policy = row.policyJson as any;
+  // AAD must exactly match the persist-time binding — any drift in
+  // (agentId, publicAddress) breaks decryption.
+  const aad = envelopeAad(row.agentId, row.publicAddress);
+  const plaintext = decryptEnvelope(row.encryptedPrivateKey, config.encryptionKey, aad);
+  // Wrap in the redacting handle and wipe the local buffer; the handle now
+  // owns the only mutable copy.
+  const privateKey = new SessionKeySecret(`0x${plaintext.toString('hex')}` as Hex);
+  plaintext.fill(0);
   return {
     privateKey,
     encodedPolicy: policy.encodedPolicy as Hex,
+    enableTypedDataHash: policy.enableTypedDataHash as Hex,
     signature: policy.signature as Hex,
     validUntil: row.validUntil,
+    validAfter: policy.validAfter,
   };
 }

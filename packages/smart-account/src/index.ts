@@ -15,6 +15,7 @@ export {
 } from './constants.ts';
 export type { CreateConciergeAccountConfig } from './createAccount.ts';
 export { createConciergeAccount } from './createAccount.ts';
+export { SessionKeySecret } from './crypto/sessionKeySecret.ts';
 export type { GetUserOpGasPriceConfig, UserOpGasPrice } from './gasPrice.ts';
 export { getUserOpGasPrice } from './gasPrice.ts';
 export type { IssueSessionKeyConfig, IssueSessionKeyResult } from './issueSessionKey.ts';

@@ -1,16 +1,17 @@
-import { randomBytes } from 'node:crypto';
 import { ConciergeError } from '@concierge/sdk';
 import type { Address, Hex } from 'viem';
-import { keccak256, recoverMessageAddress } from 'viem';
+import { hashTypedData, recoverTypedDataAddress } from 'viem';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { SessionKeySecret } from '../crypto/sessionKeySecret.ts';
 import { issueSessionKey } from '../issueSessionKey.ts';
-import { loadSessionKey } from '../loadSessionKey.ts';
-import { persistSessionKey } from '../persistSessionKey.ts';
 import type { CallPermission } from '../policies/callPolicy.ts';
+import type { ConciergeAccount } from '../types.ts';
 
 const AAVE_POOL = '0x1111111111111111111111111111111111111111' as Address;
 const SUPPLY_SELECTOR = '0x617ba037' as Hex;
+const KERNEL_ADDR = '0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef' as Address;
+const _AGENT_ID = '00000000-0000-0000-0000-000000000001';
 
 const PROVIDER = {
   sessionKey: {
@@ -20,9 +21,13 @@ const PROVIDER = {
   },
 };
 
-// Mock the heavy viem/zerodev plumbing that requires network in `issueSessionKey`.
-// We stub `createPublicClient` and `toPermissionValidator` so unit tests don't need
-// a real RPC endpoint.
+const CONCIERGE_ACCOUNT_STUB: ConciergeAccount = {
+  smartAccountAddress: KERNEL_ADDR,
+  kernelAccount: { address: KERNEL_ADDR } as ConciergeAccount['kernelAccount'],
+  kernelClient: { chain: { id: 5003 } } as ConciergeAccount['kernelClient'],
+};
+
+// Stub viem RPC plumbing — unit tests don't need a live RPC.
 vi.mock('viem', async () => {
   const actual = await vi.importActual<typeof import('viem')>('viem');
   return {
@@ -35,6 +40,8 @@ vi.mock('viem', async () => {
 vi.mock('@zerodev/permissions', () => ({
   toPermissionValidator: vi.fn().mockResolvedValue({
     getEnableData: async () => '0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef' as Hex,
+    getIdentifier: () => '0x1234567890123456789012345678901234567890' as Hex,
+    getEnableData_: async () => '0xdeadbeef' as Hex,
   }),
 }));
 
@@ -49,45 +56,83 @@ vi.mock('@zerodev/permissions/signers', () => ({
     })),
 }));
 
+vi.mock('@zerodev/sdk', () => ({
+  getPluginsEnableTypedData: vi.fn().mockResolvedValue({
+    domain: {
+      name: 'Kernel',
+      version: '0.3.1',
+      chainId: 5003,
+      verifyingContract: '0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
+    },
+    types: {
+      Enable: [
+        { name: 'validationId', type: 'bytes21' },
+        { name: 'nonce', type: 'uint32' },
+        { name: 'hook', type: 'address' },
+        { name: 'validatorData', type: 'bytes' },
+        { name: 'hookData', type: 'bytes' },
+        { name: 'selectorData', type: 'bytes' },
+      ],
+    },
+    message: {
+      validationId: `0x${'aa'.repeat(21)}` as Hex,
+      nonce: 0,
+      hook: '0x0000000000000000000000000000000000000000' as Address,
+      validatorData: '0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef' as Hex,
+      hookData: '0x' as Hex,
+      selectorData: `0x${'00'.repeat(24)}` as Hex,
+    },
+    primaryType: 'Enable' as const,
+  }),
+}));
+
+vi.mock('@zerodev/sdk/accounts', () => ({
+  getKernelV3Nonce: vi.fn().mockResolvedValue(0n),
+  accountMetadata: vi.fn().mockResolvedValue({ nonce: 0n, name: 'Kernel', version: '0.3.1' }),
+}));
+
 vi.mock('@zerodev/sdk/constants', async () => {
   const actual =
     await vi.importActual<typeof import('@zerodev/sdk/constants')>('@zerodev/sdk/constants');
   return { ...actual, getEntryPoint: vi.fn().mockReturnValue({ version: '0.7', address: '0x' }) };
 });
 
-describe('issueSessionKey — happy path', () => {
-  it('returns sessionKeyAddress, encodedPolicy (non-empty hex), and a valid owner signature', async () => {
-    const ownerPk = generatePrivateKey();
-    const ownerAccount = privateKeyToAccount(ownerPk);
+describe('issueSessionKey — EIP-712 typed-data signing', () => {
+  it('returns sessionKeyAddress, encodedPolicy, enableTypedDataHash, EIP-712 signature recovering to owner', async () => {
+    const ownerAccount = privateKeyToAccount(generatePrivateKey());
     const result = await issueSessionKey({
       ownerAccount,
+      conciergeAccount: CONCIERGE_ACCOUNT_STUB,
       chain: 'mantle-sepolia',
       providers: [PROVIDER],
       spendingLimits: [],
     });
     expect(result.sessionKeyAddress).toMatch(/^0x[0-9a-fA-F]{40}$/);
-    expect(result.sessionKeyPrivateKey).toMatch(/^0x[0-9a-fA-F]{64}$/);
+    expect(result.sessionKeyPrivateKey).toBeInstanceOf(SessionKeySecret);
     expect(result.encodedPolicy).toMatch(/^0x[0-9a-fA-F]+$/);
-    expect(result.signature).toMatch(/^0x[0-9a-fA-F]{130}$/); // 65 bytes
-    const recovered = await recoverMessageAddress({
-      message: { raw: keccak256(result.encodedPolicy) },
-      signature: result.signature,
-    });
+    expect(result.enableTypedDataHash).toMatch(/^0x[0-9a-fA-F]{64}$/);
+    expect(result.signature).toMatch(/^0x[0-9a-fA-F]{130}$/);
+    // Verify against the same typed-data ZeroDev produced.
+    const { getPluginsEnableTypedData } = await import('@zerodev/sdk');
+    // biome-ignore lint/suspicious/noExplicitAny: Typed-data shape from mock
+    const typedData = await (getPluginsEnableTypedData as any).mock.results[0]?.value;
+    expect(typedData).toBeDefined();
+    expect(hashTypedData(typedData)).toBe(result.enableTypedDataHash);
+    const recovered = await recoverTypedDataAddress({ ...typedData, signature: result.signature });
     expect(recovered.toLowerCase()).toBe(ownerAccount.address.toLowerCase());
   });
 
-  it('defaults validUntil to ~7 days from now', async () => {
+  it('IssueSessionKeyResult.sessionKeyPrivateKey redacts on toString/toJSON (log safety)', async () => {
     const ownerAccount = privateKeyToAccount(generatePrivateKey());
-    const before = Math.floor(Date.now() / 1000);
     const result = await issueSessionKey({
       ownerAccount,
+      conciergeAccount: CONCIERGE_ACCOUNT_STUB,
       chain: 'mantle-sepolia',
       providers: [PROVIDER],
       spendingLimits: [],
     });
-    const expectedValidUntil = before + 7 * 24 * 60 * 60;
-    expect(result.validUntil).toBeGreaterThanOrEqual(expectedValidUntil - 5);
-    expect(result.validUntil).toBeLessThanOrEqual(expectedValidUntil + 5);
+    expect(String(result.sessionKeyPrivateKey)).toBe('[SessionKeySecret REDACTED]');
+    expect(JSON.stringify({ pk: result.sessionKeyPrivateKey })).toContain('REDACTED');
   });
 
   it('throws ConfigError for unsupported chain', async () => {
@@ -95,6 +140,7 @@ describe('issueSessionKey — happy path', () => {
     try {
       await issueSessionKey({
         ownerAccount,
+        conciergeAccount: CONCIERGE_ACCOUNT_STUB,
         // biome-ignore lint/suspicious/noExplicitAny: testing invalid chain input
         chain: 'ethereum-mainnet' as any,
         providers: [PROVIDER],
@@ -108,18 +154,38 @@ describe('issueSessionKey — happy path', () => {
     }
   });
 
-  it('throws InvalidOwnerSignature when the owner signMessage callback returns garbage', async () => {
+  it('throws ConfigError when validUntil <= validAfter', async () => {
     const ownerAccount = privateKeyToAccount(generatePrivateKey());
-    // Override signMessage to return a valid-shape but wrong signature
-    const wrongPk = generatePrivateKey();
-    const wrongAccount = privateKeyToAccount(wrongPk);
-    const malformedOwner = {
+    const t = Math.floor(Date.now() / 1000);
+    try {
+      await issueSessionKey({
+        ownerAccount,
+        conciergeAccount: CONCIERGE_ACCOUNT_STUB,
+        chain: 'mantle-sepolia',
+        providers: [PROVIDER],
+        spendingLimits: [],
+        validAfter: t + 1000,
+        validUntil: t + 500,
+      });
+      expect.fail('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(ConciergeError);
+      expect((e as ConciergeError).type).toBe('ConfigError');
+      expect(String((e as ConciergeError).message)).toContain('validUntil');
+    }
+  });
+
+  it('throws InvalidOwnerSignature when the owner signTypedData returns a signature from a different key', async () => {
+    const ownerAccount = privateKeyToAccount(generatePrivateKey());
+    const wrongAccount = privateKeyToAccount(generatePrivateKey());
+    const malformedOwner = Object.assign(Object.create(Object.getPrototypeOf(ownerAccount)), {
       ...ownerAccount,
-      signMessage: wrongAccount.signMessage,
-    };
+      signTypedData: wrongAccount.signTypedData,
+    });
     try {
       await issueSessionKey({
         ownerAccount: malformedOwner,
+        conciergeAccount: CONCIERGE_ACCOUNT_STUB,
         chain: 'mantle-sepolia',
         providers: [PROVIDER],
         spendingLimits: [],
@@ -131,180 +197,21 @@ describe('issueSessionKey — happy path', () => {
       expect(String((e as ConciergeError).message)).toContain('signature recovery mismatch');
     }
   });
-});
 
-// In-memory DB stub mimicking the Drizzle surface we use: insert().values().returning(),
-// and select().from().where().limit(). Mirrors @concierge/db schema fields strictly.
-interface StubRow {
-  id: string;
-  agentId: string;
-  publicAddress: Address;
-  encryptedPrivateKey: Buffer;
-  policyJson: unknown;
-  signature: string;
-  validUntil: Date;
-  revokedAt: Date | null;
-  createdAt: Date;
-}
-
-function makeStubDb(): {
-  // biome-ignore lint/suspicious/noExplicitAny: stub DbClient shape
-  db: any;
-  rows: StubRow[];
-} {
-  const rows: StubRow[] = [];
-  let nextId = 1;
-  const db = {
-    insert: () => ({
-      // biome-ignore lint/suspicious/noExplicitAny: insert payload
-      values: (v: any) => ({
-        returning: async () => {
-          const row: StubRow = {
-            id: `sk-${nextId++}`,
-            agentId: v.agentId,
-            publicAddress: v.publicAddress,
-            encryptedPrivateKey: v.encryptedPrivateKey,
-            policyJson: v.policyJson,
-            signature: v.signature,
-            validUntil: v.validUntil,
-            revokedAt: null,
-            createdAt: new Date(),
-          };
-          rows.push(row);
-          return [{ id: row.id, createdAt: row.createdAt }];
-        },
-      }),
-    }),
-    select: () => ({
-      from: () => ({
-        // biome-ignore lint/suspicious/noExplicitAny: where predicate object from drizzle eq()
-        where: (_w: any) => ({
-          // biome-ignore lint/suspicious/noExplicitAny: where predicate object captures the id internally
-          limit: async (_n: number) => rows.slice(),
-        }),
-      }),
-    }),
-  };
-  return { db, rows };
-}
-
-describe('persistSessionKey + loadSessionKey roundtrip', () => {
-  let originalKey: Hex;
-  let encryptionKey: Buffer;
-
-  beforeEach(() => {
-    encryptionKey = randomBytes(32);
-    originalKey = generatePrivateKey();
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  async function issueAndPersist() {
+  it('default validUntil is ~7 days, validAfter is ~now', async () => {
     const ownerAccount = privateKeyToAccount(generatePrivateKey());
-    const issued = await issueSessionKey({
+    const before = Math.floor(Date.now() / 1000);
+    const result = await issueSessionKey({
       ownerAccount,
+      conciergeAccount: CONCIERGE_ACCOUNT_STUB,
       chain: 'mantle-sepolia',
       providers: [PROVIDER],
       spendingLimits: [],
     });
-    // Override the private key so we can compare round-trip exactly.
-    const issuedWithKnownKey = { ...issued, sessionKeyPrivateKey: originalKey };
-    const { db, rows } = makeStubDb();
-    const persisted = await persistSessionKey({
-      db,
-      agentId: '00000000-0000-0000-0000-000000000001',
-      sessionKey: issuedWithKnownKey,
-      encryptionKey,
-    });
-    return { db, rows, persisted };
-  }
-
-  it('encrypts the private key (stored value != plaintext) and returns a valid sessionKeyId', async () => {
-    const { rows, persisted } = await issueAndPersist();
-    expect(persisted.sessionKeyId).toMatch(/^sk-/);
-    expect(persisted.persistedAt).toBeInstanceOf(Date);
-    const row = rows[0];
-    expect(row).toBeDefined();
-    // Encrypted bytea must NOT equal the plaintext bytes
-    const plaintextBytes = Buffer.from(originalKey.slice(2), 'hex');
-    expect(row?.encryptedPrivateKey.equals(plaintextBytes)).toBe(false);
-    // Envelope length is IV(12) + tag(16) + ciphertext(32) = 60 bytes
-    expect(row?.encryptedPrivateKey.length).toBe(60);
-  });
-
-  it('loadSessionKey decrypts back to the original private key with the correct encryption key', async () => {
-    const { db, persisted } = await issueAndPersist();
-    const loaded = await loadSessionKey({
-      db,
-      sessionKeyId: persisted.sessionKeyId,
-      encryptionKey,
-    });
-    expect(loaded.privateKey).toBe(originalKey);
-    expect(loaded.encodedPolicy).toMatch(/^0x[0-9a-fA-F]+$/);
-    expect(loaded.signature).toMatch(/^0x[0-9a-fA-F]+$/);
-    expect(loaded.validUntil).toBeInstanceOf(Date);
-  });
-
-  it('throws DecryptionFailed when the wrong encryption key is provided', async () => {
-    const { db, persisted } = await issueAndPersist();
-    const wrongKey = randomBytes(32);
-    try {
-      await loadSessionKey({ db, sessionKeyId: persisted.sessionKeyId, encryptionKey: wrongKey });
-      expect.fail('should have thrown');
-    } catch (e) {
-      expect(e).toBeInstanceOf(ConciergeError);
-      expect((e as ConciergeError).type).toBe('DecryptionFailed');
-    }
-  });
-
-  it('throws SessionKeyExpired when validUntil has passed', async () => {
-    const { db, persisted, rows } = await issueAndPersist();
-    // Force-expire the row
-    if (rows[0]) rows[0].validUntil = new Date(Date.now() - 1000);
-    try {
-      await loadSessionKey({ db, sessionKeyId: persisted.sessionKeyId, encryptionKey });
-      expect.fail('should have thrown');
-    } catch (e) {
-      expect(e).toBeInstanceOf(ConciergeError);
-      expect((e as ConciergeError).type).toBe('SessionKeyExpired');
-    }
-  });
-
-  it('throws SessionKeyRevoked when revokedAt is set', async () => {
-    const { db, persisted, rows } = await issueAndPersist();
-    if (rows[0]) rows[0].revokedAt = new Date();
-    try {
-      await loadSessionKey({ db, sessionKeyId: persisted.sessionKeyId, encryptionKey });
-      expect.fail('should have thrown');
-    } catch (e) {
-      expect(e).toBeInstanceOf(ConciergeError);
-      expect((e as ConciergeError).type).toBe('SessionKeyRevoked');
-    }
-  });
-
-  it('throws ConfigError when the encryption key is not 32 bytes', async () => {
-    const { db, rows: _rows } = makeStubDb();
-    try {
-      await persistSessionKey({
-        db,
-        agentId: '00000000-0000-0000-0000-000000000001',
-        sessionKey: {
-          sessionKeyAddress: '0xaaaa000000000000000000000000000000000000' as Address,
-          sessionKeyPrivateKey: originalKey,
-          encodedPolicy: '0xdead' as Hex,
-          signature: '0xbeef' as Hex,
-          validUntil: Math.floor(Date.now() / 1000) + 3600,
-          validAfter: Math.floor(Date.now() / 1000),
-        },
-        encryptionKey: randomBytes(16), // wrong size
-      });
-      expect.fail('should have thrown');
-    } catch (e) {
-      expect(e).toBeInstanceOf(ConciergeError);
-      expect((e as ConciergeError).type).toBe('ConfigError');
-      expect(String((e as ConciergeError).message)).toContain('32 bytes');
-    }
+    const after = Math.floor(Date.now() / 1000);
+    expect(result.validUntil).toBeGreaterThanOrEqual(before + 7 * 86400);
+    expect(result.validUntil).toBeLessThanOrEqual(after + 7 * 86400);
+    expect(result.validAfter).toBeGreaterThanOrEqual(before);
+    expect(result.validAfter).toBeLessThanOrEqual(after);
   });
 });
