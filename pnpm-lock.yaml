@@ -349,6 +349,9 @@ importers:
 
   packages/smart-account:
     dependencies:
+      '@concierge/db':
+        specifier: workspace:*
+        version: link:../db
       '@concierge/sdk':
         specifier: workspace:*
         version: link:../sdk
@@ -364,6 +367,9 @@ importers:
       '@zerodev/sdk':
         specifier: 5.5.10
         version: 5.5.10(viem@2.52.2(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@6.0.6)(zod@4.4.3))
+      drizzle-orm:
+        specifier: 0.36.4
+        version: 0.36.4(@opentelemetry/api@1.9.1)(@types/pg@8.11.10)(pg@8.13.1)
     devDependencies:
       '@types/node':
         specifier: 22.19.20

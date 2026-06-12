@@ -28,11 +28,13 @@
     "prepack": "pnpm run build"
   },
   "dependencies": {
+    "@concierge/db": "workspace:*",
     "@concierge/sdk": "workspace:*",
     "@concierge/shared": "workspace:*",
     "@zerodev/ecdsa-validator": "5.4.9",
     "@zerodev/permissions": "5.6.3",
-    "@zerodev/sdk": "5.5.10"
+    "@zerodev/sdk": "5.5.10",
+    "drizzle-orm": "0.36.4"
   },
   "peerDependencies": {
     "viem": "^2.52.0",
