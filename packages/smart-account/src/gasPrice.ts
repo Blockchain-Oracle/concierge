@@ -50,6 +50,12 @@ function parseTier(
       `[@concierge/smart-account] getUserOpGasPrice: unexpected field types — expected hex strings, got maxFeePerGas=${typeof rawMax} maxPriorityFeePerGas=${typeof rawPriority}`,
     );
   }
+  if (!rawMax.startsWith('0x') || !rawPriority.startsWith('0x')) {
+    throw new ConciergeError(
+      'RpcError',
+      `[@concierge/smart-account] getUserOpGasPrice: expected 0x-prefixed hex strings — maxFeePerGas="${rawMax}" maxPriorityFeePerGas="${rawPriority}" (chain: '${chain}')`,
+    );
+  }
   let maxFeePerGas: bigint;
   let maxPriorityFeePerGas: bigint;
   try {
@@ -165,10 +171,11 @@ export async function getUserOpGasPrice(config: GetUserOpGasPriceConfig): Promis
     );
   }
   if (!res.ok) {
-    const { text: body } = await readErrorBody(res);
+    const { text: body, cause } = await readErrorBody(res);
     throw new ConciergeError(
       'RpcError',
       `[@concierge/smart-account] getUserOpGasPrice: BundlerError({ status: ${res.status}, chain: '${config.chain}' })${body ? ` — ${body.slice(0, 200)}` : ''}`,
+      cause,
     );
   }
   const data = await readAndParseBody(res, config.chain);

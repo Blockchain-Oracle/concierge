@@ -152,6 +152,53 @@ describe('getUserOpGasPrice — gas price guards', () => {
         String(e.message).includes('zero or negative gas price'),
     );
   });
+
+  it('throws RpcError when only maxPriorityFeePerGas is zero', async () => {
+    mockFetchOk({
+      jsonrpc: '2.0',
+      id: 1,
+      result: {
+        standard: { maxFeePerGas: '0x5F5E100', maxPriorityFeePerGas: '0x0' },
+        slow: {},
+        fast: {},
+      },
+    });
+    await expect(getUserOpGasPrice({ chain: 'mantle-sepolia' })).rejects.toSatisfy(
+      (e: unknown) =>
+        e instanceof ConciergeError &&
+        e.type === 'RpcError' &&
+        String(e.message).includes('zero or negative gas price'),
+    );
+  });
+});
+
+describe('getUserOpGasPrice — hex format guards', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubEnv('PIMLICO_API_KEY', TEST_PIMLICO_KEY);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it('throws RpcError when gas prices are decimal strings instead of 0x-prefixed hex', async () => {
+    mockFetchOk({
+      jsonrpc: '2.0',
+      id: 1,
+      result: {
+        standard: { maxFeePerGas: '1000000000', maxPriorityFeePerGas: '1000000000' },
+        slow: {},
+        fast: {},
+      },
+    });
+    await expect(getUserOpGasPrice({ chain: 'mantle-sepolia' })).rejects.toSatisfy(
+      (e: unknown) =>
+        e instanceof ConciergeError &&
+        e.type === 'RpcError' &&
+        String(e.message).includes('0x-prefixed hex strings'),
+    );
+  });
 });
 
 describe('getUserOpGasPrice — ok-200 body read failure', () => {
@@ -192,7 +239,7 @@ describe('getUserOpGasPrice — body read failure', () => {
     vi.unstubAllGlobals();
   });
 
-  it('throws RpcError with body error text in message when res.text() throws on non-ok response', async () => {
+  it('throws RpcError with body error in message and cause when res.text() throws on non-ok response', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue({
@@ -206,7 +253,8 @@ describe('getUserOpGasPrice — body read failure', () => {
         e instanceof ConciergeError &&
         e.type === 'RpcError' &&
         String(e.message).includes('body unreadable') &&
-        String(e.message).includes('connection reset'),
+        String(e.message).includes('connection reset') &&
+        e.cause instanceof Error,
     );
   });
 });

@@ -40,10 +40,20 @@ export async function createConciergeAccount(
   config: CreateConciergeAccountConfig,
 ): Promise<ConciergeAccount> {
   const { chainConfig, apiKey, bundlerUrl } = resolveCreateConfig(config);
-  const publicClient = createPublicClient({
-    chain: chainConfig.chain,
-    transport: http(chainConfig.chain.rpcUrls.default.http[0]),
-  });
+  // biome-ignore lint/suspicious/noExplicitAny: createPublicClient overload inference lost via let binding; consistent with existing viem type variance handling
+  let publicClient: any;
+  try {
+    publicClient = createPublicClient({
+      chain: chainConfig.chain,
+      transport: http(chainConfig.chain.rpcUrls.default.http[0]),
+    });
+  } catch (err) {
+    throw new ConciergeError(
+      'RpcError',
+      `[@concierge/smart-account] createConciergeAccount: public client init failed (chain: '${config.chain}')`,
+      err,
+    );
+  }
   const entryPoint = getEntryPoint('0.7');
   const ecdsaValidator = await signerToEcdsaValidator(publicClient, {
     // biome-ignore lint/suspicious/noExplicitAny: Signer union from @zerodev/sdk accepts LocalAccount; cast avoids peer dep version skew

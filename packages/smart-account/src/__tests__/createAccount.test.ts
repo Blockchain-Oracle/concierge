@@ -228,6 +228,9 @@ describe('createConciergeAccount — chain guard', () => {
     vi.clearAllMocks();
     vi.stubEnv('PIMLICO_API_KEY', TEST_PIMLICO_KEY);
   });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
 
   it('throws ConciergeError(ConfigError) for unsupported chain', async () => {
     await expect(
@@ -265,18 +268,24 @@ describe('createConciergeAccount — rpcWrap error classification', () => {
 
   it('maps signerToEcdsaValidator rejection to ConciergeError(RpcError)', async () => {
     const { signerToEcdsaValidator } = await import('@zerodev/ecdsa-validator');
-    vi.mocked(signerToEcdsaValidator).mockRejectedValueOnce(new Error('network timeout'));
+    const original = new Error('network timeout');
+    vi.mocked(signerToEcdsaValidator).mockRejectedValueOnce(original);
     await expect(
       createConciergeAccount({ owner: MOCK_OWNER, chain: 'mantle-sepolia' }),
-    ).rejects.toSatisfy((e: unknown) => e instanceof ConciergeError && e.type === 'RpcError');
+    ).rejects.toSatisfy(
+      (e: unknown) => e instanceof ConciergeError && e.type === 'RpcError' && e.cause === original,
+    );
   });
 
   it('maps createKernelAccount rejection to ConciergeError(RpcError)', async () => {
     const { createKernelAccount } = await import('@zerodev/sdk');
-    vi.mocked(createKernelAccount).mockRejectedValueOnce(new Error('rpc failed'));
+    const original = new Error('rpc failed');
+    vi.mocked(createKernelAccount).mockRejectedValueOnce(original);
     await expect(
       createConciergeAccount({ owner: MOCK_OWNER, chain: 'mantle-sepolia' }),
-    ).rejects.toSatisfy((e: unknown) => e instanceof ConciergeError && e.type === 'RpcError');
+    ).rejects.toSatisfy(
+      (e: unknown) => e instanceof ConciergeError && e.type === 'RpcError' && e.cause === original,
+    );
   });
 
   it('maps synchronous createKernelAccountClient throw to RpcError', async () => {
