@@ -159,6 +159,30 @@ describe('getUserOpGasPrice — security', () => {
         e.cause === undefined,
     );
   });
+
+  it('HTTP error body containing URL-encoded API key does not leak (special-char key)', async () => {
+    const SPECIAL_KEY = 'key+with/special=chars';
+    const encoded = encodeURIComponent(SPECIAL_KEY);
+    const urlWithEncodedKey = `https://api.pimlico.io/v2/mantle-sepolia/rpc?apikey=${encoded}`;
+    vi.unstubAllEnvs();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        text: () => Promise.resolve(`Unauthorized. Request URL: ${urlWithEncodedKey}`),
+      }),
+    );
+    await expect(
+      getUserOpGasPrice({ chain: 'mantle-sepolia', apiKey: SPECIAL_KEY }),
+    ).rejects.toSatisfy(
+      (e: unknown) =>
+        e instanceof ConciergeError &&
+        e.type === 'RpcError' &&
+        !String(e.message).includes(SPECIAL_KEY) &&
+        !String(e.message).includes(encoded),
+    );
+  });
 });
 
 describe('getUserOpGasPrice — gas price guards', () => {

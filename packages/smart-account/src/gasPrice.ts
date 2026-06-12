@@ -1,6 +1,6 @@
 import { ConciergeError } from '@concierge/sdk';
 import { CHAIN_CONFIGS } from './constants.ts';
-import { sanitizeCause } from './internal.ts';
+import { redactApiKey, sanitizeCause } from './internal.ts';
 import type { SupportedChain } from './types.ts';
 
 export interface UserOpGasPrice {
@@ -36,7 +36,7 @@ function parseTier(
   if (data.error) {
     throw new ConciergeError(
       'RpcError',
-      `[@concierge/smart-account] getUserOpGasPrice: Pimlico RPC error ${data.error.code}: ${data.error.message.slice(0, 200)} (chain: '${chain}')`,
+      `[@concierge/smart-account] getUserOpGasPrice: Pimlico RPC error ${data.error.code}: ${redactApiKey(data.error.message, apiKey).slice(0, 200)} (chain: '${chain}')`,
     );
   }
   if (!data.result?.standard) {
@@ -111,7 +111,7 @@ async function readAndParseBody(
       sanitizeCause(_err, apiKey),
     );
   }
-  const safeRawBody = rawBody.replaceAll(apiKey, '[REDACTED]');
+  const safeRawBody = redactApiKey(rawBody, apiKey);
   let parsed: unknown;
   try {
     parsed = JSON.parse(rawBody);
@@ -179,7 +179,7 @@ export async function getUserOpGasPrice(config: GetUserOpGasPriceConfig): Promis
   }
   if (!res.ok) {
     const { text: body, cause } = await readErrorBody(res);
-    const safeBody = body.replaceAll(apiKey, '[REDACTED]');
+    const safeBody = redactApiKey(body, apiKey);
     throw new ConciergeError(
       'RpcError',
       `[@concierge/smart-account] getUserOpGasPrice: BundlerError({ status: ${res.status}, chain: '${config.chain}' })${safeBody ? ` — ${safeBody.slice(0, 200)}` : ''}`,

@@ -231,6 +231,32 @@ describe('sanitizeCause — viem-shape error fields', () => {
       'method: eth_call',
     ]);
   });
+
+  it('redacts apiKey from nested plain-object property (e.g. err.request.url)', () => {
+    const err = new Error('clean message');
+    // biome-ignore lint/suspicious/noExplicitAny: simulating SDK error with nested POJO
+    (err as any).request = {
+      url: `https://host/rpc?apikey=${SANITIZE_KEY}`,
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+    };
+    const result = sanitizeCause(err, SANITIZE_KEY) as Error & {
+      request: { url: string; method: string };
+    };
+    expect(result.request.url).toBe('https://host/rpc?apikey=[REDACTED]');
+    expect(result.request.method).toBe('POST');
+  });
+
+  it('redacts apiKey from plain-object cause (non-Error)', () => {
+    const outer = new Error('outer');
+    // biome-ignore lint/suspicious/noExplicitAny: SDK sometimes wraps a POJO as cause
+    (outer as any).cause = { url: `https://h/rpc?apikey=${SANITIZE_KEY}`, status: 401 };
+    const result = sanitizeCause(outer, SANITIZE_KEY) as Error & {
+      cause: { url: string; status: number };
+    };
+    expect(result.cause.url).toBe('https://h/rpc?apikey=[REDACTED]');
+    expect(result.cause.status).toBe(401);
+  });
 });
 
 describe('sanitizeCause — URL-encoded form', () => {
@@ -241,6 +267,40 @@ describe('sanitizeCause — URL-encoded form', () => {
     const result = sanitizeCause(err, KEY) as Error;
     expect(result.message).not.toContain(encoded);
     expect(result.message).toContain('[REDACTED]');
+  });
+
+  it('does not double-redact when raw apiKey equals its encodeURIComponent form (alphanumeric)', () => {
+    const KEY = 'abcdef123';
+    const err = new Error(`apikey=${KEY}`);
+    const result = sanitizeCause(err, KEY) as Error;
+    expect(result.message).toBe('apikey=[REDACTED]');
+    expect(result.message).not.toContain('[REDACTED][REDACTED]');
+  });
+});
+
+describe('sanitizeCause — depth cap', () => {
+  it('truncates with sentinel rather than silently leaking past MAX_CAUSE_DEPTH', () => {
+    const leaf = new Error(`leaf with ${SANITIZE_KEY}`);
+    let chain: Error = leaf;
+    for (let i = 0; i < 15; i++) chain = new Error(`level-${i}`, { cause: chain });
+    const result = sanitizeCause(chain, SANITIZE_KEY) as Error;
+    // Walk the chain — no level should contain the raw key (either redacted or sentinel-replaced)
+    let cursor: unknown = result;
+    let depth = 0;
+    while (cursor && depth < 20) {
+      if (typeof cursor === 'string') {
+        expect(cursor).not.toContain(SANITIZE_KEY);
+        break;
+      }
+      if (cursor instanceof Error) {
+        expect(cursor.message).not.toContain(SANITIZE_KEY);
+        cursor = (cursor as Error & { cause?: unknown }).cause;
+      } else {
+        break;
+      }
+      depth++;
+    }
+    void leaf;
   });
 });
 
@@ -266,12 +326,8 @@ describe('rpcCatch — apiKey redaction', () => {
     );
   });
 
-  it('passes cause through identity-equal when apiKey is empty string', () => {
-    const original = new Error(`msg with ${SANITIZE_KEY}`);
-    const thrown = invoke(rpcCatch('op', 'mantle-sepolia', ''), original);
-    expect(thrown).toSatisfy(
-      // biome-ignore lint/suspicious/noExplicitAny: asserting identity-equal passthrough
-      (e: unknown) => e instanceof ConciergeError && (e as any).cause === original,
-    );
+  it('throws ConfigError at construction when apiKey is empty string', () => {
+    expect(() => rpcCatch('op', 'mantle-sepolia', '')).toThrow(ConciergeError);
+    expect(() => rpcCatch('op', 'mantle-sepolia', '')).toThrow(/empty apiKey/);
   });
 });

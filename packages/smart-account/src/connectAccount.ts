@@ -74,10 +74,16 @@ export async function connectToConciergeAccount(
     kernelVersion: KERNEL_V3_1,
     address: config.address,
   }).catch(rpcCatch('connectToConciergeAccount: kernel account init failed', config.chain, apiKey));
-  if (kernelAccount.address?.toLowerCase() !== config.address.toLowerCase()) {
+  if (!kernelAccount.address) {
     throw new ConciergeError(
       'ConfigError',
-      `[@concierge/smart-account] connectToConciergeAccount: address mismatch — supplied '${config.address}' but kernel account resolved to '${kernelAccount.address}'. Verify the owner key matches this smart account address.`,
+      `[@concierge/smart-account] connectToConciergeAccount: kernel account returned no address (malformed SDK response).`,
+    );
+  }
+  if (kernelAccount.address.toLowerCase() !== config.address.toLowerCase()) {
+    throw new ConciergeError(
+      'ConfigError',
+      `[@concierge/smart-account] connectToConciergeAccount: address mismatch — supplied '${config.address}' but kernel account resolved to '${kernelAccount.address}'. Causes: (1) owner key does not match this smart account, (2) kernel version / entry point / validator config used at creation differs from current.`,
     );
   }
   const smartAccountAddress = kernelAccount.address;

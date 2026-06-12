@@ -20,6 +20,60 @@ function stringContainsAny(value: string, patterns: readonly string[]): boolean 
   return false;
 }
 
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  if (v === null || typeof v !== 'object') return false;
+  const proto = Object.getPrototypeOf(v);
+  return proto === Object.prototype || proto === null;
+}
+
+function redactArrayElements(arr: unknown[], patterns: readonly string[]): unknown[] {
+  return arr.map((v) => {
+    if (typeof v === 'string')
+      return stringContainsAny(v, patterns) ? redactString(v, patterns) : v;
+    if (Array.isArray(v)) return redactArrayElements(v, patterns);
+    if (isPlainObject(v)) return redactPlainObject(v, patterns);
+    return v;
+  });
+}
+
+function redactPlainObject(
+  obj: Record<string, unknown>,
+  patterns: readonly string[],
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const k of Object.keys(obj)) {
+    const v = obj[k];
+    if (typeof v === 'string')
+      out[k] = stringContainsAny(v, patterns) ? redactString(v, patterns) : v;
+    else if (Array.isArray(v)) out[k] = redactArrayElements(v, patterns);
+    else if (isPlainObject(v)) out[k] = redactPlainObject(v, patterns);
+    else out[k] = v;
+  }
+  return out;
+}
+
+function arrayContainsAny(arr: unknown[], patterns: readonly string[]): boolean {
+  for (const v of arr) {
+    if (typeof v === 'string' && stringContainsAny(v, patterns)) return true;
+    if (Array.isArray(v) && arrayContainsAny(v, patterns)) return true;
+    if (isPlainObject(v) && plainObjectContainsAny(v, patterns)) return true;
+  }
+  return false;
+}
+
+function plainObjectContainsAny(
+  obj: Record<string, unknown>,
+  patterns: readonly string[],
+): boolean {
+  for (const k of Object.keys(obj)) {
+    const v = obj[k];
+    if (typeof v === 'string' && stringContainsAny(v, patterns)) return true;
+    if (Array.isArray(v) && arrayContainsAny(v, patterns)) return true;
+    if (isPlainObject(v) && plainObjectContainsAny(v, patterns)) return true;
+  }
+  return false;
+}
+
 function sanitizeStringProps(target: object, src: object, patterns: readonly string[]): void {
   for (const key of Object.getOwnPropertyNames(src)) {
     if (key === 'message' || key === 'stack' || key === 'cause') continue;
@@ -28,13 +82,12 @@ function sanitizeStringProps(target: object, src: object, patterns: readonly str
     if (typeof value === 'string' && stringContainsAny(value, patterns)) {
       // biome-ignore lint/suspicious/noExplicitAny: target is the clone receiving redacted value
       (target as any)[key] = redactString(value, patterns);
-    } else if (
-      Array.isArray(value) &&
-      value.every((v) => typeof v === 'string') &&
-      value.some((v) => stringContainsAny(v, patterns))
-    ) {
-      // biome-ignore lint/suspicious/noExplicitAny: redacting string[] in place on clone
-      (target as any)[key] = value.map((v: string) => redactString(v, patterns));
+    } else if (Array.isArray(value) && arrayContainsAny(value, patterns)) {
+      // biome-ignore lint/suspicious/noExplicitAny: redacting array on clone
+      (target as any)[key] = redactArrayElements(value, patterns);
+    } else if (isPlainObject(value) && plainObjectContainsAny(value, patterns)) {
+      // biome-ignore lint/suspicious/noExplicitAny: redacting nested POJO on clone
+      (target as any)[key] = redactPlainObject(value, patterns);
     }
   }
 }
@@ -47,12 +100,8 @@ function errorContainsAny(err: Error, patterns: readonly string[]): boolean {
     // biome-ignore lint/suspicious/noExplicitAny: walking unknown SDK error shapes
     const value = (err as any)[key];
     if (typeof value === 'string' && stringContainsAny(value, patterns)) return true;
-    if (
-      Array.isArray(value) &&
-      value.some((v) => typeof v === 'string' && stringContainsAny(v, patterns))
-    ) {
-      return true;
-    }
+    if (Array.isArray(value) && arrayContainsAny(value, patterns)) return true;
+    if (isPlainObject(value) && plainObjectContainsAny(value, patterns)) return true;
   }
   return false;
 }
@@ -63,8 +112,11 @@ function valueContainsAnyDeep(
   seen: WeakSet<object>,
   depth: number,
 ): boolean {
-  if (depth > MAX_CAUSE_DEPTH) return false;
+  // At cap: assume leak possible — forces sanitize pass to clone and apply sentinel.
+  if (depth > MAX_CAUSE_DEPTH) return true;
   if (typeof v === 'string') return stringContainsAny(v, patterns);
+  if (Array.isArray(v)) return arrayContainsAny(v, patterns);
+  if (isPlainObject(v)) return plainObjectContainsAny(v, patterns);
   if (!(v instanceof Error)) return false;
   if (seen.has(v)) return false;
   seen.add(v);
@@ -85,7 +137,7 @@ function sanitizeErrorDeep(
   seen: WeakSet<object>,
   depth: number,
 ): Error {
-  if (seen.has(err) || depth > MAX_CAUSE_DEPTH) return err;
+  if (seen.has(err)) return err;
   seen.add(err);
   const clone = Object.create(Object.getPrototypeOf(err)) as Error;
   Object.assign(clone, err);
@@ -96,6 +148,7 @@ function sanitizeErrorDeep(
       if (descriptor) Object.defineProperty(clone, key, descriptor);
     }
   }
+  // Redact own message/stack/string props at EVERY depth (depth cap only stops further recursion)
   sanitizeStringProps(clone, err, patterns);
   Object.defineProperty(clone, 'message', {
     value: redactString(err.message, patterns),
@@ -110,6 +163,16 @@ function sanitizeErrorDeep(
       enumerable: false,
       configurable: true,
     });
+  }
+  if (depth >= MAX_CAUSE_DEPTH) {
+    // At cap: drop cause/errors to prevent unsanitized leak via further nesting.
+    // biome-ignore lint/suspicious/noExplicitAny: defensive truncation marker
+    (clone as any).cause = '[REDACTED: cause-chain depth exceeded]';
+    if (err instanceof AggregateError && Array.isArray(err.errors)) {
+      // biome-ignore lint/suspicious/noExplicitAny: depth-truncated AggregateError.errors
+      (clone as any).errors = ['[REDACTED: cause-chain depth exceeded]'];
+    }
+    return clone;
   }
   if (err.cause !== undefined) {
     // biome-ignore lint/suspicious/noExplicitAny: cause is readonly unknown on Error; assigning sanitized form
@@ -133,6 +196,12 @@ function sanitizeValue(
   if (typeof err === 'string') {
     return stringContainsAny(err, patterns) ? redactString(err, patterns) : err;
   }
+  if (Array.isArray(err)) {
+    return arrayContainsAny(err, patterns) ? redactArrayElements(err, patterns) : err;
+  }
+  if (isPlainObject(err)) {
+    return plainObjectContainsAny(err, patterns) ? redactPlainObject(err, patterns) : err;
+  }
   if (err instanceof Error) {
     if (!valueContainsAnyDeep(err, patterns, new WeakSet(), 0)) return err;
     return sanitizeErrorDeep(err, patterns, seen, depth);
@@ -141,28 +210,49 @@ function sanitizeValue(
 }
 
 /**
- * Redacts apiKey (and its `encodeURIComponent` form) from an error's message, stack,
- * own string properties (viem's `shortMessage` / `details` / `metaMessages[]`), and
- * the full `.cause` chain — while preserving prototype identity. Returns a clone when
- * redaction fires; otherwise returns the input by reference.
+ * Redacts apiKey (and its `encodeURIComponent` form) from an Error's message, stack,
+ * own string properties + nested string[] / plain-object props (viem's `shortMessage`
+ * / `details` / `metaMessages[]` / `request: { url }`), and the full `.cause` chain
+ * (including non-Error POJO causes) while preserving prototype identity.
  *
+ * Returns a clone when redaction fires; otherwise returns the input by reference.
  * Does NOT preserve reference identity on the redaction path — callers MUST NOT rely
- * on `sanitizeCause(e, k) === e`. Cycle-safe via WeakSet; depth-capped at 10.
+ * on `sanitizeCause(e, k) === e`. Cycle-safe via WeakSet. At MAX_CAUSE_DEPTH the
+ * cause/errors are replaced with a `[REDACTED: cause-chain depth exceeded]` sentinel
+ * rather than silently leaking deeper unsanitized content.
  *
- * Skips redaction when apiKey is empty to avoid `replaceAll('', '[REDACTED]')`.
+ * Empty apiKey is a no-op (avoids `replaceAll('', ...)` corruption).
  */
-export function sanitizeCause<T>(err: T, apiKey: string): T {
+export function sanitizeCause(err: unknown, apiKey: string): unknown {
   if (!apiKey) return err;
-  return sanitizeValue(err, buildPatterns(apiKey), new WeakSet(), 0) as T;
+  return sanitizeValue(err, buildPatterns(apiKey), new WeakSet(), 0);
+}
+
+/**
+ * Redact apiKey + its `encodeURIComponent` form from an arbitrary string.
+ * Use for sanitising response bodies / interpolated message fragments at construction time.
+ * Empty apiKey is a no-op.
+ */
+export function redactApiKey(value: string, apiKey: string): string {
+  if (!apiKey) return value;
+  return redactString(value, buildPatterns(apiKey));
 }
 
 /**
  * Returns a .catch() callback that wraps any rejection as a sanitised RpcError.
- * `apiKey` is REQUIRED — use `rpcCatchNoRedact` for the rare op that has no secret in scope.
+ * `apiKey` is REQUIRED and must be non-empty — use `rpcCatchNoRedact` for the rare op
+ * that has no secret in scope. Empty-string apiKey throws at construction to make the
+ * silent-disabled-redaction footgun loud.
  * Note: catches ALL rejections including programmer errors (TypeError, RangeError) —
  * always inspect `.cause` when debugging unexpected RpcErrors.
  */
 export function rpcCatch(op: string, chain: SupportedChain, apiKey: string) {
+  if (!apiKey) {
+    throw new ConciergeError(
+      'ConfigError',
+      `[@concierge/smart-account] rpcCatch('${op}'): empty apiKey would silently disable redaction. Use rpcCatchNoRedact if no secret is in scope.`,
+    );
+  }
   return (err: unknown): never => {
     throw new ConciergeError(
       'RpcError',

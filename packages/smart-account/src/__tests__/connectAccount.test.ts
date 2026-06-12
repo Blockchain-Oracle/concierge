@@ -371,7 +371,7 @@ describe('connectToConciergeAccount — address consistency', () => {
       (e: unknown) =>
         e instanceof ConciergeError &&
         e.type === 'ConfigError' &&
-        String(e.message).includes('address mismatch'),
+        String(e.message).includes('kernel account returned no address'),
     );
   });
 });
