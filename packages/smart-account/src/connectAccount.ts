@@ -69,10 +69,9 @@ export async function connectToConciergeAccount(
   }).catch(rpcWrap);
   const smartAccountAddress = kernelAccount.address;
   const bundlerUrl = `${chainConfig.bundlerBaseUrl}?apikey=${apiKey}`;
-  // new Promise() wraps createKernelAccountClient (synchronous) so that any
-  // synchronous throw is promoted to a rejection — caught by .catch(rpcWrap).
-  const clientPromise = new Promise<object>((resolve) =>
-    resolve(
+  let clientPromise: Promise<object>;
+  try {
+    clientPromise = Promise.resolve(
       createKernelAccountClient({
         account: kernelAccount,
         chain: chainConfig.chain,
@@ -80,7 +79,9 @@ export async function connectToConciergeAccount(
         // biome-ignore lint/suspicious/noExplicitAny: publicClient type variance between viem peer dep versions
         client: publicClient as any,
       }),
-    ),
-  ).catch(rpcWrap);
+    );
+  } catch (err) {
+    clientPromise = Promise.reject(ConciergeError.fromUnknown(err, 'RpcError'));
+  }
   return { smartAccountAddress, kernelAccount, clientPromise };
 }
