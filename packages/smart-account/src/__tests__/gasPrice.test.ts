@@ -333,6 +333,34 @@ describe('getUserOpGasPrice — gas price guards', () => {
   });
 });
 
+describe('getUserOpGasPrice — ok-200 body read failure', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubEnv('PIMLICO_API_KEY', TEST_PIMLICO_KEY);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it('throws RpcError with cause when res.text() rejects on a 200 response', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        text: () => Promise.reject(new Error('stream aborted')),
+      }),
+    );
+    await expect(getUserOpGasPrice({ chain: 'mantle-sepolia' })).rejects.toSatisfy(
+      (e: unknown) =>
+        e instanceof ConciergeError &&
+        e.type === 'RpcError' &&
+        String(e.message).includes('failed to read response body') &&
+        e.cause instanceof Error,
+    );
+  });
+});
+
 describe('getUserOpGasPrice — body read failure', () => {
   beforeEach(() => {
     vi.clearAllMocks();

@@ -22,11 +22,21 @@ export interface ConnectConciergeAccountConfig {
   apiKey?: string;
 }
 
-const rpcWrap = (err: unknown) => {
-  throw ConciergeError.fromUnknown(err, 'RpcError');
-};
+function rpcCatch(op: string, chain: string) {
+  return (err: unknown): never => {
+    throw new ConciergeError(
+      'RpcError',
+      `[@concierge/smart-account] ${op} (chain: '${chain}')`,
+      err,
+    );
+  };
+}
 
-function validateConnectConfig(config: ConnectConciergeAccountConfig) {
+function validateConnectConfig(config: ConnectConciergeAccountConfig): {
+  chainConfig: (typeof CHAIN_CONFIGS)[keyof typeof CHAIN_CONFIGS];
+  bundlerUrl: string;
+  apiKey: string;
+} {
   if (!isAddress(config.address)) {
     throw new ConciergeError(
       'ConfigError',
@@ -75,13 +85,13 @@ export async function connectToConciergeAccount(
     signer: config.owner as any,
     entryPoint,
     kernelVersion: KERNEL_V3_1,
-  }).catch(rpcWrap);
+  }).catch(rpcCatch('connectToConciergeAccount: ECDSA validator init failed', config.chain));
   const kernelAccount = await createKernelAccount(publicClient, {
     plugins: { sudo: ecdsaValidator },
     entryPoint,
     kernelVersion: KERNEL_V3_1,
     address: config.address,
-  }).catch(rpcWrap);
+  }).catch(rpcCatch('connectToConciergeAccount: kernel account init failed', config.chain));
   const smartAccountAddress = kernelAccount.address;
   const paymasterStrategy =
     config.paymaster ?? (config.chain === 'mantle-sepolia' ? 'pimlico' : 'none');

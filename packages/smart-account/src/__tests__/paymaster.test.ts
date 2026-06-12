@@ -139,4 +139,21 @@ describe('createPaymasterClient — input guards', () => {
       createPaymasterClient({ chain: 'mantle-sepolia', sponsorshipPolicy: 'always' }),
     ).toThrowError(expect.objectContaining({ type: 'RpcError' }) as unknown as Error);
   });
+
+  it('paymaster transport error message does not expose the API key', async () => {
+    const { createPaymasterClient: viemMock } = await import('viem/account-abstraction');
+    vi.mocked(viemMock).mockImplementationOnce(() => {
+      throw new TypeError(
+        `transport error https://api.pimlico.io/v2/mantle-sepolia/rpc?apikey=${TEST_PIMLICO_KEY}`,
+      );
+    });
+    expect(() =>
+      createPaymasterClient({ chain: 'mantle-sepolia', sponsorshipPolicy: 'always' }),
+    ).toThrowError(
+      expect.objectContaining({
+        type: 'RpcError',
+        message: expect.not.stringContaining(TEST_PIMLICO_KEY),
+      }) as unknown as Error,
+    );
+  });
 });
