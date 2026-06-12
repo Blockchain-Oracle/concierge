@@ -135,6 +135,17 @@ describe('connectToConciergeAccount — bundler URL', () => {
       `https://api.pimlico.io/v2/mantle-sepolia/rpc?apikey=${TEST_PIMLICO_KEY}`,
     );
   });
+
+  it('passes Pimlico mainnet URL with API key', async () => {
+    const { http } = await import('viem');
+    await connectToConciergeAccount({
+      address: EXISTING_ADDRESS,
+      owner: MOCK_OWNER,
+      chain: 'mantle-mainnet',
+    });
+    const httpCalls = vi.mocked(http).mock.calls.map((c) => c[0]);
+    expect(httpCalls).toContain(`https://api.pimlico.io/v2/mantle/rpc?apikey=${TEST_PIMLICO_KEY}`);
+  });
 });
 
 describe('connectToConciergeAccount — input guards', () => {
@@ -256,7 +267,10 @@ describe('connectToConciergeAccount — paymaster defaults', () => {
     });
     expect(createKernelAccountClient).toHaveBeenCalledWith(
       expect.objectContaining({
-        paymaster: expect.objectContaining({ getPaymasterData: expect.any(Function) }),
+        paymaster: expect.objectContaining({
+          getPaymasterData: expect.any(Function),
+          getPaymasterStubData: expect.any(Function),
+        }),
       }),
     );
   });
@@ -308,7 +322,10 @@ describe('connectToConciergeAccount — paymaster overrides', () => {
     });
     expect(createKernelAccountClient).toHaveBeenCalledWith(
       expect.objectContaining({
-        paymaster: expect.objectContaining({ getPaymasterData: expect.any(Function) }),
+        paymaster: expect.objectContaining({
+          getPaymasterData: expect.any(Function),
+          getPaymasterStubData: expect.any(Function),
+        }),
       }),
     );
   });

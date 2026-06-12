@@ -44,7 +44,7 @@ export function createPaymasterClient(config: CreatePaymasterClientConfig): Paym
   if (!chainConfig) {
     throw new ConciergeError(
       'ConfigError',
-      `[@concierge/smart-account] createPaymasterClient: UnsupportedChain('${config.chain}')`,
+      `[@concierge/smart-account] createPaymasterClient: UnsupportedChain('${config.chain}') — supported: ${Object.keys(CHAIN_CONFIGS).join(', ')}`,
     );
   }
   const paymasterUrl = `${chainConfig.bundlerBaseUrl}?apikey=${apiKey}`;

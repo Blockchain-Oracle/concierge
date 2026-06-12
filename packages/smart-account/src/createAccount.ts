@@ -4,9 +4,9 @@ import { createKernelAccount, createKernelAccountClient } from '@zerodev/sdk';
 import { getEntryPoint, KERNEL_V3_1 } from '@zerodev/sdk/constants';
 import type { LocalAccount } from 'viem';
 import { createPublicClient, http } from 'viem';
-import { createPaymasterClient as viemCreatePaymasterClient } from 'viem/account-abstraction';
 import { CHAIN_CONFIGS } from './constants.ts';
-import type { ConciergeAccount, SupportedChain } from './types.ts';
+import { createPaymasterClient } from './paymaster.ts';
+import type { ConciergeAccount, KernelClientStub, SupportedChain } from './types.ts';
 
 export interface CreateConciergeAccountConfig {
   owner: LocalAccount;
@@ -33,7 +33,7 @@ export async function createConciergeAccount(
   if (!chainConfig) {
     throw new ConciergeError(
       'ConfigError',
-      `[@concierge/smart-account] createConciergeAccount: UnsupportedChain('${config.chain}')`,
+      `[@concierge/smart-account] createConciergeAccount: UnsupportedChain('${config.chain}') — supported: ${Object.keys(CHAIN_CONFIGS).join(', ')}`,
     );
   }
   // biome-ignore lint/complexity/useLiteralKeys: noPropertyAccessFromIndexSignature requires bracket notation
@@ -64,11 +64,12 @@ export async function createConciergeAccount(
   const bundlerUrl = `${chainConfig.bundlerBaseUrl}?apikey=${apiKey}`;
   const paymasterStrategy =
     config.paymaster ?? (config.chain === 'mantle-sepolia' ? 'pimlico' : 'none');
-  const paymasterClient =
+  const paymasterClient = createPaymasterClient(
     paymasterStrategy === 'pimlico'
-      ? viemCreatePaymasterClient({ transport: http(bundlerUrl) })
-      : null;
-  let kernelClient: object;
+      ? { chain: config.chain, sponsorshipPolicy: 'always', apiKey }
+      : { chain: config.chain, sponsorshipPolicy: 'never' },
+  );
+  let kernelClient: KernelClientStub & object;
   try {
     kernelClient = createKernelAccountClient({
       account: kernelAccount,
@@ -82,7 +83,8 @@ export async function createConciergeAccount(
           getPaymasterStubData: paymasterClient.getPaymasterStubData,
         },
       }),
-    });
+      // biome-ignore lint/suspicious/noExplicitAny: KernelAccountClient satisfies KernelClientStub at runtime; cast avoids viem peer-dep version skew
+    }) as any;
   } catch (err) {
     throw ConciergeError.fromUnknown(err, 'RpcError');
   }

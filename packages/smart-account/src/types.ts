@@ -33,5 +33,5 @@ export interface KernelAccountStub {
 export interface ConciergeAccount {
   readonly smartAccountAddress: Address;
   readonly kernelAccount: KernelAccountStub & object;
-  readonly kernelClient: object;
+  readonly kernelClient: KernelClientStub & object;
 }

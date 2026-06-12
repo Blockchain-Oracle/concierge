@@ -4,9 +4,9 @@ import { createKernelAccount, createKernelAccountClient } from '@zerodev/sdk';
 import { getEntryPoint, KERNEL_V3_1 } from '@zerodev/sdk/constants';
 import type { Address, LocalAccount } from 'viem';
 import { createPublicClient, http, isAddress } from 'viem';
-import { createPaymasterClient as viemCreatePaymasterClient } from 'viem/account-abstraction';
 import { CHAIN_CONFIGS } from './constants.ts';
-import type { ConciergeAccount, SupportedChain } from './types.ts';
+import { createPaymasterClient } from './paymaster.ts';
+import type { ConciergeAccount, KernelClientStub, SupportedChain } from './types.ts';
 
 export interface ConnectConciergeAccountConfig {
   address: Address;
@@ -37,7 +37,7 @@ function validateConnectConfig(config: ConnectConciergeAccountConfig) {
   if (!chainConfig) {
     throw new ConciergeError(
       'ConfigError',
-      `[@concierge/smart-account] connectToConciergeAccount: UnsupportedChain('${config.chain}')`,
+      `[@concierge/smart-account] connectToConciergeAccount: UnsupportedChain('${config.chain}') — supported: ${Object.keys(CHAIN_CONFIGS).join(', ')}`,
     );
   }
   // biome-ignore lint/complexity/useLiteralKeys: noPropertyAccessFromIndexSignature requires bracket notation
@@ -48,7 +48,8 @@ function validateConnectConfig(config: ConnectConciergeAccountConfig) {
       "[@concierge/smart-account] connectToConciergeAccount: MissingEnvVar('PIMLICO_API_KEY') — set this env var or pass apiKey in config before connecting to a smart account.",
     );
   }
-  return { chainConfig, apiKey };
+  const bundlerUrl = `${chainConfig.bundlerBaseUrl}?apikey=${apiKey}`;
+  return { chainConfig, bundlerUrl };
 }
 
 /**
@@ -63,7 +64,9 @@ function validateConnectConfig(config: ConnectConciergeAccountConfig) {
 export async function connectToConciergeAccount(
   config: ConnectConciergeAccountConfig,
 ): Promise<ConciergeAccount> {
-  const { chainConfig, apiKey } = validateConnectConfig(config);
+  const { chainConfig, bundlerUrl } = validateConnectConfig(config);
+  // biome-ignore lint/complexity/useLiteralKeys: noPropertyAccessFromIndexSignature requires bracket notation
+  const apiKey = (config.apiKey ?? process.env['PIMLICO_API_KEY']) as string;
   const publicClient = createPublicClient({
     chain: chainConfig.chain,
     transport: http(chainConfig.chain.rpcUrls.default.http[0]),
@@ -82,14 +85,14 @@ export async function connectToConciergeAccount(
     address: config.address,
   }).catch(rpcWrap);
   const smartAccountAddress = kernelAccount.address;
-  const bundlerUrl = `${chainConfig.bundlerBaseUrl}?apikey=${apiKey}`;
   const paymasterStrategy =
     config.paymaster ?? (config.chain === 'mantle-sepolia' ? 'pimlico' : 'none');
-  const paymasterClient =
+  const paymasterClient = createPaymasterClient(
     paymasterStrategy === 'pimlico'
-      ? viemCreatePaymasterClient({ transport: http(bundlerUrl) })
-      : null;
-  let kernelClient: object;
+      ? { chain: config.chain, sponsorshipPolicy: 'always', apiKey }
+      : { chain: config.chain, sponsorshipPolicy: 'never' },
+  );
+  let kernelClient: KernelClientStub & object;
   try {
     kernelClient = createKernelAccountClient({
       account: kernelAccount,
@@ -103,7 +106,8 @@ export async function connectToConciergeAccount(
           getPaymasterStubData: paymasterClient.getPaymasterStubData,
         },
       }),
-    });
+      // biome-ignore lint/suspicious/noExplicitAny: KernelAccountClient satisfies KernelClientStub at runtime; cast avoids viem peer-dep version skew
+    }) as any;
   } catch (err) {
     throw ConciergeError.fromUnknown(err, 'RpcError');
   }

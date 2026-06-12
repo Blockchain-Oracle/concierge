@@ -77,6 +77,17 @@ function parseTier(
   return { maxFeePerGas, maxPriorityFeePerGas };
 }
 
+async function readErrorBody(res: Response): Promise<{ text: string; cause: unknown }> {
+  try {
+    return { text: await res.text(), cause: undefined };
+  } catch (err) {
+    return {
+      text: `[body unreadable: ${err instanceof Error ? err.message : String(err)}]`,
+      cause: err,
+    };
+  }
+}
+
 /**
  * Queries Pimlico's gas price oracle for current UserOp gas prices.
  * Must be called fresh per UserOp — gas prices change block-to-block.
@@ -94,7 +105,7 @@ export async function getUserOpGasPrice(config: GetUserOpGasPriceConfig): Promis
   if (!chainConfig) {
     throw new ConciergeError(
       'ConfigError',
-      `[@concierge/smart-account] getUserOpGasPrice: UnsupportedChain('${config.chain}')`,
+      `[@concierge/smart-account] getUserOpGasPrice: UnsupportedChain('${config.chain}') — supported: ${Object.keys(CHAIN_CONFIGS).join(', ')}`,
     );
   }
   const url = `${chainConfig.bundlerBaseUrl}?apikey=${apiKey}`;
@@ -118,15 +129,11 @@ export async function getUserOpGasPrice(config: GetUserOpGasPriceConfig): Promis
     );
   }
   if (!res.ok) {
-    let body = '';
-    try {
-      body = await res.text();
-    } catch (bodyErr) {
-      body = `[body unreadable: ${bodyErr instanceof Error ? bodyErr.message : String(bodyErr)}]`;
-    }
+    const { text: body, cause: bodyReadErr } = await readErrorBody(res);
     throw new ConciergeError(
       'RpcError',
       `[@concierge/smart-account] getUserOpGasPrice: BundlerError({ status: ${res.status}, chain: '${config.chain}' })${body ? ` — ${body.slice(0, 200)}` : ''}`,
+      bodyReadErr,
     );
   }
   let data: PimlicoRpcResponse;

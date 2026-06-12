@@ -48,7 +48,7 @@ export function createBundlerClient(config: CreateBundlerClientConfig): BundlerB
   if (!chainConfig) {
     throw new ConciergeError(
       'ConfigError',
-      `[@concierge/smart-account] createBundlerClient: UnsupportedChain('${config.chain}')`,
+      `[@concierge/smart-account] createBundlerClient: UnsupportedChain('${config.chain}') — supported: ${Object.keys(CHAIN_CONFIGS).join(', ')}`,
     );
   }
   const bundlerUrl = `${chainConfig.bundlerBaseUrl}?apikey=${apiKey}`;

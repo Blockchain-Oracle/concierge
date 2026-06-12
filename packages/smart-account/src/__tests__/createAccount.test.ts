@@ -281,7 +281,10 @@ describe('createConciergeAccount — paymaster wiring', () => {
     await createConciergeAccount({ owner: MOCK_OWNER, chain: 'mantle-sepolia' });
     expect(createKernelAccountClient).toHaveBeenCalledWith(
       expect.objectContaining({
-        paymaster: expect.objectContaining({ getPaymasterData: expect.any(Function) }),
+        paymaster: expect.objectContaining({
+          getPaymasterData: expect.any(Function),
+          getPaymasterStubData: expect.any(Function),
+        }),
       }),
     );
   });
@@ -313,7 +316,10 @@ describe('createConciergeAccount — paymaster wiring', () => {
     });
     expect(createKernelAccountClient).toHaveBeenCalledWith(
       expect.objectContaining({
-        paymaster: expect.objectContaining({ getPaymasterData: expect.any(Function) }),
+        paymaster: expect.objectContaining({
+          getPaymasterData: expect.any(Function),
+          getPaymasterStubData: expect.any(Function),
+        }),
       }),
     );
   });
