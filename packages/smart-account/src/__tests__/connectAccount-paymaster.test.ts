@@ -75,6 +75,46 @@ const OWNER_ADDRESS = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266' as const;
 // biome-ignore lint/suspicious/noExplicitAny: LocalAccount minimal stub for test injection
 const MOCK_OWNER = { address: OWNER_ADDRESS, sign: vi.fn() } as any;
 
+describe('connectToConciergeAccount — paymaster defaults', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubEnv('PIMLICO_API_KEY', TEST_PIMLICO_KEY);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('wires paymaster for mantle-sepolia by default', async () => {
+    const { createKernelAccountClient } = await import('@zerodev/sdk');
+    await connectToConciergeAccount({
+      address: EXISTING_ADDRESS,
+      owner: MOCK_OWNER,
+      chain: 'mantle-sepolia',
+    });
+    expect(createKernelAccountClient).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymaster: expect.objectContaining({
+          getPaymasterData: expect.any(Function),
+          getPaymasterStubData: expect.any(Function),
+        }),
+      }),
+    );
+  });
+
+  it('does not wire paymaster for mantle-mainnet by default', async () => {
+    const { createKernelAccountClient } = await import('@zerodev/sdk');
+    await connectToConciergeAccount({
+      address: EXISTING_ADDRESS,
+      owner: MOCK_OWNER,
+      chain: 'mantle-mainnet',
+    });
+    // biome-ignore lint/suspicious/noExplicitAny: accessing mock call args for assertion
+    const callArg = vi.mocked(createKernelAccountClient).mock.calls[0]?.[0] as any;
+    // biome-ignore lint/complexity/useLiteralKeys: any-typed access — bracket notation avoids TS4111
+    expect(callArg?.['paymaster']).toBeUndefined();
+  });
+});
+
 describe('connectToConciergeAccount — paymaster overrides', () => {
   beforeEach(() => {
     vi.clearAllMocks();

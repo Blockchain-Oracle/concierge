@@ -50,12 +50,12 @@ export async function createConciergeAccount(
     signer: config.owner as any,
     entryPoint,
     kernelVersion: KERNEL_V3_1,
-  }).catch(rpcCatch('createConciergeAccount: ECDSA validator init failed', config.chain));
+  }).catch(rpcCatch('createConciergeAccount: ECDSA validator init failed', config.chain, apiKey));
   const kernelAccount = await createKernelAccount(publicClient, {
     plugins: { sudo: ecdsaValidator },
     entryPoint,
     kernelVersion: KERNEL_V3_1,
-  }).catch(rpcCatch('createConciergeAccount: kernel account init failed', config.chain));
+  }).catch(rpcCatch('createConciergeAccount: kernel account init failed', config.chain, apiKey));
   const smartAccountAddress = kernelAccount.address;
   const paymasterStrategy =
     config.paymaster ?? (config.chain === 'mantle-sepolia' ? 'pimlico' : 'none');

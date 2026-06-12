@@ -88,52 +88,81 @@ describe('resolveChainConfig', () => {
   });
 });
 
-describe('sanitizeCause', () => {
-  const KEY = 'secret-api-key';
+const SANITIZE_KEY = 'secret-api-key';
 
+describe('sanitizeCause — passthrough', () => {
   it('returns non-Error, non-string values unchanged (identity-equal)', () => {
     const obj = { foo: 'bar' };
-    expect(sanitizeCause(obj, KEY)).toBe(obj);
-    expect(sanitizeCause(null, KEY)).toBeNull();
-    expect(sanitizeCause(undefined, KEY)).toBeUndefined();
-    expect(sanitizeCause(42, KEY)).toBe(42);
+    expect(sanitizeCause(obj, SANITIZE_KEY)).toBe(obj);
+    expect(sanitizeCause(null, SANITIZE_KEY)).toBeNull();
+    expect(sanitizeCause(undefined, SANITIZE_KEY)).toBeUndefined();
+    expect(sanitizeCause(42, SANITIZE_KEY)).toBe(42);
   });
 
   it('returns a non-matching Error unchanged (identity-equal)', () => {
     const err = new TypeError('unrelated error');
-    expect(sanitizeCause(err, KEY)).toBe(err);
+    expect(sanitizeCause(err, SANITIZE_KEY)).toBe(err);
   });
 
   it('returns a non-matching string unchanged', () => {
-    expect(sanitizeCause('harmless error', KEY)).toBe('harmless error');
+    expect(sanitizeCause('harmless error', SANITIZE_KEY)).toBe('harmless error');
+  });
+
+  it('returns err unchanged when apiKey is empty string (avoids corrupting every message)', () => {
+    const err = new Error(`msg with ${SANITIZE_KEY}`);
+    expect(sanitizeCause(err, '')).toBe(err);
+    expect(sanitizeCause(`url?apikey=${SANITIZE_KEY}`, '')).toBe(`url?apikey=${SANITIZE_KEY}`);
   });
 
   it('redacts apiKey from matching string', () => {
-    const result = sanitizeCause(`url?apikey=${KEY}`, KEY);
+    const result = sanitizeCause(`url?apikey=${SANITIZE_KEY}`, SANITIZE_KEY);
     expect(result).toBe('url?apikey=[REDACTED]');
   });
+});
 
+describe('sanitizeCause — Error redaction', () => {
   it('preserves prototype identity when redacting Error.message', () => {
-    const err = new TypeError(`fetch failed with apikey=${KEY}`);
-    const result = sanitizeCause(err, KEY);
+    const err = new TypeError(`fetch failed with apikey=${SANITIZE_KEY}`);
+    const result = sanitizeCause(err, SANITIZE_KEY);
     expect(result).toBeInstanceOf(TypeError);
     expect((result as Error).message).toBe('fetch failed with apikey=[REDACTED]');
-    expect((result as TypeError).message).not.toContain(KEY);
+    expect((result as TypeError).message).not.toContain(SANITIZE_KEY);
   });
 
-  it('scrubs apiKey from Error.stack', () => {
-    const err = new Error(`msg with ${KEY}`);
-    err.stack = `Error: msg with ${KEY}\n    at somewhere`;
-    const result = sanitizeCause(err, KEY) as Error;
-    expect(result.stack).not.toContain(KEY);
+  it('scrubs apiKey from both Error.message and Error.stack', () => {
+    const err = new Error(`msg with ${SANITIZE_KEY}`);
+    err.stack = `Error: msg with ${SANITIZE_KEY}\n    at somewhere`;
+    const result = sanitizeCause(err, SANITIZE_KEY) as Error;
+    expect(result.stack).not.toContain(SANITIZE_KEY);
     expect(result.stack).toContain('[REDACTED]');
+    expect(result.message).toBe(`msg with [REDACTED]`);
   });
 
   it('redacts when only stack (not message) contains the apiKey', () => {
     const err = new Error('clean message');
-    err.stack = `Error: clean message\n    at https://host/rpc?apikey=${KEY}`;
-    const result = sanitizeCause(err, KEY) as Error;
-    expect(result.stack).not.toContain(KEY);
+    err.stack = `Error: clean message\n    at https://host/rpc?apikey=${SANITIZE_KEY}`;
+    const result = sanitizeCause(err, SANITIZE_KEY) as Error;
+    expect(result.stack).not.toContain(SANITIZE_KEY);
     expect((result as Error).message).toBe('clean message');
+  });
+});
+
+describe('sanitizeCause — clone fidelity', () => {
+  it('preserves non-enumerable own properties (e.g. AggregateError.errors)', () => {
+    const inner = new Error('inner');
+    const agg = new AggregateError([inner], `agg error with ${SANITIZE_KEY}`);
+    const result = sanitizeCause(agg, SANITIZE_KEY) as AggregateError;
+    expect(result).toBeInstanceOf(AggregateError);
+    expect(result.errors).toBeDefined();
+    expect(result.errors[0]).toBe(inner);
+    expect(result.message).not.toContain(SANITIZE_KEY);
+  });
+
+  it('cloned Error.stack is non-enumerable (does not appear in JSON.stringify)', () => {
+    const err = new Error(`msg with ${SANITIZE_KEY}`);
+    err.stack = `Error: msg with ${SANITIZE_KEY}\n    at somewhere`;
+    const result = sanitizeCause(err, SANITIZE_KEY) as Error;
+    const descriptor = Object.getOwnPropertyDescriptor(result, 'stack');
+    expect(descriptor?.enumerable).toBe(false);
   });
 });

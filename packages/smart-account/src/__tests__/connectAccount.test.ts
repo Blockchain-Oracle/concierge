@@ -356,44 +356,22 @@ describe('connectToConciergeAccount — address consistency', () => {
         String(e.message).includes('address mismatch'),
     );
   });
-});
 
-describe('connectToConciergeAccount — paymaster defaults', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.stubEnv('PIMLICO_API_KEY', TEST_PIMLICO_KEY);
-  });
-  afterEach(() => {
-    vi.unstubAllEnvs();
-  });
-
-  it('wires paymaster for mantle-sepolia by default', async () => {
-    const { createKernelAccountClient } = await import('@zerodev/sdk');
-    await connectToConciergeAccount({
-      address: EXISTING_ADDRESS,
-      owner: MOCK_OWNER,
-      chain: 'mantle-sepolia',
-    });
-    expect(createKernelAccountClient).toHaveBeenCalledWith(
-      expect.objectContaining({
-        paymaster: expect.objectContaining({
-          getPaymasterData: expect.any(Function),
-          getPaymasterStubData: expect.any(Function),
-        }),
+  it('throws ConfigError when kernelAccount.address is undefined (malformed SDK response)', async () => {
+    const { createKernelAccount } = await import('@zerodev/sdk');
+    // biome-ignore lint/suspicious/noExplicitAny: simulating malformed SDK response with no address
+    vi.mocked(createKernelAccount).mockResolvedValueOnce({ address: undefined } as any);
+    await expect(
+      connectToConciergeAccount({
+        address: EXISTING_ADDRESS,
+        owner: MOCK_OWNER,
+        chain: 'mantle-sepolia',
       }),
+    ).rejects.toSatisfy(
+      (e: unknown) =>
+        e instanceof ConciergeError &&
+        e.type === 'ConfigError' &&
+        String(e.message).includes('address mismatch'),
     );
-  });
-
-  it('does not wire paymaster for mantle-mainnet by default', async () => {
-    const { createKernelAccountClient } = await import('@zerodev/sdk');
-    await connectToConciergeAccount({
-      address: EXISTING_ADDRESS,
-      owner: MOCK_OWNER,
-      chain: 'mantle-mainnet',
-    });
-    // biome-ignore lint/suspicious/noExplicitAny: accessing mock call args for assertion
-    const callArg = vi.mocked(createKernelAccountClient).mock.calls[0]?.[0] as any;
-    // biome-ignore lint/complexity/useLiteralKeys: any-typed access — bracket notation avoids TS4111
-    expect(callArg?.['paymaster']).toBeUndefined();
   });
 });

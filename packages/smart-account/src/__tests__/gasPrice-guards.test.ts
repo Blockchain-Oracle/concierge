@@ -141,7 +141,7 @@ describe('getUserOpGasPrice — security', () => {
     );
   });
 
-  it('HTTP error body containing API key does not leak into error message', async () => {
+  it('HTTP error body containing API key does not leak into error message, cause is undefined', async () => {
     const urlWithKey = `https://api.pimlico.io/v2/mantle-sepolia/rpc?apikey=${TEST_PIMLICO_KEY}`;
     vi.stubGlobal(
       'fetch',
@@ -155,7 +155,8 @@ describe('getUserOpGasPrice — security', () => {
       (e: unknown) =>
         e instanceof ConciergeError &&
         e.type === 'RpcError' &&
-        !String(e.message).includes(TEST_PIMLICO_KEY),
+        !String(e.message).includes(TEST_PIMLICO_KEY) &&
+        e.cause === undefined,
     );
   });
 });

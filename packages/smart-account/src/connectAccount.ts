@@ -65,13 +65,15 @@ export async function connectToConciergeAccount(
     signer: config.owner as any,
     entryPoint,
     kernelVersion: KERNEL_V3_1,
-  }).catch(rpcCatch('connectToConciergeAccount: ECDSA validator init failed', config.chain));
+  }).catch(
+    rpcCatch('connectToConciergeAccount: ECDSA validator init failed', config.chain, apiKey),
+  );
   const kernelAccount = await createKernelAccount(publicClient, {
     plugins: { sudo: ecdsaValidator },
     entryPoint,
     kernelVersion: KERNEL_V3_1,
     address: config.address,
-  }).catch(rpcCatch('connectToConciergeAccount: kernel account init failed', config.chain));
+  }).catch(rpcCatch('connectToConciergeAccount: kernel account init failed', config.chain, apiKey));
   if (kernelAccount.address?.toLowerCase() !== config.address.toLowerCase()) {
     throw new ConciergeError(
       'ConfigError',

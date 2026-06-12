@@ -5,37 +5,55 @@ import type { SupportedChain } from './types.ts';
 /**
  * Redacts apiKey from an error's message and stack while preserving prototype identity.
  * Also handles plain string rejections. Non-matching values pass through unchanged.
+ * Skips redaction when apiKey is empty to avoid corrupting every error message.
  */
-export function sanitizeCause(err: unknown, apiKey: string): unknown {
+export function sanitizeCause<T>(err: T, apiKey: string): T {
+  if (!apiKey) return err;
   if (typeof err === 'string' && err.includes(apiKey)) {
-    return err.replaceAll(apiKey, '[REDACTED]');
+    return err.replaceAll(apiKey, '[REDACTED]') as T;
   }
   if (err instanceof Error && (err.message.includes(apiKey) || err.stack?.includes(apiKey))) {
     const clone = Object.create(Object.getPrototypeOf(err)) as Error;
     Object.assign(clone, err);
+    // Copy non-enumerable own props skipped by Object.assign (e.g. name, AggregateError.errors, code)
+    for (const key of Object.getOwnPropertyNames(err)) {
+      if (key === 'message' || key === 'stack') continue;
+      if (!Object.hasOwn(clone, key)) {
+        const descriptor = Object.getOwnPropertyDescriptor(err, key);
+        if (descriptor) Object.defineProperty(clone, key, descriptor);
+      }
+    }
     Object.defineProperty(clone, 'message', {
       value: err.message.replaceAll(apiKey, '[REDACTED]'),
       configurable: true,
       writable: true,
       enumerable: false,
     });
-    if (err.stack) clone.stack = err.stack.replaceAll(apiKey, '[REDACTED]');
-    return clone;
+    if (err.stack) {
+      Object.defineProperty(clone, 'stack', {
+        value: err.stack.replaceAll(apiKey, '[REDACTED]'),
+        writable: true,
+        enumerable: false,
+        configurable: true,
+      });
+    }
+    return clone as T;
   }
   return err;
 }
 
 /**
  * Returns a .catch() callback that wraps any rejection as a sanitised RpcError.
+ * Pass apiKey to redact it from the cause before wrapping.
  * Note: catches ALL rejections including programmer errors (TypeError, RangeError) —
  * always inspect `.cause` when debugging unexpected RpcErrors.
  */
-export function rpcCatch(op: string, chain: SupportedChain) {
+export function rpcCatch(op: string, chain: SupportedChain, apiKey?: string) {
   return (err: unknown): never => {
     throw new ConciergeError(
       'RpcError',
       `[@concierge/smart-account] ${op} (chain: '${chain}')`,
-      err,
+      apiKey !== undefined ? sanitizeCause(err, apiKey) : err,
     );
   };
 }

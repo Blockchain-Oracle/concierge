@@ -177,7 +177,7 @@ export async function getUserOpGasPrice(config: GetUserOpGasPriceConfig): Promis
     throw new ConciergeError(
       'RpcError',
       `[@concierge/smart-account] getUserOpGasPrice: BundlerError({ status: ${res.status}, chain: '${config.chain}' })${safeBody ? ` — ${safeBody.slice(0, 200)}` : ''}`,
-      cause,
+      sanitizeCause(cause, apiKey),
     );
   }
   const data = await readAndParseBody(res, config.chain);

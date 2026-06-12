@@ -80,6 +80,18 @@ describe('createBundlerClient — bundler URL', () => {
     const httpCalls = vi.mocked(http).mock.calls.map((c) => c[0]);
     expect(httpCalls).toContain('https://api.pimlico.io/v2/mantle-sepolia/rpc?apikey=override-key');
   });
+
+  it('percent-encodes special characters in apiKey in bundler URL', async () => {
+    vi.unstubAllEnvs();
+    const { http } = await import('viem');
+    createBundlerClient({ chain: 'mantle-sepolia', apiKey: 'key+with/special=chars' });
+    const httpCalls = vi.mocked(http).mock.calls.map((c) => c[0]);
+    expect(
+      httpCalls.some(
+        (url) => typeof url === 'string' && url.includes('key%2Bwith%2Fspecial%3Dchars'),
+      ),
+    ).toBe(true);
+  });
 });
 
 describe('createBundlerClient — input guards', () => {
@@ -155,34 +167,64 @@ describe('createBundlerClient — error classification', () => {
       expect.objectContaining({ type: 'RpcError' }) as unknown as Error,
     );
   });
+});
 
-  it('paymaster transport error message does not expose the API key', async () => {
+describe('createBundlerClient — security', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubEnv('PIMLICO_API_KEY', TEST_PIMLICO_KEY);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('paymaster transport error message and cause do not expose the API key', async () => {
     const { createPaymasterClient: viemMock } = await import('viem/account-abstraction');
     vi.mocked(viemMock).mockImplementationOnce(() => {
       throw new TypeError(
         `transport error https://api.pimlico.io/v2/mantle-sepolia/rpc?apikey=${TEST_PIMLICO_KEY}`,
       );
     });
-    expect(() => createBundlerClient({ chain: 'mantle-sepolia' })).toThrowError(
-      expect.objectContaining({
-        type: 'RpcError',
-        message: expect.not.stringContaining(TEST_PIMLICO_KEY),
-      }) as unknown as Error,
+    let thrown: unknown;
+    try {
+      createBundlerClient({ chain: 'mantle-sepolia' });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toSatisfy(
+      (e: unknown) =>
+        e instanceof ConciergeError &&
+        e.type === 'RpcError' &&
+        !String(e.message).includes(TEST_PIMLICO_KEY) &&
+        // biome-ignore lint/suspicious/noExplicitAny: checking cause.message for API key leak
+        !String((e as any).cause?.message ?? '').includes(TEST_PIMLICO_KEY) &&
+        // biome-ignore lint/suspicious/noExplicitAny: checking cause.stack for API key leak
+        !String((e as any).cause?.stack ?? '').includes(TEST_PIMLICO_KEY),
     );
   });
 
-  it('bundler transport error message does not expose the API key', async () => {
+  it('bundler transport error message and cause do not expose the API key', async () => {
     const { createBundlerClient: viemMock } = await import('viem/account-abstraction');
     vi.mocked(viemMock).mockImplementationOnce(() => {
       throw new TypeError(
         `transport error https://api.pimlico.io/v2/mantle/rpc?apikey=${TEST_PIMLICO_KEY}`,
       );
     });
-    expect(() => createBundlerClient({ chain: 'mantle-mainnet' })).toThrowError(
-      expect.objectContaining({
-        type: 'RpcError',
-        message: expect.not.stringContaining(TEST_PIMLICO_KEY),
-      }) as unknown as Error,
+    let thrown: unknown;
+    try {
+      createBundlerClient({ chain: 'mantle-mainnet' });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toSatisfy(
+      (e: unknown) =>
+        e instanceof ConciergeError &&
+        e.type === 'RpcError' &&
+        !String(e.message).includes(TEST_PIMLICO_KEY) &&
+        // biome-ignore lint/suspicious/noExplicitAny: checking cause.message for API key leak
+        !String((e as any).cause?.message ?? '').includes(TEST_PIMLICO_KEY) &&
+        // biome-ignore lint/suspicious/noExplicitAny: checking cause.stack for API key leak
+        !String((e as any).cause?.stack ?? '').includes(TEST_PIMLICO_KEY),
     );
   });
 });
