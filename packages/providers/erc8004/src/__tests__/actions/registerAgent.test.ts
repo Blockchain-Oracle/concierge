@@ -1,0 +1,110 @@
+import { ConciergeError } from '@concierge/sdk';
+import { identityRegistryAbi } from '@concierge/shared/abi';
+import { encodeEventTopics, zeroAddress } from 'viem';
+import { describe, expect, it, vi } from 'vitest';
+import type { ActionContext } from '../../_context.ts';
+import { executeRegisterAgent } from '../../actions/registerAgent.ts';
+
+const IDENTITY_REGISTRY = '0x8004A169FB4a3325136EB29fA0ceB6D2e539a432' as const;
+const REPUTATION_REGISTRY = '0x8004BAa17C55a88189AE136b182e5fdA19dE9b63' as const;
+const OWNER = '0x1111111111111111111111111111111111111111' as const;
+const TX_HASH = '0xaaaa000000000000000000000000000000000000000000000000000000000001' as const;
+const AGENT_ID = 7n;
+
+// Build a Transfer(from=0x0, to=owner, tokenId=AGENT_ID) log entry using viem ABI encoding
+function makeTransferLog() {
+  const topics = encodeEventTopics({
+    abi: identityRegistryAbi,
+    eventName: 'Transfer',
+    args: { from: zeroAddress, to: OWNER, tokenId: AGENT_ID },
+  });
+  return {
+    address: IDENTITY_REGISTRY,
+    topics,
+    data: '0x' as `0x${string}`,
+    blockNumber: 1000n,
+    transactionHash: TX_HASH,
+    logIndex: 0,
+    transactionIndex: 0,
+    blockHash: '0xbbbb' as `0x${string}`,
+    removed: false,
+  };
+}
+
+function makeCtx(walletOverride?: object, publicOverride?: object): ActionContext {
+  const walletClient = {
+    account: { address: OWNER },
+    chain: { id: 5000 },
+    writeContract: vi.fn().mockResolvedValue(TX_HASH),
+    ...walletOverride,
+    // biome-ignore lint/suspicious/noExplicitAny: minimal mock — WalletClient is a complex branded type
+  } as any;
+
+  const publicClient = {
+    waitForTransactionReceipt: vi.fn().mockResolvedValue({
+      status: 'success',
+      logs: [makeTransferLog()],
+    }),
+    ...publicOverride,
+    // biome-ignore lint/suspicious/noExplicitAny: minimal mock — PublicClient is a complex branded type
+  } as any;
+
+  return {
+    walletClient,
+    publicClient,
+    identityRegistry: IDENTITY_REGISTRY,
+    reputationRegistry: REPUTATION_REGISTRY,
+    chainId: 5000,
+  };
+}
+
+describe('registerAgent — happy path', () => {
+  it('returns agentId from Transfer mint event', async () => {
+    const ctx = makeCtx();
+    const result = await executeRegisterAgent(ctx, {});
+    expect(result.agentId).toBe(AGENT_ID);
+    expect(result.txHash).toBe(TX_HASH);
+  });
+
+  it('calls writeContract with register() and no args when agentURI absent', async () => {
+    const ctx = makeCtx();
+    await executeRegisterAgent(ctx, {});
+    // biome-ignore lint/suspicious/noExplicitAny: accessing mock fn
+    const call = (ctx.walletClient as any).writeContract.mock.calls[0][0];
+    expect(call.functionName).toBe('register');
+    expect(call.args).toStrictEqual([]);
+  });
+
+  it('calls writeContract with [agentURI] when agentURI is provided', async () => {
+    const ctx = makeCtx();
+    await executeRegisterAgent(ctx, { agentURI: 'ipfs://Qm123' });
+    // biome-ignore lint/suspicious/noExplicitAny: accessing mock fn
+    const call = (ctx.walletClient as any).writeContract.mock.calls[0][0];
+    expect(call.args).toStrictEqual(['ipfs://Qm123']);
+  });
+});
+
+describe('registerAgent — error paths', () => {
+  it('throws ConfigError when walletClient is absent', async () => {
+    const ctx: ActionContext = {
+      walletClient: undefined,
+      // biome-ignore lint/suspicious/noExplicitAny: minimal mock for error path
+      publicClient: {} as any,
+      identityRegistry: IDENTITY_REGISTRY,
+      reputationRegistry: REPUTATION_REGISTRY,
+      chainId: 5000,
+    };
+    await expect(executeRegisterAgent(ctx, {})).rejects.toSatisfy(
+      (e: unknown) => e instanceof ConciergeError && e.type === 'ConfigError',
+    );
+  });
+
+  it('throws RpcError when receipt has no Transfer mint event', async () => {
+    const ctx = makeCtx(undefined, {
+      waitForTransactionReceipt: vi.fn().mockResolvedValue({ status: 'success', logs: [] }),
+    });
+    await expect(executeRegisterAgent(ctx, {})).rejects.toSatisfy(
+      (e: unknown) => e instanceof ConciergeError && e.type === 'RpcError',
+    );
+  });
+});
