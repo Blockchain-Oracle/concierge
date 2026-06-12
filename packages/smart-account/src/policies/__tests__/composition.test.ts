@@ -220,6 +220,14 @@ describe('createConciergePolicy', () => {
       expect(String((e as ConciergeError).message)).toContain('at least one provider');
     }
   });
+});
+
+describe('createConciergePolicy — conflict detection', () => {
+  const provider1 = {
+    sessionKey: {
+      callPolicy: { permissions: [{ target: AAVE_POOL, selector: SUPPLY_SELECTOR }] },
+    },
+  };
 
   it('throws ConfigError when wildcard selector overlaps a specific selector on the same target', () => {
     const wildcardProvider = {

@@ -33,7 +33,10 @@ export function createTimeFramePolicy(
 ): ReturnType<typeof toTimestampPolicy> {
   const now = Math.floor(Date.now() / 1000);
   const validAfter = config.validAfter ?? now;
-  const validUntil = config.validUntil ?? now + SEVEN_DAYS_SECONDS;
+  // When validUntil is unset but the caller pinned validAfter in the future,
+  // default to "7 days after the later of (now, validAfter)" so we don't throw
+  // a misleading "validUntil <= validAfter" error on an input the caller never set.
+  const validUntil = config.validUntil ?? Math.max(validAfter, now) + SEVEN_DAYS_SECONDS;
   assertUnixSeconds('validAfter', validAfter);
   assertUnixSeconds('validUntil', validUntil);
   if (validUntil === 0) {

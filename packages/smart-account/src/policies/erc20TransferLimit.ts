@@ -49,6 +49,12 @@ export function createErc20TransferLimit(config: Erc20TransferLimitConfig): Call
       `[@concierge/smart-account] createErc20TransferLimit: InvalidPolicy: token is not a valid address: '${config.token}'`,
     );
   }
+  if (config.token.toLowerCase() === '0x0000000000000000000000000000000000000000') {
+    throw new ConciergeError(
+      'ConfigError',
+      '[@concierge/smart-account] createErc20TransferLimit: InvalidPolicy: token is the zero address — limit would silently never match a real ERC-20 transfer.',
+    );
+  }
   if (config.maxAmountPerTx <= 0n) {
     throw new ConciergeError(
       'ConfigError',
