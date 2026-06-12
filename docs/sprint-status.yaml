@@ -311,11 +311,11 @@ stories:
     merged_at: "2026-06-12T08:44:00Z"
   - id: story-52-session-key-policies
     epic: "Epic E4 — Smart Account Layer"
-    status: PENDING
+    status: COMPLETE
     depends_on: [story-50-zerodev-sdk-bootstrap]
     issue_url: ""
-    pr_url: ""
-    merged_at: ""
+    pr_url: "https://github.com/Blockchain-Oracle/concierge/pull/87"
+    merged_at: "2026-06-12T20:13:00Z"
   - id: story-53-session-key-issuance-flow
     epic: "Epic E4 — Smart Account Layer"
     status: PENDING
