@@ -28,6 +28,14 @@ export const CONCIERGE_ERROR_TYPES = Object.freeze([
   'NetworkUnsupported',
   'RpcError',
   'SwapSlippageBreach',
+  // Session-key issuance / persistence / loading (story-53). Distinct types
+  // because each maps to a different runtime recovery action: signature failure
+  // (re-prompt user), decryption failure (suspect tampering — escalate),
+  // expiry (re-auth flow), revocation (silent re-auth).
+  'InvalidOwnerSignature',
+  'DecryptionFailed',
+  'SessionKeyExpired',
+  'SessionKeyRevoked',
 ] as const);
 
 export type ConciergeErrorType = (typeof CONCIERGE_ERROR_TYPES)[number];
