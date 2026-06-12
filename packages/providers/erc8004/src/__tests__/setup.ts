@@ -78,6 +78,8 @@ export async function startAnvilFork(): Promise<AnvilFork> {
 
     const timer = setTimeout(() => {
       if (!started) {
+        const killTimer = setTimeout(() => proc.kill('SIGKILL'), 5_000);
+        proc.once('exit', () => clearTimeout(killTimer));
         proc.kill('SIGTERM');
         reject(
           new Error(
@@ -147,7 +149,16 @@ export async function startAnvilFork(): Promise<AnvilFork> {
               stop,
             });
           })
-          .catch(reject);
+          .catch((err: unknown) => {
+            proc.kill('SIGTERM');
+            setTimeout(() => proc.kill('SIGKILL'), 5_000);
+            reject(
+              new Error(
+                `[@concierge/erc8004] startAnvilFork: getBlockNumber() failed on port ${port}: ` +
+                  `${err instanceof Error ? err.message : String(err)}`,
+              ),
+            );
+          });
       }
     };
 

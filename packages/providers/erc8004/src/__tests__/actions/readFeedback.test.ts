@@ -233,7 +233,7 @@ describe('readFeedback — fork: live Sepolia', () => {
   });
 
   afterAll(async () => {
-    await fork.stop();
+    await fork?.stop();
   });
 
   // ERC-8004: agent owner (account #0) registers; client (account #1) attests.

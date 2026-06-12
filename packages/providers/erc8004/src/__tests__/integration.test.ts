@@ -72,7 +72,7 @@ describe('ERC-8004 end-to-end integration — live Sepolia fork', () => {
   });
 
   afterAll(async () => {
-    await fork.stop();
+    await fork?.stop();
   });
 
   it('register returns agentId > 0', () => {

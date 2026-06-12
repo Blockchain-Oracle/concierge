@@ -4,6 +4,7 @@ import { tool } from '@concierge/tools';
 import {
   AbiEventSignatureEmptyTopicsError,
   AbiEventSignatureNotFoundError,
+  ContractFunctionRevertedError,
   decodeEventLog,
 } from 'viem';
 import { z } from 'zod';
@@ -103,9 +104,20 @@ export async function executeAttestAction(
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    // ERC721NonexistentToken bubbles up from IdentityRegistry.ownerOf when the agentId NFT
-    // does not exist — treat it as AgentNotFound for callers.
-    const reason = /AgentNotFound|ERC721NonexistentToken/i.test(msg) ? 'AgentNotFound' : 'TxFailed';
+    // Walk the viem error chain to find the decoded revert. ContractFunctionRevertedError.data
+    // carries the ABI-decoded errorName — stable across viem formatting changes, unlike .message.
+    // ERC721NonexistentToken bubbles from IdentityRegistry.ownerOf when the agentId NFT is absent.
+    const revertedErr =
+      err instanceof ContractFunctionRevertedError
+        ? err
+        : (err as { walk?: (fn: (e: unknown) => boolean) => unknown } | null)?.walk?.(
+            (e) => e instanceof ContractFunctionRevertedError,
+          );
+    const errorName = (revertedErr as ContractFunctionRevertedError | null)?.data?.errorName;
+    const reason =
+      errorName === 'AgentNotFound' || errorName === 'ERC721NonexistentToken'
+        ? 'AgentNotFound'
+        : 'TxFailed';
     throw new ConciergeError(
       'AttestationFailed',
       `[@concierge/erc8004] attestAction: giveFeedback reverted — ${msg}`,
