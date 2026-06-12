@@ -1,13 +1,15 @@
-import { bigint, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import { bigint, jsonb, pgEnum, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import { agents } from './agents.ts';
 
-/** Lifecycle status of a single tick — one row per (agent, fire). */
-export type TickStatus =
-  | 'noop'
-  | 'awaiting_approval'
-  | 'awaiting_signature'
-  | 'executed'
-  | 'failed';
+/** Lifecycle status of a single tick — enforced via pgEnum. */
+export const tickStatusEnum = pgEnum('tick_status', [
+  'noop',
+  'awaiting_approval',
+  'awaiting_signature',
+  'executed',
+  'failed',
+]);
+export type TickStatus = (typeof tickStatusEnum.enumValues)[number];
 
 /**
  * One row per tick fire. `phase` is the human-readable label (`plan` | `simulate` | …)
@@ -21,7 +23,7 @@ export const ticks = pgTable('ticks', {
     .references(() => agents.id, { onDelete: 'cascade' }),
   startedAt: timestamp('started_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
   phase: text('phase').notNull(),
-  status: text('status').notNull().$type<TickStatus>(),
+  status: tickStatusEnum('status').notNull(),
   payloadJson: jsonb('payload_json').notNull(),
   durationMs: bigint('duration_ms', { mode: 'number' }),
   completedAt: timestamp('completed_at', { withTimezone: true, mode: 'date' }),

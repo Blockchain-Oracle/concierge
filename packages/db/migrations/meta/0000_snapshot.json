@@ -1,5 +1,5 @@
 {
-  "id": "43e6cb73-0cdb-4334-ba60-b141044ce55d",
+  "id": "a4bfdb02-d1de-4455-bd92-976fb1c62e55",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -53,7 +53,8 @@
         },
         "chain": {
           "name": "chain",
-          "type": "text",
+          "type": "agent_chain",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": true
         },
@@ -178,7 +179,8 @@
         },
         "status": {
           "name": "status",
-          "type": "text",
+          "type": "eoa_tx_status",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": true
         },
@@ -236,7 +238,20 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "eoa_tx_queue_value_uint256": {
+          "name": "eoa_tx_queue_value_uint256",
+          "value": "\"eoa_tx_queue\".\"value\" ~ '^[0-9]+$' AND length(\"eoa_tx_queue\".\"value\") <= 78"
+        },
+        "eoa_tx_queue_to_is_address": {
+          "name": "eoa_tx_queue_to_is_address",
+          "value": "\"eoa_tx_queue\".\"to\" ~ '^0x[0-9a-fA-F]{40}$'"
+        },
+        "eoa_tx_queue_data_is_hex": {
+          "name": "eoa_tx_queue_data_is_hex",
+          "value": "\"eoa_tx_queue\".\"data\" ~ '^0x[0-9a-fA-F]*$'"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.executions": {
@@ -288,7 +303,8 @@
         },
         "status": {
           "name": "status",
-          "type": "text",
+          "type": "execution_status",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": true
         },
@@ -373,7 +389,8 @@
         },
         "status": {
           "name": "status",
-          "type": "text",
+          "type": "proposal_status",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": true
         },
@@ -444,7 +461,16 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "proposals_amount_usd_finite_nonneg": {
+          "name": "proposals_amount_usd_finite_nonneg",
+          "value": "\"proposals\".\"amount_usd\" = \"proposals\".\"amount_usd\" AND \"proposals\".\"amount_usd\" >= 0"
+        },
+        "proposals_expires_after_created": {
+          "name": "proposals_expires_after_created",
+          "value": "\"proposals\".\"expires_at\" > \"proposals\".\"created_at\""
+        }
+      },
       "isRLSEnabled": false
     },
     "public.session_keys": {
@@ -558,7 +584,8 @@
         },
         "status": {
           "name": "status",
-          "type": "text",
+          "type": "tick_status",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": true
         },
@@ -600,7 +627,33 @@
       "isRLSEnabled": false
     }
   },
-  "enums": {},
+  "enums": {
+    "public.agent_chain": {
+      "name": "agent_chain",
+      "schema": "public",
+      "values": ["mantle-mainnet", "mantle-sepolia"]
+    },
+    "public.eoa_tx_status": {
+      "name": "eoa_tx_status",
+      "schema": "public",
+      "values": ["pending", "signed", "confirmed", "failed"]
+    },
+    "public.execution_status": {
+      "name": "execution_status",
+      "schema": "public",
+      "values": ["submitted", "confirmed", "failed"]
+    },
+    "public.proposal_status": {
+      "name": "proposal_status",
+      "schema": "public",
+      "values": ["pending", "approved", "rejected", "expired"]
+    },
+    "public.tick_status": {
+      "name": "tick_status",
+      "schema": "public",
+      "values": ["noop", "awaiting_approval", "awaiting_signature", "executed", "failed"]
+    }
+  },
   "schemas": {},
   "sequences": {},
   "roles": {},

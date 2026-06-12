@@ -1,3 +1,8 @@
+CREATE TYPE "public"."agent_chain" AS ENUM('mantle-mainnet', 'mantle-sepolia');--> statement-breakpoint
+CREATE TYPE "public"."eoa_tx_status" AS ENUM('pending', 'signed', 'confirmed', 'failed');--> statement-breakpoint
+CREATE TYPE "public"."execution_status" AS ENUM('submitted', 'confirmed', 'failed');--> statement-breakpoint
+CREATE TYPE "public"."proposal_status" AS ENUM('pending', 'approved', 'rejected', 'expired');--> statement-breakpoint
+CREATE TYPE "public"."tick_status" AS ENUM('noop', 'awaiting_approval', 'awaiting_signature', 'executed', 'failed');--> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "agents" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"user_id" text NOT NULL,
@@ -6,7 +11,7 @@ CREATE TABLE IF NOT EXISTS "agents" (
 	"owner_eoa" text NOT NULL,
 	"policy_json" jsonb NOT NULL,
 	"goal_json" jsonb NOT NULL,
-	"chain" text NOT NULL,
+	"chain" "agent_chain" NOT NULL,
 	"activated_at" timestamp with time zone NOT NULL,
 	"paused_at" timestamp with time zone,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
@@ -28,13 +33,16 @@ CREATE TABLE IF NOT EXISTS "eoa_tx_queue" (
 	"to" text NOT NULL,
 	"data" text NOT NULL,
 	"value" text NOT NULL,
-	"status" text NOT NULL,
+	"status" "eoa_tx_status" NOT NULL,
 	"signed_tx" text,
 	"tx_hash" text,
 	"block_number" bigint,
 	"error" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "eoa_tx_queue_value_uint256" CHECK ("eoa_tx_queue"."value" ~ '^[0-9]+$' AND length("eoa_tx_queue"."value") <= 78),
+	CONSTRAINT "eoa_tx_queue_to_is_address" CHECK ("eoa_tx_queue"."to" ~ '^0x[0-9a-fA-F]{40}$'),
+	CONSTRAINT "eoa_tx_queue_data_is_hex" CHECK ("eoa_tx_queue"."data" ~ '^0x[0-9a-fA-F]*$')
 );
 --> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "executions" (
@@ -45,7 +53,7 @@ CREATE TABLE IF NOT EXISTS "executions" (
 	"gas_used" bigint,
 	"attestation_uid" text,
 	"attestation_tx_hash" text,
-	"status" text NOT NULL,
+	"status" "execution_status" NOT NULL,
 	"recorded_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
@@ -58,11 +66,13 @@ CREATE TABLE IF NOT EXISTS "proposals" (
 	"protocol" text NOT NULL,
 	"plan_json" jsonb NOT NULL,
 	"sim_json" jsonb NOT NULL,
-	"status" text NOT NULL,
+	"status" "proposal_status" NOT NULL,
 	"requires_approval" boolean NOT NULL,
 	"expires_at" timestamp with time zone NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	"resolved_at" timestamp with time zone
+	"resolved_at" timestamp with time zone,
+	CONSTRAINT "proposals_amount_usd_finite_nonneg" CHECK ("proposals"."amount_usd" = "proposals"."amount_usd" AND "proposals"."amount_usd" >= 0),
+	CONSTRAINT "proposals_expires_after_created" CHECK ("proposals"."expires_at" > "proposals"."created_at")
 );
 --> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "session_keys" (
@@ -82,7 +92,7 @@ CREATE TABLE IF NOT EXISTS "ticks" (
 	"agent_id" uuid NOT NULL,
 	"started_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"phase" text NOT NULL,
-	"status" text NOT NULL,
+	"status" "tick_status" NOT NULL,
 	"payload_json" jsonb NOT NULL,
 	"duration_ms" bigint,
 	"completed_at" timestamp with time zone

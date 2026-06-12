@@ -1,8 +1,9 @@
-import { bigint, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import { bigint, pgEnum, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import { proposals } from './proposals.ts';
 
-/** Lifecycle status of an on-chain execution receipt. */
-export type ExecutionStatus = 'submitted' | 'confirmed' | 'failed';
+/** Lifecycle status of an on-chain execution receipt — enforced via pgEnum. */
+export const executionStatusEnum = pgEnum('execution_status', ['submitted', 'confirmed', 'failed']);
+export type ExecutionStatus = (typeof executionStatusEnum.enumValues)[number];
 
 /**
  * One row per execute-phase submission. `attestationUid` + `attestationTxHash`
@@ -19,7 +20,7 @@ export const executions = pgTable('executions', {
   gasUsed: bigint('gas_used', { mode: 'bigint' }),
   attestationUid: text('attestation_uid'),
   attestationTxHash: text('attestation_tx_hash'),
-  status: text('status').notNull().$type<ExecutionStatus>(),
+  status: executionStatusEnum('status').notNull(),
   recordedAt: timestamp('recorded_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
 });
 

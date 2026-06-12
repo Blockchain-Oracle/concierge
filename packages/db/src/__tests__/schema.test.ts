@@ -97,6 +97,21 @@ describe('proposals schema — unique-pending invariant', () => {
     expect(idx, 'missing unique index').toBeDefined();
     expect(idx?.config.unique).toBe(true);
     expect(idx?.config.where, 'partial WHERE clause missing').toBeDefined();
+    // Assert the WHERE clause actually filters on status='pending' — without this
+    // a typo like `status = 'Pending'` would pass the structural assertion.
+    // biome-ignore lint/suspicious/noExplicitAny: probing Drizzle SQL chunks
+    const whereChunks = ((idx?.config.where as any)?.queryChunks ?? []) as unknown[];
+    const literals = whereChunks
+      .filter((c) => typeof c === 'object' && c !== null && 'value' in c)
+      // biome-ignore lint/suspicious/noExplicitAny: extracting literal values from SQL chunks
+      .map((c) => (c as any).value);
+    expect(literals.flat().join(' ')).toContain("'pending'");
+  });
+
+  it('has CHECK constraints rejecting NaN/negative amount_usd and expires_at <= created_at', () => {
+    const checkNames = cfg.checks.map((c) => c.name);
+    expect(checkNames).toContain('proposals_amount_usd_finite_nonneg');
+    expect(checkNames).toContain('proposals_expires_after_created');
   });
 });
 
@@ -176,21 +191,60 @@ describe('eoa_tx_queue schema — fallback queue', () => {
   it('value column is text (wei does not fit JS Number; numeric is wasteful)', () => {
     expect(cols['value']?.dataType).toBe('string');
   });
+
+  it('has CHECK constraints on value (uint256 string), to (address), data (hex)', () => {
+    const checkNames = cfg.checks.map((c) => c.name);
+    expect(checkNames).toContain('eoa_tx_queue_value_uint256');
+    expect(checkNames).toContain('eoa_tx_queue_to_is_address');
+    expect(checkNames).toContain('eoa_tx_queue_data_is_hex');
+  });
 });
 
-describe('chain literal narrowing — AgentChain', () => {
-  it('agents.chain accepts only the two literal values via $type<AgentChain>()', () => {
-    // Compile-time check: $type narrows .$inferInsert.chain to AgentChain
-    const sample: typeof agents.$inferInsert = {
-      id: 'x',
-      userId: 'u',
-      smartAccountAddr: '0x',
-      ownerEoa: '0x',
-      policyJson: {},
-      goalJson: {},
-      chain: 'mantle-mainnet',
-      activatedAt: new Date(),
-    };
-    expect(sample.chain).toBe('mantle-mainnet');
+describe('enum-backed status columns — DB-enforced literal sets', () => {
+  it('agents.chain uses pgEnum (NOT compile-time-only $type narrowing)', () => {
+    const cfg = getTableConfig(agents);
+    const cols = columnsByName(cfg.columns);
+    // pgEnum-backed columns report enumValues; $type<T> narrowed columns do not.
+    // biome-ignore lint/suspicious/noExplicitAny: probing Drizzle column internals
+    const chain = cols['chain'] as any;
+    expect(chain?.enumValues).toEqual(['mantle-mainnet', 'mantle-sepolia']);
+  });
+
+  it('ticks.status uses pgEnum', () => {
+    const cfg = getTableConfig(ticks);
+    const cols = columnsByName(cfg.columns);
+    // biome-ignore lint/suspicious/noExplicitAny: probing Drizzle column internals
+    const status = cols['status'] as any;
+    expect(status?.enumValues).toEqual([
+      'noop',
+      'awaiting_approval',
+      'awaiting_signature',
+      'executed',
+      'failed',
+    ]);
+  });
+
+  it('proposals.status uses pgEnum', () => {
+    const cfg = getTableConfig(proposals);
+    const cols = columnsByName(cfg.columns);
+    // biome-ignore lint/suspicious/noExplicitAny: probing Drizzle column internals
+    const status = cols['status'] as any;
+    expect(status?.enumValues).toEqual(['pending', 'approved', 'rejected', 'expired']);
+  });
+
+  it('executions.status uses pgEnum', () => {
+    const cfg = getTableConfig(executions);
+    const cols = columnsByName(cfg.columns);
+    // biome-ignore lint/suspicious/noExplicitAny: probing Drizzle column internals
+    const status = cols['status'] as any;
+    expect(status?.enumValues).toEqual(['submitted', 'confirmed', 'failed']);
+  });
+
+  it('eoaTxQueue.status uses pgEnum', () => {
+    const cfg = getTableConfig(eoaTxQueue);
+    const cols = columnsByName(cfg.columns);
+    // biome-ignore lint/suspicious/noExplicitAny: probing Drizzle column internals
+    const status = cols['status'] as any;
+    expect(status?.enumValues).toEqual(['pending', 'signed', 'confirmed', 'failed']);
   });
 });

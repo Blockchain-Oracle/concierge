@@ -1,8 +1,10 @@
 import { sql } from 'drizzle-orm';
 import {
   boolean,
+  check,
   jsonb,
   numeric,
+  pgEnum,
   pgTable,
   text,
   timestamp,
@@ -12,8 +14,14 @@ import {
 import { agents } from './agents.ts';
 import { ticks } from './ticks.ts';
 
-/** Lifecycle status of a proposal awaiting user resolution. */
-export type ProposalStatus = 'pending' | 'approved' | 'rejected' | 'expired';
+/** Lifecycle status of a proposal — enforced via pgEnum. */
+export const proposalStatusEnum = pgEnum('proposal_status', [
+  'pending',
+  'approved',
+  'rejected',
+  'expired',
+]);
+export type ProposalStatus = (typeof proposalStatusEnum.enumValues)[number];
 
 /**
  * The propose-phase output. `kind` ('supply', 'borrow', 'swap', 'bridge') +
@@ -39,7 +47,7 @@ export const proposals = pgTable(
     protocol: text('protocol').notNull(),
     planJson: jsonb('plan_json').notNull(),
     simJson: jsonb('sim_json').notNull(),
-    status: text('status').notNull().$type<ProposalStatus>(),
+    status: proposalStatusEnum('status').notNull(),
     /** True ⇒ user must click-through; false ⇒ falls under auto-approve threshold. */
     requiresApproval: boolean('requires_approval').notNull(),
     expiresAt: timestamp('expires_at', { withTimezone: true, mode: 'date' }).notNull(),
@@ -55,6 +63,21 @@ export const proposals = pgTable(
     onePendingPerAgent: uniqueIndex('proposals_one_pending_per_agent')
       .on(table.agentId)
       .where(sql`${table.status} = 'pending'`),
+    /**
+     * Reject NaN and negative values. Postgres `numeric` ACCEPTS the literal 'NaN'
+     * by default — every SUM/aggregation downstream then returns NaN, silently
+     * disabling spending-limit comparisons (`NaN > 500` is false). The `x = x`
+     * idiom is the canonical NaN-rejecting check in SQL.
+     */
+    amountUsdNotNan: check(
+      'proposals_amount_usd_finite_nonneg',
+      sql`${table.amountUsd} = ${table.amountUsd} AND ${table.amountUsd} >= 0`,
+    ),
+    /** Sanity guard: a proposal must expire after it's created. */
+    expiresAfterCreated: check(
+      'proposals_expires_after_created',
+      sql`${table.expiresAt} > ${table.createdAt}`,
+    ),
   }),
 );
 
