@@ -4,7 +4,8 @@ import { createKernelAccount, createKernelAccountClient } from '@zerodev/sdk';
 import { getEntryPoint, KERNEL_V3_1 } from '@zerodev/sdk/constants';
 import type { LocalAccount } from 'viem';
 import { createPublicClient, http } from 'viem';
-import { CHAIN_CONFIGS } from './constants.ts';
+import type { CHAIN_CONFIGS } from './constants.ts';
+import { resolveChainConfig, rpcCatch } from './internal.ts';
 import { createPaymasterClient } from './paymaster.ts';
 import type { ConciergeAccount, KernelClientStub, SupportedChain } from './types.ts';
 
@@ -22,37 +23,17 @@ export interface CreateConciergeAccountConfig {
   apiKey?: string;
 }
 
-function rpcCatch(op: string, chain: string) {
-  return (err: unknown): never => {
-    throw new ConciergeError(
-      'RpcError',
-      `[@concierge/smart-account] ${op} (chain: '${chain}')`,
-      err,
-    );
-  };
-}
-
 function resolveCreateConfig(config: CreateConciergeAccountConfig): {
   chainConfig: (typeof CHAIN_CONFIGS)[keyof typeof CHAIN_CONFIGS];
   apiKey: string;
   bundlerUrl: string;
 } {
-  const chainConfig = CHAIN_CONFIGS[config.chain];
-  if (!chainConfig) {
-    throw new ConciergeError(
-      'ConfigError',
-      `[@concierge/smart-account] createConciergeAccount: UnsupportedChain('${config.chain}') — supported: ${Object.keys(CHAIN_CONFIGS).join(', ')}`,
-    );
-  }
-  // biome-ignore lint/complexity/useLiteralKeys: noPropertyAccessFromIndexSignature requires bracket notation
-  const apiKey = config.apiKey ?? process.env['PIMLICO_API_KEY'];
-  if (!apiKey) {
-    throw new ConciergeError(
-      'ConfigError',
-      "[@concierge/smart-account] createConciergeAccount: MissingEnvVar('PIMLICO_API_KEY') — set this env var or pass apiKey in config before creating a smart account.",
-    );
-  }
-  return { chainConfig, apiKey, bundlerUrl: `${chainConfig.bundlerBaseUrl}?apikey=${apiKey}` };
+  return resolveChainConfig(
+    'createConciergeAccount',
+    config.chain,
+    // biome-ignore lint/complexity/useLiteralKeys: noPropertyAccessFromIndexSignature requires bracket notation
+    config.apiKey ?? process.env['PIMLICO_API_KEY'],
+  );
 }
 
 export async function createConciergeAccount(

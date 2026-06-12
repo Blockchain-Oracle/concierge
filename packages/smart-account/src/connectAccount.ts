@@ -4,7 +4,8 @@ import { createKernelAccount, createKernelAccountClient } from '@zerodev/sdk';
 import { getEntryPoint, KERNEL_V3_1 } from '@zerodev/sdk/constants';
 import type { Address, LocalAccount } from 'viem';
 import { createPublicClient, http, isAddress } from 'viem';
-import { CHAIN_CONFIGS } from './constants.ts';
+import type { CHAIN_CONFIGS } from './constants.ts';
+import { resolveChainConfig, rpcCatch } from './internal.ts';
 import { createPaymasterClient } from './paymaster.ts';
 import type { ConciergeAccount, KernelClientStub, SupportedChain } from './types.ts';
 
@@ -22,16 +23,6 @@ export interface ConnectConciergeAccountConfig {
   apiKey?: string;
 }
 
-function rpcCatch(op: string, chain: string) {
-  return (err: unknown): never => {
-    throw new ConciergeError(
-      'RpcError',
-      `[@concierge/smart-account] ${op} (chain: '${chain}')`,
-      err,
-    );
-  };
-}
-
 function validateConnectConfig(config: ConnectConciergeAccountConfig): {
   chainConfig: (typeof CHAIN_CONFIGS)[keyof typeof CHAIN_CONFIGS];
   bundlerUrl: string;
@@ -43,23 +34,12 @@ function validateConnectConfig(config: ConnectConciergeAccountConfig): {
       `[@concierge/smart-account] connectToConciergeAccount: InvalidAddress('${config.address}') — must be a 42-char 0x-prefixed hex string.`,
     );
   }
-  const chainConfig = CHAIN_CONFIGS[config.chain];
-  if (!chainConfig) {
-    throw new ConciergeError(
-      'ConfigError',
-      `[@concierge/smart-account] connectToConciergeAccount: UnsupportedChain('${config.chain}') — supported: ${Object.keys(CHAIN_CONFIGS).join(', ')}`,
-    );
-  }
-  // biome-ignore lint/complexity/useLiteralKeys: noPropertyAccessFromIndexSignature requires bracket notation
-  const apiKey = config.apiKey ?? process.env['PIMLICO_API_KEY'];
-  if (!apiKey) {
-    throw new ConciergeError(
-      'ConfigError',
-      "[@concierge/smart-account] connectToConciergeAccount: MissingEnvVar('PIMLICO_API_KEY') — set this env var or pass apiKey in config before connecting to a smart account.",
-    );
-  }
-  const bundlerUrl = `${chainConfig.bundlerBaseUrl}?apikey=${apiKey}`;
-  return { chainConfig, bundlerUrl, apiKey };
+  return resolveChainConfig(
+    'connectToConciergeAccount',
+    config.chain,
+    // biome-ignore lint/complexity/useLiteralKeys: noPropertyAccessFromIndexSignature requires bracket notation
+    config.apiKey ?? process.env['PIMLICO_API_KEY'],
+  );
 }
 
 /**

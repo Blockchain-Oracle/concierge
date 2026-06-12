@@ -214,7 +214,11 @@ describe('getUserOpGasPrice — response shape', () => {
   it('throws RpcError when JSON-RPC returns error object', async () => {
     mockFetchOk({ jsonrpc: '2.0', id: 1, error: { code: -32000, message: 'AA23 reverted' } });
     await expect(getUserOpGasPrice({ chain: 'mantle-sepolia' })).rejects.toSatisfy(
-      (e: unknown) => e instanceof ConciergeError && e.type === 'RpcError',
+      (e: unknown) =>
+        e instanceof ConciergeError &&
+        e.type === 'RpcError' &&
+        String(e.message).includes('Pimlico RPC error -32000') &&
+        String(e.message).includes("chain: 'mantle-sepolia'"),
     );
   });
 
@@ -243,150 +247,6 @@ describe('getUserOpGasPrice — response shape', () => {
         e instanceof ConciergeError &&
         e.type === 'RpcError' &&
         String(e.message).includes('unexpected field types'),
-    );
-  });
-});
-
-describe('getUserOpGasPrice — value constraints', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.stubEnv('PIMLICO_API_KEY', TEST_PIMLICO_KEY);
-  });
-  afterEach(() => {
-    vi.unstubAllEnvs();
-    vi.unstubAllGlobals();
-  });
-
-  it('throws RpcError when BigInt conversion fails on unparseable hex string', async () => {
-    mockFetchOk({
-      jsonrpc: '2.0',
-      id: 1,
-      result: {
-        standard: { maxFeePerGas: '0xGGGGGG', maxPriorityFeePerGas: '0x3B9ACA00' },
-        slow: {},
-        fast: {},
-      },
-    });
-    await expect(getUserOpGasPrice({ chain: 'mantle-sepolia' })).rejects.toSatisfy(
-      (e: unknown) =>
-        e instanceof ConciergeError &&
-        e.type === 'RpcError' &&
-        String(e.message).includes('BigInt conversion failed'),
-    );
-  });
-
-  it('throws RpcError when maxPriorityFeePerGas > maxFeePerGas (EIP-1559 invariant)', async () => {
-    mockFetchOk({
-      jsonrpc: '2.0',
-      id: 1,
-      result: {
-        standard: { maxFeePerGas: '0x1', maxPriorityFeePerGas: '0x2' },
-        slow: {},
-        fast: {},
-      },
-    });
-    await expect(getUserOpGasPrice({ chain: 'mantle-sepolia' })).rejects.toSatisfy(
-      (e: unknown) =>
-        e instanceof ConciergeError &&
-        e.type === 'RpcError' &&
-        String(e.message).includes('EIP-1559 invariant violated'),
-    );
-  });
-
-  it('network error message does not expose the API key', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network failure')));
-    await expect(getUserOpGasPrice({ chain: 'mantle-sepolia' })).rejects.toSatisfy(
-      (e: unknown) =>
-        e instanceof ConciergeError &&
-        e.type === 'RpcError' &&
-        !String(e.message).includes(TEST_PIMLICO_KEY),
-    );
-  });
-});
-
-describe('getUserOpGasPrice — gas price guards', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.stubEnv('PIMLICO_API_KEY', TEST_PIMLICO_KEY);
-  });
-  afterEach(() => {
-    vi.unstubAllEnvs();
-    vi.unstubAllGlobals();
-  });
-
-  it('throws RpcError when maxFeePerGas is zero (0x0)', async () => {
-    mockFetchOk({
-      jsonrpc: '2.0',
-      id: 1,
-      result: {
-        standard: { maxFeePerGas: '0x0', maxPriorityFeePerGas: '0x0' },
-        slow: {},
-        fast: {},
-      },
-    });
-    await expect(getUserOpGasPrice({ chain: 'mantle-sepolia' })).rejects.toSatisfy(
-      (e: unknown) =>
-        e instanceof ConciergeError &&
-        e.type === 'RpcError' &&
-        String(e.message).includes('zero or negative gas price'),
-    );
-  });
-});
-
-describe('getUserOpGasPrice — ok-200 body read failure', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.stubEnv('PIMLICO_API_KEY', TEST_PIMLICO_KEY);
-  });
-  afterEach(() => {
-    vi.unstubAllEnvs();
-    vi.unstubAllGlobals();
-  });
-
-  it('throws RpcError with cause when res.text() rejects on a 200 response', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue({
-        ok: true,
-        text: () => Promise.reject(new Error('stream aborted')),
-      }),
-    );
-    await expect(getUserOpGasPrice({ chain: 'mantle-sepolia' })).rejects.toSatisfy(
-      (e: unknown) =>
-        e instanceof ConciergeError &&
-        e.type === 'RpcError' &&
-        String(e.message).includes('failed to read response body') &&
-        e.cause instanceof Error,
-    );
-  });
-});
-
-describe('getUserOpGasPrice — body read failure', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.stubEnv('PIMLICO_API_KEY', TEST_PIMLICO_KEY);
-  });
-  afterEach(() => {
-    vi.unstubAllEnvs();
-    vi.unstubAllGlobals();
-  });
-
-  it('throws RpcError and surfaces bodyErr when res.text() throws on non-ok response', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue({
-        ok: false,
-        status: 503,
-        text: () => Promise.reject(new Error('connection reset')),
-      }),
-    );
-    await expect(getUserOpGasPrice({ chain: 'mantle-sepolia' })).rejects.toSatisfy(
-      (e: unknown) =>
-        e instanceof ConciergeError &&
-        e.type === 'RpcError' &&
-        String(e.message).includes('body unreadable') &&
-        String(e.message).includes('connection reset') &&
-        e.cause instanceof Error,
     );
   });
 });

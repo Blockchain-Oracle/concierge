@@ -209,6 +209,18 @@ describe('createConciergeAccount — bundler URL', () => {
         String(e.message).includes("MissingEnvVar('PIMLICO_API_KEY')"),
     );
   });
+
+  it('accepts apiKey override instead of PIMLICO_API_KEY env var', async () => {
+    vi.unstubAllEnvs();
+    const { http } = await import('viem');
+    await createConciergeAccount({
+      owner: MOCK_OWNER,
+      chain: 'mantle-sepolia',
+      apiKey: 'override-key',
+    });
+    const httpCalls = vi.mocked(http).mock.calls.map((c) => c[0]);
+    expect(httpCalls).toContain('https://api.pimlico.io/v2/mantle-sepolia/rpc?apikey=override-key');
+  });
 });
 
 describe('createConciergeAccount — chain guard', () => {

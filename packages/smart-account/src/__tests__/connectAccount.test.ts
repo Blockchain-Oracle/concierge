@@ -161,6 +161,19 @@ describe('connectToConciergeAccount — bundler URL', () => {
     const httpCalls = vi.mocked(http).mock.calls.map((c) => c[0]);
     expect(httpCalls).toContain(`https://api.pimlico.io/v2/mantle/rpc?apikey=${TEST_PIMLICO_KEY}`);
   });
+
+  it('accepts apiKey override instead of PIMLICO_API_KEY env var', async () => {
+    vi.unstubAllEnvs();
+    const { http } = await import('viem');
+    await connectToConciergeAccount({
+      address: EXISTING_ADDRESS,
+      owner: MOCK_OWNER,
+      chain: 'mantle-sepolia',
+      apiKey: 'override-key',
+    });
+    const httpCalls = vi.mocked(http).mock.calls.map((c) => c[0]);
+    expect(httpCalls).toContain('https://api.pimlico.io/v2/mantle-sepolia/rpc?apikey=override-key');
+  });
 });
 
 describe('connectToConciergeAccount — input guards', () => {
@@ -196,7 +209,13 @@ describe('connectToConciergeAccount — input guards', () => {
         // biome-ignore lint/suspicious/noExplicitAny: testing invalid chain input
         chain: 'ethereum-mainnet' as any,
       }),
-    ).rejects.toSatisfy((e: unknown) => e instanceof ConciergeError && e.type === 'ConfigError');
+    ).rejects.toSatisfy(
+      (e: unknown) =>
+        e instanceof ConciergeError &&
+        e.type === 'ConfigError' &&
+        String(e.message).includes("UnsupportedChain('ethereum-mainnet')") &&
+        String(e.message).includes('connectToConciergeAccount'),
+    );
   });
 
   it('throws ConfigError when PIMLICO_API_KEY is missing', async () => {
