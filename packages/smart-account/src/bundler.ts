@@ -7,6 +7,7 @@ import {
   createPaymasterClient as viemCreatePaymasterClient,
 } from 'viem/account-abstraction';
 import { CHAIN_CONFIGS } from './constants.ts';
+import { sanitizeCause } from './internal.ts';
 import type { SupportedChain } from './types.ts';
 
 export type { BundlerClient, PaymasterClient };
@@ -51,7 +52,7 @@ export function createBundlerClient(config: CreateBundlerClientConfig): BundlerB
       `[@concierge/smart-account] createBundlerClient: UnsupportedChain('${config.chain}') — supported: ${Object.keys(CHAIN_CONFIGS).join(', ')}`,
     );
   }
-  const bundlerUrl = `${chainConfig.bundlerBaseUrl}?apikey=${apiKey}`;
+  const bundlerUrl = `${chainConfig.bundlerBaseUrl}?apikey=${encodeURIComponent(apiKey)}`;
   let bundlerClient: BundlerClient;
   try {
     bundlerClient = viemCreateBundlerClient({
@@ -62,7 +63,7 @@ export function createBundlerClient(config: CreateBundlerClientConfig): BundlerB
     throw new ConciergeError(
       'RpcError',
       `[@concierge/smart-account] createBundlerClient: bundler transport init failed (chain: '${config.chain}')`,
-      err,
+      sanitizeCause(err, apiKey),
     );
   }
   if (config.chain === 'mantle-mainnet') {
@@ -76,7 +77,7 @@ export function createBundlerClient(config: CreateBundlerClientConfig): BundlerB
       throw new ConciergeError(
         'RpcError',
         `[@concierge/smart-account] createBundlerClient: paymaster transport init failed (chain: '${config.chain}')`,
-        err,
+        sanitizeCause(err, apiKey),
       );
     }
     return { chain: 'mantle-sepolia', bundlerClient, paymasterClient };

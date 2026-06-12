@@ -5,6 +5,7 @@ import {
   createPaymasterClient as viemCreatePaymasterClient,
 } from 'viem/account-abstraction';
 import { CHAIN_CONFIGS } from './constants.ts';
+import { sanitizeCause } from './internal.ts';
 import type { SupportedChain } from './types.ts';
 
 /** 'always' = Concierge sponsors gas (Sepolia demo). 'never' = user pays MNT (Mainnet). */
@@ -47,14 +48,14 @@ export function createPaymasterClient(config: CreatePaymasterClientConfig): Paym
       `[@concierge/smart-account] createPaymasterClient: UnsupportedChain('${config.chain}') — supported: ${Object.keys(CHAIN_CONFIGS).join(', ')}`,
     );
   }
-  const paymasterUrl = `${chainConfig.bundlerBaseUrl}?apikey=${apiKey}`;
+  const paymasterUrl = `${chainConfig.bundlerBaseUrl}?apikey=${encodeURIComponent(apiKey)}`;
   try {
     return viemCreatePaymasterClient({ transport: http(paymasterUrl) });
   } catch (err) {
     throw new ConciergeError(
       'RpcError',
       `[@concierge/smart-account] createPaymasterClient: paymaster transport init failed (chain: '${config.chain}')`,
-      err,
+      sanitizeCause(err, apiKey),
     );
   }
 }

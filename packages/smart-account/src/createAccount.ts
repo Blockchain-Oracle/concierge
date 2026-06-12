@@ -5,7 +5,7 @@ import { getEntryPoint, KERNEL_V3_1 } from '@zerodev/sdk/constants';
 import type { LocalAccount } from 'viem';
 import { createPublicClient, http } from 'viem';
 import type { CHAIN_CONFIGS } from './constants.ts';
-import { resolveChainConfig, rpcCatch } from './internal.ts';
+import { resolveChainConfig, rpcCatch, sanitizeCause } from './internal.ts';
 import { createPaymasterClient } from './paymaster.ts';
 import type { ConciergeAccount, KernelClientStub, SupportedChain } from './types.ts';
 
@@ -50,12 +50,12 @@ export async function createConciergeAccount(
     signer: config.owner as any,
     entryPoint,
     kernelVersion: KERNEL_V3_1,
-  }).catch(rpcCatch('createConciergeAccount: ECDSA validator init failed', config.chain));
+  }).catch(rpcCatch('createConciergeAccount: ECDSA validator init failed', config.chain, apiKey));
   const kernelAccount = await createKernelAccount(publicClient, {
     plugins: { sudo: ecdsaValidator },
     entryPoint,
     kernelVersion: KERNEL_V3_1,
-  }).catch(rpcCatch('createConciergeAccount: kernel account init failed', config.chain));
+  }).catch(rpcCatch('createConciergeAccount: kernel account init failed', config.chain, apiKey));
   const smartAccountAddress = kernelAccount.address;
   const paymasterStrategy =
     config.paymaster ?? (config.chain === 'mantle-sepolia' ? 'pimlico' : 'none');
@@ -83,7 +83,7 @@ export async function createConciergeAccount(
     throw new ConciergeError(
       'RpcError',
       `[@concierge/smart-account] createConciergeAccount: kernel client init failed (chain: '${config.chain}')`,
-      err,
+      sanitizeCause(err, apiKey),
     );
   }
   return { smartAccountAddress, kernelAccount, kernelClient };

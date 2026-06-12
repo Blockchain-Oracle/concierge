@@ -92,7 +92,8 @@ describe('getUserOpGasPrice — value constraints', () => {
       (e: unknown) =>
         e instanceof ConciergeError &&
         e.type === 'RpcError' &&
-        String(e.message).includes('BigInt conversion failed'),
+        String(e.message).includes('BigInt conversion failed') &&
+        e.cause instanceof Error,
     );
   });
 
@@ -113,14 +114,73 @@ describe('getUserOpGasPrice — value constraints', () => {
         String(e.message).includes('EIP-1559 invariant violated'),
     );
   });
+});
 
-  it('network error message does not expose the API key', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network failure')));
+describe('getUserOpGasPrice — security', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubEnv('PIMLICO_API_KEY', TEST_PIMLICO_KEY);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it('network error message and cause do not expose the API key', async () => {
+    const urlWithKey = `https://api.pimlico.io/v2/mantle-sepolia/rpc?apikey=${TEST_PIMLICO_KEY}`;
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error(`fetch failed: ${urlWithKey}`)));
     await expect(getUserOpGasPrice({ chain: 'mantle-sepolia' })).rejects.toSatisfy(
       (e: unknown) =>
         e instanceof ConciergeError &&
         e.type === 'RpcError' &&
-        !String(e.message).includes(TEST_PIMLICO_KEY),
+        !String(e.message).includes(TEST_PIMLICO_KEY) &&
+        // biome-ignore lint/suspicious/noExplicitAny: checking cause.message for API key leak
+        !String((e as any).cause?.message ?? '').includes(TEST_PIMLICO_KEY) &&
+        // biome-ignore lint/suspicious/noExplicitAny: checking cause.stack for API key leak
+        !String((e as any).cause?.stack ?? '').includes(TEST_PIMLICO_KEY),
+    );
+  });
+
+  it('HTTP error body containing API key does not leak into error message, cause is undefined', async () => {
+    const urlWithKey = `https://api.pimlico.io/v2/mantle-sepolia/rpc?apikey=${TEST_PIMLICO_KEY}`;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        text: () => Promise.resolve(`Unauthorized. Request URL: ${urlWithKey}`),
+      }),
+    );
+    await expect(getUserOpGasPrice({ chain: 'mantle-sepolia' })).rejects.toSatisfy(
+      (e: unknown) =>
+        e instanceof ConciergeError &&
+        e.type === 'RpcError' &&
+        !String(e.message).includes(TEST_PIMLICO_KEY) &&
+        e.cause === undefined,
+    );
+  });
+
+  it('HTTP error body containing URL-encoded API key does not leak (special-char key)', async () => {
+    const SPECIAL_KEY = 'key+with/special=chars';
+    const encoded = encodeURIComponent(SPECIAL_KEY);
+    const urlWithEncodedKey = `https://api.pimlico.io/v2/mantle-sepolia/rpc?apikey=${encoded}`;
+    vi.unstubAllEnvs();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        text: () => Promise.resolve(`Unauthorized. Request URL: ${urlWithEncodedKey}`),
+      }),
+    );
+    await expect(
+      getUserOpGasPrice({ chain: 'mantle-sepolia', apiKey: SPECIAL_KEY }),
+    ).rejects.toSatisfy(
+      (e: unknown) =>
+        e instanceof ConciergeError &&
+        e.type === 'RpcError' &&
+        !String(e.message).includes(SPECIAL_KEY) &&
+        !String(e.message).includes(encoded),
     );
   });
 });

@@ -5,7 +5,7 @@ import { getEntryPoint, KERNEL_V3_1 } from '@zerodev/sdk/constants';
 import type { Address, LocalAccount } from 'viem';
 import { createPublicClient, http, isAddress } from 'viem';
 import type { CHAIN_CONFIGS } from './constants.ts';
-import { resolveChainConfig, rpcCatch } from './internal.ts';
+import { resolveChainConfig, rpcCatch, sanitizeCause } from './internal.ts';
 import { createPaymasterClient } from './paymaster.ts';
 import type { ConciergeAccount, KernelClientStub, SupportedChain } from './types.ts';
 
@@ -65,13 +65,27 @@ export async function connectToConciergeAccount(
     signer: config.owner as any,
     entryPoint,
     kernelVersion: KERNEL_V3_1,
-  }).catch(rpcCatch('connectToConciergeAccount: ECDSA validator init failed', config.chain));
+  }).catch(
+    rpcCatch('connectToConciergeAccount: ECDSA validator init failed', config.chain, apiKey),
+  );
   const kernelAccount = await createKernelAccount(publicClient, {
     plugins: { sudo: ecdsaValidator },
     entryPoint,
     kernelVersion: KERNEL_V3_1,
     address: config.address,
-  }).catch(rpcCatch('connectToConciergeAccount: kernel account init failed', config.chain));
+  }).catch(rpcCatch('connectToConciergeAccount: kernel account init failed', config.chain, apiKey));
+  if (!kernelAccount.address) {
+    throw new ConciergeError(
+      'ConfigError',
+      `[@concierge/smart-account] connectToConciergeAccount: kernel account returned no address (malformed SDK response).`,
+    );
+  }
+  if (kernelAccount.address.toLowerCase() !== config.address.toLowerCase()) {
+    throw new ConciergeError(
+      'ConfigError',
+      `[@concierge/smart-account] connectToConciergeAccount: address mismatch — supplied '${config.address}' but kernel account resolved to '${kernelAccount.address}'. Causes: (1) owner key does not match this smart account, (2) kernel version / entry point / validator config used at creation differs from current.`,
+    );
+  }
   const smartAccountAddress = kernelAccount.address;
   const paymasterStrategy =
     config.paymaster ?? (config.chain === 'mantle-sepolia' ? 'pimlico' : 'none');
@@ -99,7 +113,7 @@ export async function connectToConciergeAccount(
     throw new ConciergeError(
       'RpcError',
       `[@concierge/smart-account] connectToConciergeAccount: kernel client init failed (chain: '${config.chain}')`,
-      err,
+      sanitizeCause(err, apiKey),
     );
   }
   return { smartAccountAddress, kernelAccount, kernelClient };
