@@ -214,7 +214,11 @@ describe('getUserOpGasPrice — response shape', () => {
   it('throws RpcError when JSON-RPC returns error object', async () => {
     mockFetchOk({ jsonrpc: '2.0', id: 1, error: { code: -32000, message: 'AA23 reverted' } });
     await expect(getUserOpGasPrice({ chain: 'mantle-sepolia' })).rejects.toSatisfy(
-      (e: unknown) => e instanceof ConciergeError && e.type === 'RpcError',
+      (e: unknown) =>
+        e instanceof ConciergeError &&
+        e.type === 'RpcError' &&
+        String(e.message).includes('Pimlico RPC error -32000') &&
+        String(e.message).includes("chain: 'mantle-sepolia'"),
     );
   });
 

@@ -192,7 +192,7 @@ describe('getUserOpGasPrice — body read failure', () => {
     vi.unstubAllGlobals();
   });
 
-  it('throws RpcError and surfaces bodyErr when res.text() throws on non-ok response', async () => {
+  it('throws RpcError with body error text in message when res.text() throws on non-ok response', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue({
@@ -206,8 +206,7 @@ describe('getUserOpGasPrice — body read failure', () => {
         e instanceof ConciergeError &&
         e.type === 'RpcError' &&
         String(e.message).includes('body unreadable') &&
-        String(e.message).includes('connection reset') &&
-        e.cause instanceof Error,
+        String(e.message).includes('connection reset'),
     );
   });
 });

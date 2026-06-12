@@ -58,7 +58,7 @@ function parseTier(
   } catch (_err) {
     throw new ConciergeError(
       'RpcError',
-      `[@concierge/smart-account] getUserOpGasPrice: BigInt conversion failed — maxFeePerGas="${rawMax}" maxPriorityFeePerGas="${rawPriority}"`,
+      `[@concierge/smart-account] getUserOpGasPrice: BigInt conversion failed — maxFeePerGas="${rawMax}" maxPriorityFeePerGas="${rawPriority}" (chain: '${chain}')`,
       _err,
     );
   }
@@ -165,11 +165,10 @@ export async function getUserOpGasPrice(config: GetUserOpGasPriceConfig): Promis
     );
   }
   if (!res.ok) {
-    const { text: body, cause: bodyReadErr } = await readErrorBody(res);
+    const { text: body } = await readErrorBody(res);
     throw new ConciergeError(
       'RpcError',
       `[@concierge/smart-account] getUserOpGasPrice: BundlerError({ status: ${res.status}, chain: '${config.chain}' })${body ? ` — ${body.slice(0, 200)}` : ''}`,
-      bodyReadErr,
     );
   }
   const data = await readAndParseBody(res, config.chain);

@@ -2,8 +2,12 @@ import { ConciergeError } from '@concierge/sdk';
 import { CHAIN_CONFIGS } from './constants.ts';
 import type { SupportedChain } from './types.ts';
 
-/** Returns a .catch() callback that throws a sanitised RpcError (no API key in message). */
-export function rpcCatch(op: string, chain: string) {
+/**
+ * Returns a .catch() callback that wraps any rejection as a sanitised RpcError.
+ * Note: catches ALL rejections including programmer errors (TypeError, RangeError) —
+ * always inspect `.cause` when debugging unexpected RpcErrors.
+ */
+export function rpcCatch(op: string, chain: SupportedChain) {
   return (err: unknown): never => {
     throw new ConciergeError(
       'RpcError',

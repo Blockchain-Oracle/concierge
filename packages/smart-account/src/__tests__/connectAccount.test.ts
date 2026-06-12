@@ -209,7 +209,13 @@ describe('connectToConciergeAccount — input guards', () => {
         // biome-ignore lint/suspicious/noExplicitAny: testing invalid chain input
         chain: 'ethereum-mainnet' as any,
       }),
-    ).rejects.toSatisfy((e: unknown) => e instanceof ConciergeError && e.type === 'ConfigError');
+    ).rejects.toSatisfy(
+      (e: unknown) =>
+        e instanceof ConciergeError &&
+        e.type === 'ConfigError' &&
+        String(e.message).includes("UnsupportedChain('ethereum-mainnet')") &&
+        String(e.message).includes('connectToConciergeAccount'),
+    );
   });
 
   it('throws ConfigError when PIMLICO_API_KEY is missing', async () => {
