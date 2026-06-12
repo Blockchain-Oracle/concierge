@@ -11,10 +11,18 @@ import type { SupportedChain } from './types.ts';
 
 export type { BundlerClient, PaymasterClient };
 
-export interface BundlerBundle {
-  bundlerClient: BundlerClient;
-  paymasterClient: PaymasterClient | null;
-}
+/** Discriminated bundle: mainnet has null paymaster (user pays); sepolia has a live client (demo sponsorship). */
+export type BundlerBundle =
+  | {
+      readonly chain: 'mantle-mainnet';
+      readonly bundlerClient: BundlerClient;
+      readonly paymasterClient: null;
+    }
+  | {
+      readonly chain: 'mantle-sepolia';
+      readonly bundlerClient: BundlerClient;
+      readonly paymasterClient: PaymasterClient;
+    };
 
 export interface CreateBundlerClientConfig {
   chain: SupportedChain;
@@ -44,13 +52,23 @@ export function createBundlerClient(config: CreateBundlerClientConfig): BundlerB
     );
   }
   const bundlerUrl = `${chainConfig.bundlerBaseUrl}?apikey=${apiKey}`;
-  const bundlerClient = viemCreateBundlerClient({
-    chain: chainConfig.chain,
-    transport: http(bundlerUrl),
-  });
-  const paymasterClient =
-    config.chain === 'mantle-sepolia'
-      ? viemCreatePaymasterClient({ transport: http(bundlerUrl) })
-      : null;
-  return { bundlerClient, paymasterClient };
+  let bundlerClient: BundlerClient;
+  try {
+    bundlerClient = viemCreateBundlerClient({
+      chain: chainConfig.chain,
+      transport: http(bundlerUrl),
+    });
+  } catch (err) {
+    throw ConciergeError.fromUnknown(err, 'RpcError');
+  }
+  if (config.chain === 'mantle-mainnet') {
+    return { chain: 'mantle-mainnet', bundlerClient, paymasterClient: null };
+  }
+  let paymasterClient: PaymasterClient;
+  try {
+    paymasterClient = viemCreatePaymasterClient({ transport: http(bundlerUrl) });
+  } catch (err) {
+    throw ConciergeError.fromUnknown(err, 'RpcError');
+  }
+  return { chain: 'mantle-sepolia', bundlerClient, paymasterClient };
 }

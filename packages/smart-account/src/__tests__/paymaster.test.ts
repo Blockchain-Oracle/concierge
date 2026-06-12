@@ -75,6 +75,13 @@ describe('createPaymasterClient — URL', () => {
     );
   });
 
+  it("passes Pimlico mainnet URL when 'always' on mantle-mainnet", async () => {
+    const { http } = await import('viem');
+    createPaymasterClient({ chain: 'mantle-mainnet', sponsorshipPolicy: 'always' });
+    const httpCalls = vi.mocked(http).mock.calls.map((c) => c[0]);
+    expect(httpCalls).toContain(`https://api.pimlico.io/v2/mantle/rpc?apikey=${TEST_PIMLICO_KEY}`);
+  });
+
   it('accepts apiKey override', async () => {
     vi.unstubAllEnvs();
     const { http } = await import('viem');
@@ -109,7 +116,7 @@ describe('createPaymasterClient — input guards', () => {
     }
   });
 
-  it('throws ConfigError for unsupported chain', () => {
+  it('throws ConfigError for unsupported chain with message content', () => {
     try {
       // biome-ignore lint/suspicious/noExplicitAny: testing invalid chain input
       createPaymasterClient({ chain: 'ethereum-mainnet' as any, sponsorshipPolicy: 'always' });
@@ -117,6 +124,9 @@ describe('createPaymasterClient — input guards', () => {
     } catch (e) {
       expect(e).toBeInstanceOf(ConciergeError);
       expect((e as ConciergeError).type).toBe('ConfigError');
+      expect(String((e as ConciergeError).message)).toContain(
+        "UnsupportedChain('ethereum-mainnet')",
+      );
     }
   });
 });

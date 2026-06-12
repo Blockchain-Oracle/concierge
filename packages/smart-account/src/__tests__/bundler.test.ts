@@ -35,13 +35,14 @@ describe('createBundlerClient — return shape', () => {
 
   it('returns bundlerClient and paymasterClient for mantle-sepolia', () => {
     const result = createBundlerClient({ chain: 'mantle-sepolia' });
-    expect(result).toHaveProperty('bundlerClient');
-    expect(result).toHaveProperty('paymasterClient');
+    expect(result.chain).toBe('mantle-sepolia');
+    expect(result.bundlerClient).toBeDefined();
     expect(result.paymasterClient).not.toBeNull();
   });
 
   it('returns bundlerClient with null paymasterClient for mantle-mainnet', () => {
     const result = createBundlerClient({ chain: 'mantle-mainnet' });
+    expect(result.chain).toBe('mantle-mainnet');
     expect(result.bundlerClient).toBeDefined();
     expect(result.paymasterClient).toBeNull();
   });
@@ -100,22 +101,28 @@ describe('createBundlerClient — input guards', () => {
     );
   });
 
-  it('throws ConfigError with ConciergeError instance for missing key', () => {
+  it('throws ConciergeError(ConfigError) instance for missing key', () => {
     vi.unstubAllEnvs();
-    expect(() => createBundlerClient({ chain: 'mantle-sepolia' })).toSatisfy(() => {
-      try {
-        createBundlerClient({ chain: 'mantle-sepolia' });
-        return false;
-      } catch (e) {
-        return e instanceof ConciergeError && e.type === 'ConfigError';
-      }
-    });
+    try {
+      createBundlerClient({ chain: 'mantle-sepolia' });
+      expect.fail('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(ConciergeError);
+      expect((e as ConciergeError).type).toBe('ConfigError');
+    }
   });
 
-  it('throws ConfigError for unsupported chain', () => {
-    expect(() =>
+  it('throws ConfigError for unsupported chain with message content', () => {
+    try {
       // biome-ignore lint/suspicious/noExplicitAny: testing invalid chain input
-      createBundlerClient({ chain: 'ethereum-mainnet' as any }),
-    ).toThrowError(expect.objectContaining({ type: 'ConfigError' }) as unknown as Error);
+      createBundlerClient({ chain: 'ethereum-mainnet' as any });
+      expect.fail('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(ConciergeError);
+      expect((e as ConciergeError).type).toBe('ConfigError');
+      expect(String((e as ConciergeError).message)).toContain(
+        "UnsupportedChain('ethereum-mainnet')",
+      );
+    }
   });
 });

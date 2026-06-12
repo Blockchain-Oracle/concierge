@@ -29,6 +29,7 @@ function mockFetchStatus(status: number): void {
     vi.fn().mockResolvedValue({
       ok: false,
       status,
+      text: () => Promise.resolve(''),
       json: () => Promise.resolve({}),
     }),
   );
@@ -51,6 +52,15 @@ describe('getUserOpGasPrice — return shape', () => {
     const result = await getUserOpGasPrice({ chain: 'mantle-sepolia' });
     expect(typeof result.maxFeePerGas).toBe('bigint');
     expect(typeof result.maxPriorityFeePerGas).toBe('bigint');
+  });
+
+  it('returns fetchedAt as a numeric Unix ms timestamp', async () => {
+    const before = Date.now();
+    const result = await getUserOpGasPrice({ chain: 'mantle-sepolia' });
+    const after = Date.now();
+    expect(typeof result.fetchedAt).toBe('number');
+    expect(result.fetchedAt).toBeGreaterThanOrEqual(before);
+    expect(result.fetchedAt).toBeLessThanOrEqual(after);
   });
 
   it('returns positive gas prices', async () => {
@@ -83,6 +93,7 @@ describe('getUserOpGasPrice — RPC call', () => {
     const body = JSON.parse(init?.body as string);
     expect(body.method).toBe('pimlico_getUserOperationGasPrice');
     expect(body.jsonrpc).toBe('2.0');
+    expect(body.params).toEqual([]);
   });
 
   it('calls Pimlico sepolia endpoint', async () => {
@@ -106,7 +117,7 @@ describe('getUserOpGasPrice — RPC call', () => {
   });
 });
 
-describe('getUserOpGasPrice — error handling', () => {
+describe('getUserOpGasPrice — config errors', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.stubEnv('PIMLICO_API_KEY', TEST_PIMLICO_KEY);
@@ -139,6 +150,17 @@ describe('getUserOpGasPrice — error handling', () => {
       (e: unknown) => e instanceof ConciergeError && e.type === 'RpcError',
     );
   });
+});
+
+describe('getUserOpGasPrice — response errors', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubEnv('PIMLICO_API_KEY', TEST_PIMLICO_KEY);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
 
   it('throws RpcError on HTTP 5xx from bundler', async () => {
     mockFetchStatus(503);
@@ -146,12 +168,29 @@ describe('getUserOpGasPrice — error handling', () => {
       (e: unknown) =>
         e instanceof ConciergeError &&
         e.type === 'RpcError' &&
-        String(e.message).includes('BundlerError({ status: 503 })'),
+        String(e.message).includes("BundlerError({ status: 503, chain: 'mantle-sepolia' })"),
+    );
+  });
+
+  it('throws RpcError on HTTP 401 from bundler', async () => {
+    mockFetchStatus(401);
+    await expect(getUserOpGasPrice({ chain: 'mantle-sepolia' })).rejects.toSatisfy(
+      (e: unknown) =>
+        e instanceof ConciergeError &&
+        e.type === 'RpcError' &&
+        String(e.message).includes('status: 401'),
     );
   });
 
   it('throws RpcError when JSON-RPC returns error object', async () => {
     mockFetchOk({ jsonrpc: '2.0', id: 1, error: { code: -32000, message: 'AA23 reverted' } });
+    await expect(getUserOpGasPrice({ chain: 'mantle-sepolia' })).rejects.toSatisfy(
+      (e: unknown) => e instanceof ConciergeError && e.type === 'RpcError',
+    );
+  });
+
+  it('throws RpcError when result is null', async () => {
+    mockFetchOk({ jsonrpc: '2.0', id: 1, result: null });
     await expect(getUserOpGasPrice({ chain: 'mantle-sepolia' })).rejects.toSatisfy(
       (e: unknown) => e instanceof ConciergeError && e.type === 'RpcError',
     );

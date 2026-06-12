@@ -107,6 +107,9 @@ describe('createConciergeAccount — CREATE2 determinism', () => {
     vi.clearAllMocks();
     vi.stubEnv('PIMLICO_API_KEY', TEST_PIMLICO_KEY);
   });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
 
   it('same owner + chain returns same smartAccountAddress', async () => {
     const r1 = await createConciergeAccount({ owner: MOCK_OWNER, chain: 'mantle-sepolia' });
@@ -126,6 +129,9 @@ describe('createConciergeAccount — ZeroDev parameters', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.stubEnv('PIMLICO_API_KEY', TEST_PIMLICO_KEY);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it('calls getEntryPoint with "0.7"', async () => {
@@ -286,6 +292,7 @@ describe('createConciergeAccount — paymaster wiring', () => {
     await createConciergeAccount({ owner: MOCK_OWNER, chain: 'mantle-mainnet' });
     // biome-ignore lint/suspicious/noExplicitAny: accessing mock call args for assertion
     const callArg = vi.mocked(createKernelAccountClient).mock.calls[0]?.[0] as any;
+    // biome-ignore lint/complexity/useLiteralKeys: any-typed access — bracket notation avoids TS4111
     expect(callArg?.['paymaster']).toBeUndefined();
   });
 
@@ -294,6 +301,7 @@ describe('createConciergeAccount — paymaster wiring', () => {
     await createConciergeAccount({ owner: MOCK_OWNER, chain: 'mantle-sepolia', paymaster: 'none' });
     // biome-ignore lint/suspicious/noExplicitAny: accessing mock call args for assertion
     const callArg = vi.mocked(createKernelAccountClient).mock.calls[0]?.[0] as any;
+    // biome-ignore lint/complexity/useLiteralKeys: any-typed access — bracket notation avoids TS4111
     expect(callArg?.['paymaster']).toBeUndefined();
   });
 

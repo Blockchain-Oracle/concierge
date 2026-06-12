@@ -25,6 +25,9 @@ const rpcWrap = (err: unknown) => {
  * Note: ZeroDev echoes the supplied address back without cross-validating the
  * owner's CREATE2 derivation. Owner/address consistency is enforced at UserOp
  * submission time (EntryPoint AA24 signature error) rather than here.
+ *
+ * Unlike createConciergeAccount, no paymaster is wired by default — the caller
+ * controls gas sponsorship by configuring the returned clientPromise consumer.
  */
 export async function connectToConciergeAccount(
   config: ConnectConciergeAccountConfig,
@@ -69,9 +72,8 @@ export async function connectToConciergeAccount(
   }).catch(rpcWrap);
   const smartAccountAddress = kernelAccount.address;
   const bundlerUrl = `${chainConfig.bundlerBaseUrl}?apikey=${apiKey}`;
-  let clientPromise: Promise<object>;
-  try {
-    clientPromise = Promise.resolve(
+  const clientPromise = new Promise<object>((resolve) =>
+    resolve(
       createKernelAccountClient({
         account: kernelAccount,
         chain: chainConfig.chain,
@@ -79,9 +81,7 @@ export async function connectToConciergeAccount(
         // biome-ignore lint/suspicious/noExplicitAny: publicClient type variance between viem peer dep versions
         client: publicClient as any,
       }),
-    );
-  } catch (err) {
-    clientPromise = Promise.reject(ConciergeError.fromUnknown(err, 'RpcError'));
-  }
+    ),
+  ).catch(rpcWrap);
   return { smartAccountAddress, kernelAccount, clientPromise };
 }

@@ -3,8 +3,10 @@ import { CHAIN_CONFIGS } from './constants.ts';
 import type { SupportedChain } from './types.ts';
 
 export interface UserOpGasPrice {
-  maxFeePerGas: bigint;
-  maxPriorityFeePerGas: bigint;
+  readonly maxFeePerGas: bigint;
+  readonly maxPriorityFeePerGas: bigint;
+  /** Unix timestamp (ms) when this snapshot was fetched. Gas prices change per block — do not cache. */
+  readonly fetchedAt: number;
 }
 
 export interface GetUserOpGasPriceConfig {
@@ -13,13 +15,60 @@ export interface GetUserOpGasPriceConfig {
   apiKey?: string;
 }
 
-type PimlicoGasPriceResult = {
-  standard: { maxFeePerGas: string; maxPriorityFeePerGas: string };
-};
-type PimlicoRpcResponse = {
-  result?: PimlicoGasPriceResult;
-  error?: { code: number; message: string };
-};
+type PimlicoGasPriceTier = { maxFeePerGas: string; maxPriorityFeePerGas: string };
+type PimlicoRpcResponse =
+  | {
+      result: {
+        slow: PimlicoGasPriceTier;
+        standard: PimlicoGasPriceTier;
+        fast: PimlicoGasPriceTier;
+      };
+      error?: undefined;
+    }
+  | { result?: undefined; error: { code: number; message: string } };
+
+function parseTier(
+  data: PimlicoRpcResponse,
+  chain: SupportedChain,
+): { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint } {
+  if (data.error) {
+    throw new ConciergeError(
+      'RpcError',
+      `[@concierge/smart-account] getUserOpGasPrice: ${data.error.message}`,
+    );
+  }
+  if (!data.result?.standard) {
+    throw new ConciergeError(
+      'RpcError',
+      `[@concierge/smart-account] getUserOpGasPrice: unexpected response shape from pimlico_getUserOperationGasPrice (chain: '${chain}')`,
+    );
+  }
+  const { maxFeePerGas: rawMax, maxPriorityFeePerGas: rawPriority } = data.result.standard;
+  if (typeof rawMax !== 'string' || typeof rawPriority !== 'string') {
+    throw new ConciergeError(
+      'RpcError',
+      `[@concierge/smart-account] getUserOpGasPrice: unexpected field types — expected hex strings, got maxFeePerGas=${typeof rawMax} maxPriorityFeePerGas=${typeof rawPriority}`,
+    );
+  }
+  let maxFeePerGas: bigint;
+  let maxPriorityFeePerGas: bigint;
+  try {
+    maxFeePerGas = BigInt(rawMax);
+    maxPriorityFeePerGas = BigInt(rawPriority);
+  } catch (_err) {
+    throw new ConciergeError(
+      'RpcError',
+      `[@concierge/smart-account] getUserOpGasPrice: BigInt conversion failed — maxFeePerGas="${rawMax}" maxPriorityFeePerGas="${rawPriority}"`,
+    );
+  }
+  if (maxPriorityFeePerGas > maxFeePerGas) {
+    throw new ConciergeError(
+      'RpcError',
+      `[@concierge/smart-account] getUserOpGasPrice: EIP-1559 invariant violated — maxPriorityFeePerGas (${maxPriorityFeePerGas}) > maxFeePerGas (${maxFeePerGas})`,
+    );
+  }
+  return { maxFeePerGas, maxPriorityFeePerGas };
+}
 
 /**
  * Queries Pimlico's gas price oracle for current UserOp gas prices.
@@ -58,26 +107,26 @@ export async function getUserOpGasPrice(config: GetUserOpGasPriceConfig): Promis
     throw ConciergeError.fromUnknown(err, 'RpcError');
   }
   if (!res.ok) {
+    let body = '';
+    try {
+      body = await res.text();
+    } catch {
+      /* body unreadable */
+    }
     throw new ConciergeError(
       'RpcError',
-      `[@concierge/smart-account] getUserOpGasPrice: BundlerError({ status: ${res.status} })`,
+      `[@concierge/smart-account] getUserOpGasPrice: BundlerError({ status: ${res.status}, chain: '${config.chain}' })${body ? ` — ${body.slice(0, 200)}` : ''}`,
     );
   }
-  const data = (await res.json()) as PimlicoRpcResponse;
-  if (data.error) {
+  let data: PimlicoRpcResponse;
+  try {
+    data = (await res.json()) as PimlicoRpcResponse;
+  } catch (_err) {
     throw new ConciergeError(
       'RpcError',
-      `[@concierge/smart-account] getUserOpGasPrice: ${data.error.message}`,
+      `[@concierge/smart-account] getUserOpGasPrice: failed to parse JSON response from Pimlico (chain: '${config.chain}') — body may not be JSON`,
     );
   }
-  if (!data.result?.standard) {
-    throw new ConciergeError(
-      'RpcError',
-      '[@concierge/smart-account] getUserOpGasPrice: unexpected response shape from pimlico_getUserOperationGasPrice',
-    );
-  }
-  return {
-    maxFeePerGas: BigInt(data.result.standard.maxFeePerGas),
-    maxPriorityFeePerGas: BigInt(data.result.standard.maxPriorityFeePerGas),
-  };
+  const { maxFeePerGas, maxPriorityFeePerGas } = parseTier(data, config.chain);
+  return { maxFeePerGas, maxPriorityFeePerGas, fetchedAt: Date.now() };
 }

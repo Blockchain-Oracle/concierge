@@ -7,17 +7,17 @@ import {
 import { CHAIN_CONFIGS } from './constants.ts';
 import type { SupportedChain } from './types.ts';
 
-export type { PaymasterClient };
-
 /** 'always' = Concierge sponsors gas (Sepolia demo). 'never' = user pays MNT (Mainnet). */
 export type SponsorshipPolicy = 'always' | 'never';
 
-export interface CreatePaymasterClientConfig {
-  chain: SupportedChain;
-  sponsorshipPolicy: SponsorshipPolicy;
-  /** Defaults to `process.env.PIMLICO_API_KEY` */
-  apiKey?: string;
-}
+/** Discriminated config: 'never' needs no API key; 'always' requires Pimlico credentials. */
+export type CreatePaymasterClientConfig =
+  | { readonly chain: SupportedChain; readonly sponsorshipPolicy: 'never' }
+  | {
+      readonly chain: SupportedChain;
+      readonly sponsorshipPolicy: 'always';
+      readonly apiKey?: string;
+    };
 
 /**
  * Returns a Pimlico verifying paymaster client, or null when sponsorship is 'never'.
@@ -41,5 +41,9 @@ export function createPaymasterClient(config: CreatePaymasterClientConfig): Paym
     );
   }
   const paymasterUrl = `${chainConfig.bundlerBaseUrl}?apikey=${apiKey}`;
-  return viemCreatePaymasterClient({ transport: http(paymasterUrl) });
+  try {
+    return viemCreatePaymasterClient({ transport: http(paymasterUrl) });
+  } catch (err) {
+    throw ConciergeError.fromUnknown(err, 'RpcError');
+  }
 }

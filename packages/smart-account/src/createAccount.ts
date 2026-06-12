@@ -64,9 +64,8 @@ export async function createConciergeAccount(
     paymasterStrategy === 'pimlico'
       ? viemCreatePaymasterClient({ transport: http(bundlerUrl) })
       : null;
-  let clientPromise: Promise<object>;
-  try {
-    clientPromise = Promise.resolve(
+  const clientPromise = new Promise<object>((resolve) =>
+    resolve(
       createKernelAccountClient({
         account: kernelAccount,
         chain: chainConfig.chain,
@@ -80,9 +79,7 @@ export async function createConciergeAccount(
           },
         }),
       }),
-    );
-  } catch (err) {
-    clientPromise = Promise.reject(ConciergeError.fromUnknown(err, 'RpcError'));
-  }
+    ),
+  ).catch(rpcWrap);
   return { smartAccountAddress, kernelAccount, clientPromise };
 }
