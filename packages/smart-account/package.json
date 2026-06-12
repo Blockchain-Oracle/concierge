@@ -1,0 +1,47 @@
+{
+  "name": "@concierge/smart-account",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "src/**/*.ts",
+    "!src/**/*.test.ts",
+    "!src/__tests__/**"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "prepare": "tsup",
+    "prepack": "pnpm run build"
+  },
+  "dependencies": {
+    "@concierge/sdk": "workspace:*",
+    "@concierge/shared": "workspace:*",
+    "@zerodev/ecdsa-validator": "5.4.9",
+    "@zerodev/permissions": "5.6.3",
+    "@zerodev/sdk": "5.5.10"
+  },
+  "peerDependencies": {
+    "viem": "^2.52.0",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.20",
+    "tsup": "8.5.0",
+    "viem": "2.52.2",
+    "zod": "4.4.3"
+  }
+}
