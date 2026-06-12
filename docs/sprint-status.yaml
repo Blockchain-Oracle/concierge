@@ -279,11 +279,11 @@ stories:
     merged_at: "2026-06-12"
   - id: story-42-erc8004-provider
     epic: "Epic E3 — Action Providers"
-    status: PENDING
+    status: COMPLETE
     depends_on: [story-21-shared-abi-imports, story-22-sdk-skeleton]
     issue_url: ""
-    pr_url: ""
-    merged_at: ""
+    pr_url: "https://github.com/Blockchain-Oracle/concierge/pull/71"
+    merged_at: "2026-06-12T00:46:24Z"
   - id: story-43-erc8004-tests
     epic: "Epic E3 — Action Providers"
     status: PENDING
