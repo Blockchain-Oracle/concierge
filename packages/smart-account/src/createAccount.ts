@@ -4,12 +4,18 @@ import { createKernelAccount, createKernelAccountClient } from '@zerodev/sdk';
 import { getEntryPoint, KERNEL_V3_1 } from '@zerodev/sdk/constants';
 import type { LocalAccount } from 'viem';
 import { createPublicClient, http } from 'viem';
+import { createPaymasterClient as viemCreatePaymasterClient } from 'viem/account-abstraction';
 import { CHAIN_CONFIGS } from './constants.ts';
 import type { ConciergeAccount, SupportedChain } from './types.ts';
 
 export interface CreateConciergeAccountConfig {
   owner: LocalAccount;
   chain: SupportedChain;
+  /**
+   * Paymaster strategy. Defaults to 'pimlico' (sponsored) on mantle-sepolia
+   * and 'none' (user pays MNT) on mantle-mainnet.
+   */
+  paymaster?: 'pimlico' | 'none';
 }
 
 const rpcWrap = (err: unknown) => {
@@ -52,6 +58,12 @@ export async function createConciergeAccount(
   }).catch(rpcWrap);
   const smartAccountAddress = kernelAccount.address;
   const bundlerUrl = `${chainConfig.bundlerBaseUrl}?apikey=${apiKey}`;
+  const paymasterStrategy =
+    config.paymaster ?? (config.chain === 'mantle-sepolia' ? 'pimlico' : 'none');
+  const paymasterClient =
+    paymasterStrategy === 'pimlico'
+      ? viemCreatePaymasterClient({ transport: http(bundlerUrl) })
+      : null;
   let clientPromise: Promise<object>;
   try {
     clientPromise = Promise.resolve(
@@ -61,6 +73,12 @@ export async function createConciergeAccount(
         bundlerTransport: http(bundlerUrl),
         // biome-ignore lint/suspicious/noExplicitAny: publicClient type variance between viem peer dep versions
         client: publicClient as any,
+        ...(paymasterClient && {
+          paymaster: {
+            getPaymasterData: paymasterClient.getPaymasterData,
+            getPaymasterStubData: paymasterClient.getPaymasterStubData,
+          },
+        }),
       }),
     );
   } catch (err) {

@@ -52,6 +52,20 @@ vi.mock('@zerodev/sdk/constants', async () => {
   };
 });
 
+vi.mock('viem/account-abstraction', async () => {
+  const actual = await vi.importActual<typeof import('viem/account-abstraction')>(
+    'viem/account-abstraction',
+  );
+  return {
+    ...actual,
+    createPaymasterClient: vi.fn().mockReturnValue({
+      type: 'paymasterClient',
+      getPaymasterData: vi.fn(),
+      getPaymasterStubData: vi.fn(),
+    }),
+  };
+});
+
 import { createConciergeAccount } from '../createAccount.ts';
 
 const OWNER_ADDRESS = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266' as const;
@@ -244,6 +258,56 @@ describe('createConciergeAccount — rpcWrap error classification', () => {
     const result = await createConciergeAccount({ owner: MOCK_OWNER, chain: 'mantle-sepolia' });
     await expect(result.clientPromise).rejects.toSatisfy(
       (e: unknown) => e instanceof ConciergeError && e.type === 'RpcError',
+    );
+  });
+});
+
+describe('createConciergeAccount — paymaster wiring', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubEnv('PIMLICO_API_KEY', TEST_PIMLICO_KEY);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('wires paymaster for mantle-sepolia by default', async () => {
+    const { createKernelAccountClient } = await import('@zerodev/sdk');
+    await createConciergeAccount({ owner: MOCK_OWNER, chain: 'mantle-sepolia' });
+    expect(createKernelAccountClient).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymaster: expect.objectContaining({ getPaymasterData: expect.any(Function) }),
+      }),
+    );
+  });
+
+  it('does not wire paymaster for mantle-mainnet by default', async () => {
+    const { createKernelAccountClient } = await import('@zerodev/sdk');
+    await createConciergeAccount({ owner: MOCK_OWNER, chain: 'mantle-mainnet' });
+    // biome-ignore lint/suspicious/noExplicitAny: accessing mock call args for assertion
+    const callArg = vi.mocked(createKernelAccountClient).mock.calls[0]?.[0] as any;
+    expect(callArg?.['paymaster']).toBeUndefined();
+  });
+
+  it("explicit paymaster: 'none' skips wiring on mantle-sepolia", async () => {
+    const { createKernelAccountClient } = await import('@zerodev/sdk');
+    await createConciergeAccount({ owner: MOCK_OWNER, chain: 'mantle-sepolia', paymaster: 'none' });
+    // biome-ignore lint/suspicious/noExplicitAny: accessing mock call args for assertion
+    const callArg = vi.mocked(createKernelAccountClient).mock.calls[0]?.[0] as any;
+    expect(callArg?.['paymaster']).toBeUndefined();
+  });
+
+  it("explicit paymaster: 'pimlico' wires paymaster on mantle-mainnet", async () => {
+    const { createKernelAccountClient } = await import('@zerodev/sdk');
+    await createConciergeAccount({
+      owner: MOCK_OWNER,
+      chain: 'mantle-mainnet',
+      paymaster: 'pimlico',
+    });
+    expect(createKernelAccountClient).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymaster: expect.objectContaining({ getPaymasterData: expect.any(Function) }),
+      }),
     );
   });
 });
