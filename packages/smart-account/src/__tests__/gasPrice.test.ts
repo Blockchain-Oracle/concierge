@@ -168,7 +168,8 @@ describe('getUserOpGasPrice — HTTP errors', () => {
       (e: unknown) =>
         e instanceof ConciergeError &&
         e.type === 'RpcError' &&
-        String(e.message).includes("BundlerError({ status: 503, chain: 'mantle-sepolia' })"),
+        String(e.message).includes("BundlerError({ status: 503, chain: 'mantle-sepolia' })") &&
+        e.cause === undefined,
     );
   });
 
@@ -178,7 +179,8 @@ describe('getUserOpGasPrice — HTTP errors', () => {
       (e: unknown) =>
         e instanceof ConciergeError &&
         e.type === 'RpcError' &&
-        String(e.message).includes('status: 401'),
+        String(e.message).includes('status: 401') &&
+        e.cause === undefined,
     );
   });
 
