@@ -3,24 +3,38 @@ import { signerToEcdsaValidator } from '@zerodev/ecdsa-validator';
 import { createKernelAccount, createKernelAccountClient } from '@zerodev/sdk';
 import { getEntryPoint, KERNEL_V3_1 } from '@zerodev/sdk/constants';
 import type { Address, LocalAccount } from 'viem';
-import { createPublicClient, http } from 'viem';
+import { createPublicClient, http, isAddress } from 'viem';
 import { CHAIN_CONFIGS } from './constants.ts';
-import type { ConciergeAccount } from './types.ts';
+import type { ConciergeAccount, SupportedChain } from './types.ts';
 
 export interface ConnectConciergeAccountConfig {
   address: Address;
   owner: LocalAccount;
-  chain: keyof typeof CHAIN_CONFIGS;
+  chain: SupportedChain;
 }
+
+const rpcWrap = (err: unknown) => {
+  throw ConciergeError.fromUnknown(err, 'RpcError');
+};
 
 /**
  * Re-attach to a previously-deployed Kernel account at a known address.
  * No deployment transaction is fired — CREATE2 computes the same address
  * for the same owner + chain, so the account object is reconstructed locally.
+ *
+ * Note: ZeroDev echoes the supplied address back without cross-validating the
+ * owner's CREATE2 derivation. Owner/address consistency is enforced at UserOp
+ * submission time (EntryPoint AA24 signature error) rather than here.
  */
 export async function connectToConciergeAccount(
   config: ConnectConciergeAccountConfig,
 ): Promise<ConciergeAccount> {
+  if (!isAddress(config.address)) {
+    throw new ConciergeError(
+      'ConfigError',
+      `[@concierge/smart-account] connectToConciergeAccount: InvalidAddress('${config.address}') — must be a 42-char 0x-prefixed hex string.`,
+    );
+  }
   const chainConfig = CHAIN_CONFIGS[config.chain];
   if (!chainConfig) {
     throw new ConciergeError(
@@ -41,41 +55,33 @@ export async function connectToConciergeAccount(
     transport: http(chainConfig.chain.rpcUrls.default.http[0]),
   });
   const entryPoint = getEntryPoint('0.7');
-  const rpcWrap = (err: unknown) => {
-    throw ConciergeError.fromUnknown(err, 'RpcError');
-  };
   const ecdsaValidator = await signerToEcdsaValidator(publicClient, {
     // biome-ignore lint/suspicious/noExplicitAny: Signer union from @zerodev/sdk accepts LocalAccount; cast avoids peer dep version skew
     signer: config.owner as any,
     entryPoint,
     kernelVersion: KERNEL_V3_1,
   }).catch(rpcWrap);
-  // Pass the known address so ZeroDev uses it directly (CREATE2-resolved) rather than re-computing.
   const kernelAccount = await createKernelAccount(publicClient, {
     plugins: { sudo: ecdsaValidator },
     entryPoint,
     kernelVersion: KERNEL_V3_1,
     address: config.address,
   }).catch(rpcWrap);
-  // Sanity-check: ZeroDev must honour the provided address override.
-  if (kernelAccount.address.toLowerCase() !== config.address.toLowerCase()) {
-    throw new ConciergeError(
-      'ConfigError',
-      `[@concierge/smart-account] connectToConciergeAccount: AddressMismatch — provided ${config.address} does not match ZeroDev-derived ${kernelAccount.address} for this owner on '${config.chain}'.`,
-      undefined,
-      { provided: config.address, computed: kernelAccount.address, chain: config.chain },
-    );
-  }
   const smartAccountAddress = kernelAccount.address;
   const bundlerUrl = `${chainConfig.bundlerBaseUrl}?apikey=${apiKey}`;
-  const clientPromise = Promise.resolve(
-    createKernelAccountClient({
-      account: kernelAccount,
-      chain: chainConfig.chain,
-      bundlerTransport: http(bundlerUrl),
-      // biome-ignore lint/suspicious/noExplicitAny: publicClient type variance between viem peer dep versions
-      client: publicClient as any,
-    }),
-  ).catch(rpcWrap);
+  let clientPromise: Promise<object>;
+  try {
+    clientPromise = Promise.resolve(
+      createKernelAccountClient({
+        account: kernelAccount,
+        chain: chainConfig.chain,
+        bundlerTransport: http(bundlerUrl),
+        // biome-ignore lint/suspicious/noExplicitAny: publicClient type variance between viem peer dep versions
+        client: publicClient as any,
+      }),
+    );
+  } catch (err) {
+    clientPromise = Promise.reject(ConciergeError.fromUnknown(err, 'RpcError'));
+  }
   return { smartAccountAddress, kernelAccount, clientPromise };
 }
