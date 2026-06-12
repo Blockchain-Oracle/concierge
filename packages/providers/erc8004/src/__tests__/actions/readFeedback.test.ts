@@ -1,7 +1,16 @@
 import { ConciergeError } from '@concierge/sdk';
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { ActionContext } from '../../_context.ts';
+import { executeAttestAction } from '../../actions/attestAction.ts';
 import { executeReadFeedback } from '../../actions/readFeedback.ts';
+import { executeRegisterAgent } from '../../actions/registerAgent.ts';
+import { hashActionPayload } from '../../eip712.ts';
+import {
+  type AnvilFork,
+  IDENTITY_REGISTRY_SEPOLIA,
+  REPUTATION_REGISTRY_SEPOLIA,
+  startAnvilFork,
+} from '../setup.ts';
 
 const IDENTITY_REGISTRY = '0x8004A169FB4a3325136EB29fA0ceB6D2e539a432' as const;
 const REPUTATION_REGISTRY = '0x8004BAa17C55a88189AE136b182e5fdA19dE9b63' as const;
@@ -213,5 +222,70 @@ describe('readFeedback — revoked entries', () => {
     await expect(executeReadFeedback(ctx, { agentId: AGENT_ID })).rejects.toSatisfy(
       (e: unknown) => e instanceof ConciergeError && e.type === 'RpcError',
     );
+  });
+});
+
+describe('readFeedback — fork: live Sepolia', () => {
+  let fork: AnvilFork;
+
+  beforeAll(async () => {
+    fork = await startAnvilFork();
+  });
+
+  afterAll(async () => {
+    await fork.stop();
+  });
+
+  // ERC-8004: agent owner (account #0) registers; client (account #1) attests.
+  function makeAgentCtx(): ActionContext {
+    return {
+      publicClient: fork.publicClient,
+      // biome-ignore lint/suspicious/noExplicitAny: walletClient has correct chain binding; cast matches action expectations
+      walletClient: fork.walletClient as any,
+      identityRegistry: IDENTITY_REGISTRY_SEPOLIA,
+      reputationRegistry: REPUTATION_REGISTRY_SEPOLIA,
+      chainId: 5003,
+    };
+  }
+
+  function makeClientCtx(): ActionContext {
+    return {
+      publicClient: fork.publicClient,
+      // biome-ignore lint/suspicious/noExplicitAny: clientWalletClient has correct chain binding
+      walletClient: fork.clientWalletClient as any,
+      identityRegistry: IDENTITY_REGISTRY_SEPOLIA,
+      reputationRegistry: REPUTATION_REGISTRY_SEPOLIA,
+      chainId: 5003,
+    };
+  }
+
+  it('iterates 3 NewFeedback events; each entry schema and feedbackHash match the attest payload', async () => {
+    const { agentId } = await executeRegisterAgent(makeAgentCtx(), {});
+    const schemas = [
+      'concierge.aave.v3.borrow.v1',
+      'concierge.aave.v3.supply.v1',
+      'concierge.mantle-dex.agni.swap.v1',
+    ] as const;
+    const payloads = schemas.map((s) => ({ schema: s, amount: '500' }));
+    const expectedHashes = payloads.map((p) => hashActionPayload(p, agentId, 5003));
+
+    for (const [i, s] of schemas.entries()) {
+      await executeAttestAction(makeClientCtx(), {
+        agentId,
+        providerSchema: s,
+        actionPayload: payloads[i] ?? { schema: s, amount: '500' },
+      });
+    }
+
+    const { entries } = await executeReadFeedback(makeAgentCtx(), {
+      agentId,
+      fromBlock: fork.forkBlockNumber,
+    });
+    expect(entries).toHaveLength(3);
+    for (const [i, entry] of entries.entries()) {
+      expect(entry.schema).toBe(schemas[i]);
+      expect(entry.feedbackHash).toBe(expectedHashes[i]);
+      expect(entry.revoked).toBe(false);
+    }
   });
 });

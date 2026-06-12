@@ -103,7 +103,9 @@ export async function executeAttestAction(
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    const reason = /AgentNotFound/i.test(msg) ? 'AgentNotFound' : 'TxFailed';
+    // ERC721NonexistentToken bubbles up from IdentityRegistry.ownerOf when the agentId NFT
+    // does not exist — treat it as AgentNotFound for callers.
+    const reason = /AgentNotFound|ERC721NonexistentToken/i.test(msg) ? 'AgentNotFound' : 'TxFailed';
     throw new ConciergeError(
       'AttestationFailed',
       `[@concierge/erc8004] attestAction: giveFeedback reverted — ${msg}`,

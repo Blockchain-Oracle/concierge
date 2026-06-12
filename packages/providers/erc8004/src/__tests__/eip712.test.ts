@@ -1,3 +1,6 @@
+import { spawnSync } from 'node:child_process';
+import { join } from 'node:path';
+import { hashTypedData } from 'viem';
 import { describe, expect, it } from 'vitest';
 import { hashActionPayload } from '../eip712.ts';
 
@@ -95,6 +98,61 @@ describe('hashActionPayload — payload serialization', () => {
         CHAIN_ID,
       ),
     ).not.toThrow();
+  });
+});
+
+describe('hashActionPayload — cross-process determinism', () => {
+  // Spawns the hash-runner helper in a fresh Node process to verify that module
+  // initialisation order cannot affect the output. Guards against hypothetical
+  // viem changes that introduce non-deterministic object iteration.
+  it('separate process invocation produces the same hash as in-process call', () => {
+    const helperPath = join(import.meta.dirname, '_helpers/hash-runner.ts');
+    const payload = JSON.stringify({ schema: 'concierge.aave.v3.borrow.v1', amount: '1000000' });
+    const args = ['--experimental-strip-types', helperPath, payload, '42', '5000'];
+    const run1 = spawnSync(process.execPath, args, { encoding: 'utf8' });
+    const run2 = spawnSync(process.execPath, args, { encoding: 'utf8' });
+    if (run1.status !== 0) throw new Error(`hash-runner failed: ${run1.stderr}`);
+    const inProcess = hashActionPayload(
+      { schema: 'concierge.aave.v3.borrow.v1', amount: '1000000' },
+      42n,
+      5000,
+    );
+    expect(run1.stdout).toBe(inProcess);
+    expect(run2.stdout).toBe(inProcess);
+  });
+});
+
+describe('EIP-712 spec — Mail vector (external reference)', () => {
+  // Guards against viem diverging from the EIP-712 spec. The expected hash is from
+  // EIP-712 Appendix F and was computed independently of viem. If viem's hashTypedData
+  // ever deviates from the spec, this test fails before the domain regression guard would.
+  it('viem hashTypedData matches EIP-712 spec Appendix F Mail vector', () => {
+    const hash = hashTypedData({
+      domain: {
+        name: 'Ether Mail',
+        version: '1',
+        chainId: 1,
+        verifyingContract: '0xCcCCccccCCCCcCCCCCCcCcCccCcCCCcCcccccccC',
+      },
+      types: {
+        Person: [
+          { name: 'name', type: 'string' },
+          { name: 'wallet', type: 'address' },
+        ],
+        Mail: [
+          { name: 'from', type: 'Person' },
+          { name: 'to', type: 'Person' },
+          { name: 'contents', type: 'string' },
+        ],
+      },
+      primaryType: 'Mail',
+      message: {
+        from: { name: 'Cow', wallet: '0xCD2a3d9F938E13CD947Ec05AbC7FE734Df8DD826' },
+        to: { name: 'Bob', wallet: '0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB' },
+        contents: 'Hello, Bob!',
+      },
+    });
+    expect(hash).toBe('0xbe609aee343fb3c4b28e1df9e632fca64fcfaede20f02e86244efddf30957bd2');
   });
 });
 

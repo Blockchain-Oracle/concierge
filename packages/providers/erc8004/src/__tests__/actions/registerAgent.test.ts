@@ -1,9 +1,16 @@
 import { ConciergeError } from '@concierge/sdk';
 import { identityRegistryAbi } from '@concierge/shared/abi';
-import { encodeEventTopics, zeroAddress } from 'viem';
-import { describe, expect, it, vi } from 'vitest';
+import { encodeEventTopics, parseAbi, zeroAddress } from 'viem';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { ActionContext } from '../../_context.ts';
 import { executeRegisterAgent } from '../../actions/registerAgent.ts';
+import {
+  type AnvilFork,
+  IDENTITY_REGISTRY_SEPOLIA,
+  REPUTATION_REGISTRY_SEPOLIA,
+  startAnvilFork,
+  TEST_ACCOUNT,
+} from '../setup.ts';
 
 const IDENTITY_REGISTRY = '0x8004A169FB4a3325136EB29fA0ceB6D2e539a432' as const;
 const REPUTATION_REGISTRY = '0x8004BAa17C55a88189AE136b182e5fdA19dE9b63' as const;
@@ -167,5 +174,55 @@ describe('registerAgent — log parsing', () => {
     });
     const result = await executeRegisterAgent(ctx, {});
     expect(result.agentId).toBe(AGENT_ID);
+  });
+});
+
+describe('registerAgent — fork: live Sepolia IdentityRegistry', () => {
+  let fork: AnvilFork;
+
+  beforeAll(async () => {
+    fork = await startAnvilFork();
+  });
+
+  afterAll(async () => {
+    await fork.stop();
+  });
+
+  function makeForkedCtx(): ActionContext {
+    return {
+      publicClient: fork.publicClient,
+      // biome-ignore lint/suspicious/noExplicitAny: walletClient has correct chain binding; cast matches action expectations
+      walletClient: fork.walletClient as any,
+      identityRegistry: IDENTITY_REGISTRY_SEPOLIA,
+      reputationRegistry: REPUTATION_REGISTRY_SEPOLIA,
+      chainId: 5003,
+    };
+  }
+
+  it('registers a fresh agent and returns agentId > 0', async () => {
+    const ctx = makeForkedCtx();
+    const result = await executeRegisterAgent(ctx, {});
+    expect(result.agentId).toBeGreaterThan(0n);
+    expect(result.txHash).toMatch(/^0x[0-9a-fA-F]{64}$/);
+  });
+
+  it('ownerOf(agentId) returns the test account after register', async () => {
+    const ctx = makeForkedCtx();
+    const { agentId } = await executeRegisterAgent(ctx, {});
+    const ownerOfAbi = parseAbi(['function ownerOf(uint256 tokenId) view returns (address)']);
+    const owner = await fork.publicClient.readContract({
+      address: IDENTITY_REGISTRY_SEPOLIA,
+      abi: ownerOfAbi,
+      functionName: 'ownerOf',
+      args: [agentId],
+    });
+    expect(owner.toLowerCase()).toBe(TEST_ACCOUNT.toLowerCase());
+  });
+
+  it('two sequential registers produce monotonically increasing agentIds', async () => {
+    const ctx = makeForkedCtx();
+    const { agentId: id1 } = await executeRegisterAgent(ctx, {});
+    const { agentId: id2 } = await executeRegisterAgent(ctx, {});
+    expect(id2).toBe(id1 + 1n);
   });
 });

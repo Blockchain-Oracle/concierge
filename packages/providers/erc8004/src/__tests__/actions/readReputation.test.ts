@@ -1,7 +1,15 @@
 import { ConciergeError } from '@concierge/sdk';
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { ActionContext } from '../../_context.ts';
+import { executeAttestAction } from '../../actions/attestAction.ts';
 import { executeReadReputation } from '../../actions/readReputation.ts';
+import { executeRegisterAgent } from '../../actions/registerAgent.ts';
+import {
+  type AnvilFork,
+  IDENTITY_REGISTRY_SEPOLIA,
+  REPUTATION_REGISTRY_SEPOLIA,
+  startAnvilFork,
+} from '../setup.ts';
 
 const IDENTITY_REGISTRY = '0x8004A169FB4a3325136EB29fA0ceB6D2e539a432' as const;
 const REPUTATION_REGISTRY = '0x8004BAa17C55a88189AE136b182e5fdA19dE9b63' as const;
@@ -173,5 +181,74 @@ describe('readReputation — malformed contract responses', () => {
     await expect(executeReadReputation(ctx, { agentId: AGENT_ID })).rejects.toSatisfy(
       (e: unknown) => e instanceof ConciergeError && e.type === 'RpcError',
     );
+  });
+});
+
+describe('readReputation — fork: live Sepolia', () => {
+  let fork: AnvilFork;
+
+  beforeAll(async () => {
+    fork = await startAnvilFork();
+  });
+
+  afterAll(async () => {
+    await fork.stop();
+  });
+
+  // ERC-8004: agent owner (account #0) registers; client (account #1) attests.
+  function makeAgentCtx(): ActionContext {
+    return {
+      publicClient: fork.publicClient,
+      // biome-ignore lint/suspicious/noExplicitAny: walletClient has correct chain binding; cast matches action expectations
+      walletClient: fork.walletClient as any,
+      identityRegistry: IDENTITY_REGISTRY_SEPOLIA,
+      reputationRegistry: REPUTATION_REGISTRY_SEPOLIA,
+      chainId: 5003,
+    };
+  }
+
+  function makeClientCtx(): ActionContext {
+    return {
+      publicClient: fork.publicClient,
+      // biome-ignore lint/suspicious/noExplicitAny: clientWalletClient has correct chain binding
+      walletClient: fork.clientWalletClient as any,
+      identityRegistry: IDENTITY_REGISTRY_SEPOLIA,
+      reputationRegistry: REPUTATION_REGISTRY_SEPOLIA,
+      chainId: 5003,
+    };
+  }
+
+  it('freshly registered agent returns zero reputation', async () => {
+    const { agentId } = await executeRegisterAgent(makeAgentCtx(), {});
+    const result = await executeReadReputation(makeAgentCtx(), { agentId });
+    expect(result.totalAttestations).toBe(0);
+    expect(result.latestAttestation).toBeNull();
+    expect(result.schemaCounts).toStrictEqual({});
+  });
+
+  it('schemaCounts reflects attests across multiple schemas', async () => {
+    const { agentId } = await executeRegisterAgent(makeAgentCtx(), {});
+    // 5 attests: borrow×2, supply×2, agni-swap×1 — matches BDD test_readReputation_AfterAttests
+    const schemas = [
+      'concierge.aave.v3.borrow.v1',
+      'concierge.aave.v3.supply.v1',
+      'concierge.aave.v3.borrow.v1',
+      'concierge.aave.v3.supply.v1',
+      'concierge.mantle-dex.agni.swap.v1',
+    ] as const;
+    for (const s of schemas) {
+      await executeAttestAction(makeClientCtx(), {
+        agentId,
+        providerSchema: s,
+        actionPayload: { schema: s, amount: '1' },
+      });
+    }
+    const result = await executeReadReputation(makeAgentCtx(), { agentId });
+    expect(result.totalAttestations).toBe(5);
+    expect(result.schemaCounts['concierge.aave.v3.borrow.v1']).toBe(2);
+    expect(result.schemaCounts['concierge.aave.v3.supply.v1']).toBe(2);
+    expect(result.schemaCounts['concierge.mantle-dex.agni.swap.v1']).toBe(1);
+    expect(result.latestAttestation).not.toBeNull();
+    expect(result.latestAttestation?.feedbackIndex).toBeGreaterThanOrEqual(0n);
   });
 });

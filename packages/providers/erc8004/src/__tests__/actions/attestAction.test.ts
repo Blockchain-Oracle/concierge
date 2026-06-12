@@ -1,10 +1,17 @@
 import { ConciergeError } from '@concierge/sdk';
 import { reputationRegistryAbi } from '@concierge/shared/abi';
 import { encodeAbiParameters, encodeEventTopics, parseAbiParameters } from 'viem';
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { ActionContext } from '../../_context.ts';
 import { executeAttestAction } from '../../actions/attestAction.ts';
+import { executeRegisterAgent } from '../../actions/registerAgent.ts';
 import { hashActionPayload } from '../../eip712.ts';
+import {
+  type AnvilFork,
+  IDENTITY_REGISTRY_SEPOLIA,
+  REPUTATION_REGISTRY_SEPOLIA,
+  startAnvilFork,
+} from '../setup.ts';
 
 const IDENTITY_REGISTRY = '0x8004A169FB4a3325136EB29fA0ceB6D2e539a432' as const;
 const REPUTATION_REGISTRY = '0x8004BAa17C55a88189AE136b182e5fdA19dE9b63' as const;
@@ -207,6 +214,70 @@ describe('attestAction — transaction errors', () => {
       }),
     ).rejects.toSatisfy(
       (e: unknown) => e instanceof ConciergeError && e.type === 'AttestationFailed',
+    );
+  });
+});
+
+describe('attestAction — fork: live Sepolia ReputationRegistry', () => {
+  let fork: AnvilFork;
+
+  beforeAll(async () => {
+    fork = await startAnvilFork();
+  });
+
+  afterAll(async () => {
+    await fork.stop();
+  });
+
+  // ERC-8004 enforces "Self-feedback not allowed": the agent owner cannot attest on itself.
+  // agentCtx (account #0) registers; clientCtx (account #1) submits giveFeedback.
+  function makeAgentCtx(): ActionContext {
+    return {
+      publicClient: fork.publicClient,
+      // biome-ignore lint/suspicious/noExplicitAny: walletClient has correct chain binding; cast matches action expectations
+      walletClient: fork.walletClient as any,
+      identityRegistry: IDENTITY_REGISTRY_SEPOLIA,
+      reputationRegistry: REPUTATION_REGISTRY_SEPOLIA,
+      chainId: 5003,
+    };
+  }
+
+  function makeClientCtx(): ActionContext {
+    return {
+      publicClient: fork.publicClient,
+      // biome-ignore lint/suspicious/noExplicitAny: clientWalletClient has correct chain binding
+      walletClient: fork.clientWalletClient as any,
+      identityRegistry: IDENTITY_REGISTRY_SEPOLIA,
+      reputationRegistry: REPUTATION_REGISTRY_SEPOLIA,
+      chainId: 5003,
+    };
+  }
+
+  it('register → attest succeeds; feedbackHash matches local EIP-712 computation', async () => {
+    const { agentId } = await executeRegisterAgent(makeAgentCtx(), {});
+    const payload = { schema: 'concierge.aave.v3.borrow.v1', amount: '1000000' };
+    const result = await executeAttestAction(makeClientCtx(), {
+      agentId,
+      providerSchema: 'concierge.aave.v3.borrow.v1',
+      actionPayload: payload,
+    });
+    expect(result.txHash).toMatch(/^0x[0-9a-fA-F]{64}$/);
+    expect(result.feedbackIndex).toBeGreaterThanOrEqual(0n);
+    expect(result.feedbackHash).toBe(hashActionPayload(payload, agentId, 5003));
+  });
+
+  it('attest against non-existent agentId throws AttestationFailed with reason AgentNotFound', async () => {
+    await expect(
+      executeAttestAction(makeClientCtx(), {
+        agentId: 99999n,
+        providerSchema: 'concierge.aave.v3.borrow.v1',
+        actionPayload: { schema: 'concierge.aave.v3.borrow.v1', amount: '1' },
+      }),
+    ).rejects.toSatisfy(
+      (e: unknown) =>
+        e instanceof ConciergeError &&
+        e.type === 'AttestationFailed' &&
+        (e.metadata as { reason?: string } | undefined)?.reason === 'AgentNotFound',
     );
   });
 });
