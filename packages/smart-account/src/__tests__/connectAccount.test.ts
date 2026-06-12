@@ -1,0 +1,226 @@
+import { ConciergeError } from '@concierge/sdk';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ENTRYPOINT_V07_ADDRESS } from '../constants.ts';
+
+const TEST_PIMLICO_KEY = 'test-pimlico-api-key';
+const EXISTING_ADDRESS = '0x1234567890123456789012345678901234567890' as const;
+
+function deterministicAddress(owner: `0x${string}`): `0x${string}` {
+  return `0x${owner.slice(2, 42).padStart(40, '0')}` as `0x${string}`;
+}
+
+vi.mock('viem', async () => {
+  const actual = await vi.importActual<typeof import('viem')>('viem');
+  return {
+    ...actual,
+    createPublicClient: vi.fn().mockReturnValue({ type: 'publicClient' }),
+    http: vi.fn().mockImplementation((url: string) => ({ type: 'transport', url })),
+    isAddress: vi.fn().mockImplementation((addr: string) => /^0x[0-9a-fA-F]{40}$/.test(addr)),
+  };
+});
+
+vi.mock('@zerodev/ecdsa-validator', () => ({
+  signerToEcdsaValidator: vi.fn().mockResolvedValue({ type: 'ecdsaValidator' }),
+}));
+
+vi.mock('@zerodev/sdk', async () => {
+  const actual = await vi.importActual<typeof import('@zerodev/sdk')>('@zerodev/sdk');
+  return {
+    ...actual,
+    createKernelAccount: vi
+      .fn()
+      .mockImplementation(
+        (_client: unknown, params: { plugins: { sudo: unknown }; address?: `0x${string}` }) => {
+          const sudo = params?.plugins?.sudo as { type: string } | undefined;
+          const base = params?.address ?? (`0x${'aa'.repeat(20)}` as `0x${string}`);
+          const addr = sudo ? deterministicAddress(base) : base;
+          return Promise.resolve({ address: addr, type: 'kernelAccount' });
+        },
+      ),
+    createKernelAccountClient: vi.fn().mockReturnValue({ type: 'kernelClient' }),
+  };
+});
+
+vi.mock('@zerodev/sdk/constants', async () => {
+  const actual =
+    await vi.importActual<typeof import('@zerodev/sdk/constants')>('@zerodev/sdk/constants');
+  return {
+    ...actual,
+    KERNEL_V3_1: '0.3.1',
+    getEntryPoint: vi.fn().mockImplementation((version: string) => ({
+      version,
+      address: ENTRYPOINT_V07_ADDRESS,
+    })),
+  };
+});
+
+import { connectToConciergeAccount } from '../connectAccount.ts';
+
+const OWNER_ADDRESS = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266' as const;
+// biome-ignore lint/suspicious/noExplicitAny: LocalAccount minimal stub for test injection
+const MOCK_OWNER = { address: OWNER_ADDRESS, sign: vi.fn() } as any;
+
+describe('connectToConciergeAccount — shape', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubEnv('PIMLICO_API_KEY', TEST_PIMLICO_KEY);
+  });
+
+  it('returns same shape as createConciergeAccount', async () => {
+    const result = await connectToConciergeAccount({
+      address: EXISTING_ADDRESS,
+      owner: MOCK_OWNER,
+      chain: 'mantle-sepolia',
+    });
+    expect(result).toHaveProperty('smartAccountAddress');
+    expect(result).toHaveProperty('kernelAccount');
+    expect(result).toHaveProperty('clientPromise');
+  });
+
+  it('smartAccountAddress equals the provided address', async () => {
+    const result = await connectToConciergeAccount({
+      address: EXISTING_ADDRESS,
+      owner: MOCK_OWNER,
+      chain: 'mantle-sepolia',
+    });
+    expect(result.smartAccountAddress.toLowerCase()).toBe(EXISTING_ADDRESS.toLowerCase());
+  });
+
+  it('passes address to createKernelAccount', async () => {
+    const { createKernelAccount } = await import('@zerodev/sdk');
+    await connectToConciergeAccount({
+      address: EXISTING_ADDRESS,
+      owner: MOCK_OWNER,
+      chain: 'mantle-sepolia',
+    });
+    expect(createKernelAccount).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ address: EXISTING_ADDRESS }),
+    );
+  });
+});
+
+describe('connectToConciergeAccount — bundler URL', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubEnv('PIMLICO_API_KEY', TEST_PIMLICO_KEY);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('passes Pimlico sepolia URL with API key', async () => {
+    const { http } = await import('viem');
+    await connectToConciergeAccount({
+      address: EXISTING_ADDRESS,
+      owner: MOCK_OWNER,
+      chain: 'mantle-sepolia',
+    });
+    const httpCalls = vi.mocked(http).mock.calls.map((c) => c[0]);
+    expect(httpCalls).toContain(
+      `https://api.pimlico.io/v2/mantle-sepolia/rpc?apikey=${TEST_PIMLICO_KEY}`,
+    );
+  });
+});
+
+describe('connectToConciergeAccount — input guards', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubEnv('PIMLICO_API_KEY', TEST_PIMLICO_KEY);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('throws ConfigError for invalid address format', async () => {
+    await expect(
+      connectToConciergeAccount({
+        // biome-ignore lint/suspicious/noExplicitAny: testing invalid address input
+        address: 'not-an-address' as any,
+        owner: MOCK_OWNER,
+        chain: 'mantle-sepolia',
+      }),
+    ).rejects.toSatisfy(
+      (e: unknown) =>
+        e instanceof ConciergeError &&
+        e.type === 'ConfigError' &&
+        String(e.message).includes('InvalidAddress'),
+    );
+  });
+
+  it('throws ConciergeError(ConfigError) for unsupported chain', async () => {
+    await expect(
+      connectToConciergeAccount({
+        address: EXISTING_ADDRESS,
+        owner: MOCK_OWNER,
+        // biome-ignore lint/suspicious/noExplicitAny: testing invalid chain input
+        chain: 'ethereum-mainnet' as any,
+      }),
+    ).rejects.toSatisfy((e: unknown) => e instanceof ConciergeError && e.type === 'ConfigError');
+  });
+
+  it('throws ConfigError when PIMLICO_API_KEY is missing', async () => {
+    vi.unstubAllEnvs();
+    await expect(
+      connectToConciergeAccount({
+        address: EXISTING_ADDRESS,
+        owner: MOCK_OWNER,
+        chain: 'mantle-sepolia',
+      }),
+    ).rejects.toSatisfy(
+      (e: unknown) =>
+        e instanceof ConciergeError &&
+        e.type === 'ConfigError' &&
+        String(e.message).includes("MissingEnvVar('PIMLICO_API_KEY')"),
+    );
+  });
+});
+
+describe('connectToConciergeAccount — rpcWrap error classification', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubEnv('PIMLICO_API_KEY', TEST_PIMLICO_KEY);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('maps signerToEcdsaValidator rejection to ConciergeError(RpcError)', async () => {
+    const { signerToEcdsaValidator } = await import('@zerodev/ecdsa-validator');
+    vi.mocked(signerToEcdsaValidator).mockRejectedValueOnce(new Error('network timeout'));
+    await expect(
+      connectToConciergeAccount({
+        address: EXISTING_ADDRESS,
+        owner: MOCK_OWNER,
+        chain: 'mantle-sepolia',
+      }),
+    ).rejects.toSatisfy((e: unknown) => e instanceof ConciergeError && e.type === 'RpcError');
+  });
+
+  it('maps createKernelAccount rejection to ConciergeError(RpcError)', async () => {
+    const { createKernelAccount } = await import('@zerodev/sdk');
+    vi.mocked(createKernelAccount).mockRejectedValueOnce(new Error('rpc failed'));
+    await expect(
+      connectToConciergeAccount({
+        address: EXISTING_ADDRESS,
+        owner: MOCK_OWNER,
+        chain: 'mantle-sepolia',
+      }),
+    ).rejects.toSatisfy((e: unknown) => e instanceof ConciergeError && e.type === 'RpcError');
+  });
+
+  it('maps synchronous createKernelAccountClient throw to RpcError via clientPromise', async () => {
+    const { createKernelAccountClient } = await import('@zerodev/sdk');
+    vi.mocked(createKernelAccountClient).mockImplementationOnce(() => {
+      throw new TypeError('sync client init failure');
+    });
+    const result = await connectToConciergeAccount({
+      address: EXISTING_ADDRESS,
+      owner: MOCK_OWNER,
+      chain: 'mantle-sepolia',
+    });
+    await expect(result.clientPromise).rejects.toSatisfy(
+      (e: unknown) => e instanceof ConciergeError && e.type === 'RpcError',
+    );
+  });
+});
