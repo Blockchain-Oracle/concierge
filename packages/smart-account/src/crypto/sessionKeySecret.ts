@@ -3,53 +3,70 @@ import { ConciergeError } from '@concierge/sdk';
 import type { Hex } from 'viem';
 
 /**
- * Move-once handle wrapping a 32-byte session-key private key. Designed for the
- * fundamental JS-string immutability problem: `generatePrivateKey()` returns a
- * Hex string that V8 may intern, and `randomFillSync` cannot touch it. Holding
- * the bytes in a mutable Buffer behind a class with redacting `toString`/`toJSON`
- * gives us:
+ * Move-once handle wrapping a 32-byte session-key private key.
  *
- * 1. **Single use** — `consume()` zeroes the internal buffer and flips a flag;
- *    a double-consume throws. Prevents accidental double-persist or stale-key
- *    reuse by the worker.
- * 2. **Log safety** — `toString`/`toJSON` redact, so `JSON.stringify(result)`,
- *    `console.log(err)`, and Sentry breadcrumbs cannot leak the bytes even if
- *    the Result accidentally lands in an error capture frame.
- * 3. **Wipe semantics that actually work** — the bytes live in a `Buffer` (the
- *    class's own private field), not an immutable string. `randomFillSync` on
- *    `consume()` is a real wipe, not the security-theater wipe of a hex copy.
+ * JS strings are immutable + V8-interned, so a `Hex` private key cannot be
+ * wiped. This class holds the bytes in a mutable Buffer behind a redacting
+ * surface (toString/toJSON/util.inspect) and a `consume()` that wipes after
+ * one use. Double-consume throws.
  *
- * Tradeoff: the caller can no longer trivially do `result.sessionKeyPrivateKey`
- * and pass it to viem's `privateKeyToAccount`. They must `consume()` first;
- * that's an intentional friction surface so security-sensitive code paths
- * are visible at every call site.
+ * Use `fromHex` ONLY at issuance (viem's `generatePrivateKey()` already
+ * returns a hex string we can't avoid). Use `fromBytes` everywhere else
+ * (load path) to avoid materializing a fresh interned string.
  */
 export class SessionKeySecret {
-  // Use a #private field so even `as any` casts can't reach in from outside.
-  // The buffer is owned exclusively by this instance until consumed.
   #buffer: Buffer | null;
   #consumed = false;
 
-  constructor(pk: Hex) {
+  private constructor(buffer: Buffer) {
+    this.#buffer = buffer;
+    Object.freeze(this);
+  }
+
+  /**
+   * Construct from a 0x-prefixed 32-byte hex string. Use ONLY at issuance —
+   * the input string itself is unavoidably interned by V8 until GC. The load
+   * path should use `fromBytes` to keep the bytes Buffer-only.
+   */
+  static fromHex(pk: Hex): SessionKeySecret {
     if (!pk.startsWith('0x') || pk.length !== 66) {
       throw new ConciergeError(
         'ConfigError',
-        `[@concierge/smart-account] SessionKeySecret: expected 0x-prefixed 64-char hex (32 bytes), got length ${pk.length}.`,
+        `[@concierge/smart-account] SessionKeySecret.fromHex: expected 0x-prefixed 64-char hex (32 bytes), got length ${pk.length}.`,
       );
     }
-    this.#buffer = Buffer.from(pk.slice(2), 'hex');
-    if (this.#buffer.length !== 32) {
-      randomFillSync(this.#buffer);
+    const buf = Buffer.from(pk.slice(2), 'hex');
+    if (buf.length !== 32) {
+      randomFillSync(buf);
       throw new ConciergeError(
         'ConfigError',
-        `[@concierge/smart-account] SessionKeySecret: decoded buffer is not 32 bytes (got ${this.#buffer.length}).`,
+        `[@concierge/smart-account] SessionKeySecret.fromHex: decoded buffer is not 32 bytes (got ${buf.length}).`,
       );
     }
+    return new SessionKeySecret(buf);
+  }
+
+  /**
+   * Construct from a Buffer the caller owns. Takes ownership: wipes the
+   * caller's reference after copying the bytes into the handle's private
+   * buffer. NO intermediate hex string is created — the only V8 residue is
+   * whatever the caller already had.
+   */
+  static fromBytes(buf: Buffer): SessionKeySecret {
+    if (!Buffer.isBuffer(buf) || buf.length !== 32) {
+      throw new ConciergeError(
+        'ConfigError',
+        `[@concierge/smart-account] SessionKeySecret.fromBytes: expected 32-byte Buffer, got ${Buffer.isBuffer(buf) ? `${buf.length} bytes` : typeof buf}.`,
+      );
+    }
+    const owned = Buffer.from(buf);
+    randomFillSync(buf);
+    return new SessionKeySecret(owned);
   }
 
   /**
    * Hand the caller their own copy of the 32 bytes and immediately wipe the
-   * internal buffer. Throws on double-consume to surface accidental reuse.
+   * internal buffer. Throws on double-consume.
    */
   consume(): Buffer {
     if (this.#consumed || !this.#buffer) {
@@ -65,19 +82,28 @@ export class SessionKeySecret {
     return out;
   }
 
+  /**
+   * If the secret hasn't been consumed, wipe it. Idempotent — safe to call
+   * from a try/finally without checking state. Use this on error paths so a
+   * thrown error after construction doesn't leave the buffer live in the heap.
+   */
+  wipeIfUnconsumed(): void {
+    if (this.#consumed || !this.#buffer) return;
+    this.#consumed = true;
+    randomFillSync(this.#buffer);
+    this.#buffer = null;
+  }
+
   get consumed(): boolean {
     return this.#consumed;
   }
 
-  // Log-safety surface. Any tool that serializes this object (console.log,
-  // JSON.stringify, pino, Sentry, error.cause capture) gets the redacted form.
   toString(): string {
     return '[SessionKeySecret REDACTED]';
   }
   toJSON(): string {
     return '[SessionKeySecret REDACTED]';
   }
-  // util.inspect override for Node's console.log
   [Symbol.for('nodejs.util.inspect.custom')](): string {
     return '[SessionKeySecret REDACTED]';
   }

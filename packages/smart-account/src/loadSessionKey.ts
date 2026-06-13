@@ -10,24 +10,17 @@ export interface LoadSessionKeyConfig {
   readonly db: DbClient;
   readonly sessionKeyId: string;
   /**
-   * Expected agent owner — REQUIRED. Without this, loadSessionKey is an IDOR
-   * existence-oracle (CWE-639). The function checks `row.agentId === expectedAgentId`
-   * BEFORE crypto so a row-binding mismatch fails closed with the same
-   * `DecryptionFailed` shape as a wrong-key mismatch — no timing or error-type
-   * distinction between "exists but wrong agent" and "wrong key for right row".
+   * REQUIRED. Without this, loadSessionKey is an IDOR existence-oracle
+   * (CWE-639). Checked BEFORE crypto; mismatch raises the SAME `DecryptionFailed`
+   * shape as a wrong-key load so an attacker probing IDs cannot distinguish
+   * "wrong agent" from "wrong key for right agent" via error type.
    */
   readonly expectedAgentId: string;
-  /** Owner-derived per-account 32-byte AES-256 key — same as persist-time. */
   readonly encryptionKey: Buffer;
 }
 
 export interface LoadedSessionKey {
-  /**
-   * Single-use `SessionKeySecret` handle wrapping the decrypted 32-byte
-   * private key. Caller MUST `consume()` exactly once and pass the resulting
-   * Buffer directly into `privateKeyToAccount` / signer creation. Double-use
-   * throws.
-   */
+  /** Single-use SessionKeySecret. Caller MUST consume() exactly once. */
   readonly privateKey: SessionKeySecret;
   readonly encodedPolicy: Hex;
   readonly enableTypedDataHash: Hex;
@@ -37,20 +30,20 @@ export interface LoadedSessionKey {
 }
 
 /**
- * Reads a row from `session_keys`, checks the kill switches (revoked,
- * expired, not-yet-valid), and decrypts the private key with the
- * owner-derived encryption key.
+ * Reads a row from `session_keys`, checks the kill switches, decrypts.
  *
- * Distinct typed errors for each failure mode so the runtime can route to
- * the right recovery action:
- *   - `DecryptionFailed`        — suspect tampering / wrong key / wrong agent
- *   - `SessionKeyExpired`       — silent re-auth (UX-positive)
- *   - `SessionKeyRevoked`       — silent re-auth + audit log
- *   - `ConfigError` (not-found) — programmer error; never on hot path
+ * **Authoritative-source-of-truth (round-2):** validUntil + signature live
+ * in policyJson AND the table columns. loadSessionKey trusts policyJson
+ * (signature-covered) and rejects any drift between the two with
+ * `DecryptionFailed`. A DB-write attacker who mutates the column alone fails
+ * closed.
  *
- * Note: existence/state enumeration via timing is mitigated by the required
- * `expectedAgentId` check, which fails closed as `DecryptionFailed` (the same
- * shape an attacker would get for a wrong-key load of a real row).
+ * Distinct typed errors per failure mode (runtime routes them to distinct
+ * recovery actions):
+ *   - DecryptionFailed        — tampering / wrong key / wrong agent / shape drift
+ *   - SessionKeyExpired       — silent re-auth
+ *   - SessionKeyRevoked       — silent re-auth + audit
+ *   - ConfigError (not-found) — programmer error
  */
 export async function loadSessionKey(config: LoadSessionKeyConfig): Promise<LoadedSessionKey> {
   assertEncryptionKey(config.encryptionKey, 'loadSessionKey');
@@ -66,10 +59,7 @@ export async function loadSessionKey(config: LoadSessionKeyConfig): Promise<Load
       `[@concierge/smart-account] loadSessionKey: session key '${config.sessionKeyId}' not found.`,
     );
   }
-  // Owner binding check BEFORE crypto — prevents cross-tenant decryption attempts
-  // and existence-oracle timing distinction. Mismatch raises the SAME error
-  // shape a wrong-key load would produce, so an attacker probing IDs cannot
-  // distinguish "wrong agent" from "wrong key for right agent".
+  // Agent binding check BEFORE crypto (CWE-639 mitigation).
   if (row.agentId !== config.expectedAgentId) {
     throw new ConciergeError(
       'DecryptionFailed',
@@ -84,16 +74,7 @@ export async function loadSessionKey(config: LoadSessionKeyConfig): Promise<Load
       { revokedAt: row.revokedAt.toISOString() },
     );
   }
-  if (row.validUntil.getTime() <= Date.now()) {
-    throw new ConciergeError(
-      'SessionKeyExpired',
-      `[@concierge/smart-account] loadSessionKey: session key expired at ${row.validUntil.toISOString()}.`,
-      undefined,
-      { expiredAt: row.validUntil.toISOString() },
-    );
-  }
-  // Parse policy JSON via Zod — schema drift surfaces as a typed error here
-  // instead of a TypeError deep in the worker.
+  // Parse policyJson at the DB boundary — schema drift surfaces as DecryptionFailed.
   const parsed = policyJsonSchema.safeParse(row.policyJson);
   if (!parsed.success) {
     throw new ConciergeError(
@@ -102,8 +83,32 @@ export async function loadSessionKey(config: LoadSessionKeyConfig): Promise<Load
     );
   }
   const policy = parsed.data;
-  // Not-yet-valid kill switch (validAfter is stored in policyJson).
+  // Cross-check column ↔ policyJson for both validUntil and signature.
+  // policyJson is signature-covered (via enableTypedDataHash → signature). If
+  // a DB-write attacker mutates only the column, this fires.
+  const columnValidUntilSecs = Math.floor(row.validUntil.getTime() / 1000);
+  if (columnValidUntilSecs !== policy.validUntil) {
+    throw new ConciergeError(
+      'DecryptionFailed',
+      `[@concierge/smart-account] loadSessionKey: validUntil drift — column=${columnValidUntilSecs}s, policyJson=${policy.validUntil}s. The signature-covered policyJson is authoritative; the column has been mutated.`,
+    );
+  }
+  if (row.signature !== policy.signature) {
+    throw new ConciergeError(
+      'DecryptionFailed',
+      `[@concierge/smart-account] loadSessionKey: signature drift between column and policyJson — possible row tampering.`,
+    );
+  }
+  // Authoritative expiry from policyJson.
   const nowSecs = Math.floor(Date.now() / 1000);
+  if (policy.validUntil <= nowSecs) {
+    throw new ConciergeError(
+      'SessionKeyExpired',
+      `[@concierge/smart-account] loadSessionKey: session key expired at ${policy.validUntil} (now=${nowSecs}).`,
+      undefined,
+      { expiredAt: policy.validUntil },
+    );
+  }
   if (policy.validAfter > nowSecs) {
     throw new ConciergeError(
       'SessionKeyExpired',
@@ -112,14 +117,12 @@ export async function loadSessionKey(config: LoadSessionKeyConfig): Promise<Load
       { notValidUntil: policy.validAfter },
     );
   }
-  // AAD must exactly match the persist-time binding — any drift in
-  // (agentId, publicAddress) breaks decryption.
-  const aad = envelopeAad(row.agentId, row.publicAddress);
+  const aad = envelopeAad({ agentId: row.agentId, sessionKeyAddress: row.publicAddress });
+  // decryptEnvelope returns a freshly-allocated Buffer — fromBytes takes
+  // ownership and wipes our local reference. NO hex string is materialized,
+  // closing the V8-intern leak that round-1 left open.
   const plaintext = decryptEnvelope(row.encryptedPrivateKey, config.encryptionKey, aad);
-  // Wrap in the redacting handle and wipe the local buffer; the handle now
-  // owns the only mutable copy.
-  const privateKey = new SessionKeySecret(`0x${plaintext.toString('hex')}` as Hex);
-  plaintext.fill(0);
+  const privateKey = SessionKeySecret.fromBytes(plaintext);
   return {
     privateKey,
     encodedPolicy: policy.encodedPolicy as Hex,
