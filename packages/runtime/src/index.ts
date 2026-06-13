@@ -17,6 +17,29 @@ export {
   PLAN_BANNED_TOOL_NAMES,
   type PlanBannedToolName,
 } from './phases/planTools.ts';
+export {
+  PROPOSAL_DECISION_KINDS,
+  PROPOSAL_KINDS,
+  PROPOSAL_PROTOCOLS,
+  PROPOSAL_STATUSES,
+  type ProposalCreatedEvent,
+  type ProposalDecision,
+  type ProposalDecisionKind,
+  type ProposalKind,
+  type ProposalProtocol,
+  type ProposalStatus,
+  proposalCreatedEventSchema,
+  proposalDecisionSchema,
+} from './phases/proposalSchema.ts';
+export type {
+  NewProposalRow,
+  ProposalPolicy,
+  ProposalPublisher,
+  ProposalRepository,
+  RunProposeDeps,
+  RunProposeInputs,
+} from './phases/propose.ts';
+export { decideRequiresApproval, runPropose } from './phases/propose.ts';
 export type {
   ActionSimulator,
   DetailedSim,
