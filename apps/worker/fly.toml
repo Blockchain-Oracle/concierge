@@ -1,0 +1,22 @@
+app = "concierge-worker"
+primary_region = "ams"
+kill_signal = "SIGTERM"
+kill_timeout = "60s"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[deploy]
+  strategy = "rolling"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "512mb"
+
+[env]
+  NODE_ENV = "production"
+  LOG_LEVEL = "info"
+
+[processes]
+  worker = "node /app/apps/worker/dist/index.js"
