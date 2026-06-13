@@ -364,11 +364,11 @@ stories:
     merged_at: ""
   - id: story-62-tick-loop-orchestrator
     epic: "Epic E5 — Agent Runtime"
-    status: PENDING
+    status: COMPLETE
     depends_on: [story-60-anthropic-sdk-bootstrap, story-69-postgres-drizzle-schemas]
     issue_url: ""
-    pr_url: ""
-    merged_at: ""
+    pr_url: "https://github.com/Blockchain-Oracle/concierge/pull/100"
+    merged_at: "2026-06-13T09:10:00Z"
   - id: story-63-tick-phase-plan
     epic: "Epic E5 — Agent Runtime"
     status: PENDING
