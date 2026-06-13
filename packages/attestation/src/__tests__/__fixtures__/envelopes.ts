@@ -66,3 +66,12 @@ export const FIXTURES: Record<SchemaId, FeedbackEnvelope> = {
 export const AAVE_SUPPLY = FIXTURES['concierge.aave.v3.supply.v1'];
 export const MANTLE_DEX_SWAP = FIXTURES['concierge.mantle-dex.swap.v1'];
 export const LIFI_BRIDGE = FIXTURES['concierge.lifi.bridge.v1'];
+
+/**
+ * Golden anchor for AAVE_SUPPLY — captured ONCE from the canonical bytes
+ * pinned in canonicalize.test.ts golden-bytes test. Centralized here so
+ * any future regeneration touches ONE place (hash.test.ts and any other
+ * consumer point at this constant). Round-2 fix per code-reviewer SUGGESTION.
+ */
+export const GOLDEN_AAVE_SUPPLY_HASH =
+  '0xa6fe727ce1d1804bee648b057f934e5017381ef2031bbce247992bc9a70a512c' as const;

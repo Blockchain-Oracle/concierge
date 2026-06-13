@@ -4,19 +4,13 @@ import { keccak256, toBytes } from 'viem';
 import { describe, expect, it } from 'vitest';
 import { ZodError } from 'zod';
 import { canonicalize } from '../canonicalize.ts';
-import { computeFeedbackHash } from '../hash.ts';
-import { AAVE_SUPPLY, FIXTURES, LIFI_BRIDGE } from './__fixtures__/envelopes.ts';
-
-/**
- * Golden anchor — captured ONCE from the canonical bytes pinned in
- * canonicalize.test.ts's golden-bytes test. ANY change to canonicalize OR
- * keccak/utf8 encoding WILL break this assertion. Do NOT recompute via
- * `keccak256(toBytes(canonicalize(AAVE_SUPPLY)))` — that's a tautology
- * (test the implementation against itself). The literal hex IS the
- * regression net.
- */
-const KNOWN_VECTOR_AAVE_SUPPLY =
-  '0xa6fe727ce1d1804bee648b057f934e5017381ef2031bbce247992bc9a70a512c';
+import { computeFeedbackHash, computeFeedbackPair } from '../hash.ts';
+import {
+  AAVE_SUPPLY,
+  FIXTURES,
+  GOLDEN_AAVE_SUPPLY_HASH,
+  LIFI_BRIDGE,
+} from './__fixtures__/envelopes.ts';
 
 describe('computeFeedbackHash — basic shape', () => {
   it('returns 0x-prefixed 32-byte hex (66 chars)', () => {
@@ -25,13 +19,11 @@ describe('computeFeedbackHash — basic shape', () => {
   });
 
   it('deterministic — two calls in the same process produce byte-equal hex', () => {
-    const a = computeFeedbackHash(AAVE_SUPPLY);
-    const b = computeFeedbackHash(AAVE_SUPPLY);
-    expect(a).toBe(b);
+    expect(computeFeedbackHash(AAVE_SUPPLY)).toBe(computeFeedbackHash(AAVE_SUPPLY));
   });
 
-  it('Known Vector — LITERAL hardcoded hash for AAVE_SUPPLY (round-1: real anchor, not tautology)', () => {
-    expect(computeFeedbackHash(AAVE_SUPPLY)).toBe(KNOWN_VECTOR_AAVE_SUPPLY);
+  it('Known Vector — central LITERAL golden hash (round-2: single source of truth)', () => {
+    expect(computeFeedbackHash(AAVE_SUPPLY)).toBe(GOLDEN_AAVE_SUPPLY_HASH);
   });
 
   it('manual keccak256(utf8(canonicalize(env))) matches computeFeedbackHash (the function does what it says)', () => {
@@ -42,55 +34,73 @@ describe('computeFeedbackHash — basic shape', () => {
   });
 });
 
-describe('computeFeedbackHash — collision-resistance smoke', () => {
-  it('two envelopes differing in ONE field → hashes differ in ≥ 85% of nibbles (round-1: tightened from 50%)', () => {
-    // keccak256 avalanche typically yields ~93.75% nibble mismatch for two
-    // independent outputs. The prior 50% floor was so loose any non-broken
-    // hash passed; 85% catches a degenerate implementation (e.g. MD5).
-    const baseHash = computeFeedbackHash(AAVE_SUPPLY);
-    const mutated = computeFeedbackHash({ ...AAVE_SUPPLY, agentId: 'agent-2' });
-    const a = baseHash.slice(2);
-    const b = mutated.slice(2);
-    let diff = 0;
-    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) diff++;
-    expect(diff / a.length).toBeGreaterThanOrEqual(0.85);
+describe('computeFeedbackPair — round-2: returns hash + canonical bytes paired', () => {
+  it('returns both fields; hash === keccak256(utf8(canonical)) by construction', () => {
+    const { hash, canonical } = computeFeedbackPair(AAVE_SUPPLY);
+    expect(hash).toBe(GOLDEN_AAVE_SUPPLY_HASH);
+    expect(hash).toBe(keccak256(toBytes(canonical)));
   });
 
-  it('each SCHEMA_ID fixture produces a UNIQUE hash (9 distinct values)', () => {
+  it('canonical bytes match the canonicalize() output (caller can pin to IPFS without re-canonicalizing)', () => {
+    const { canonical } = computeFeedbackPair(AAVE_SUPPLY);
+    expect(canonical).toBe(canonicalize(AAVE_SUPPLY));
+  });
+
+  it('computeFeedbackHash and computeFeedbackPair.hash are identical for valid envelopes', () => {
+    for (const env of Object.values(FIXTURES)) {
+      expect(computeFeedbackHash(env)).toBe(computeFeedbackPair(env).hash);
+    }
+  });
+});
+
+describe('computeFeedbackHash — collision-resistance', () => {
+  it('two envelopes differing in ONE field → nibble-mismatch in [0.85, 1.0] (round-2: tightened band)', () => {
+    const a = computeFeedbackHash(AAVE_SUPPLY).slice(2);
+    const b = computeFeedbackHash({ ...AAVE_SUPPLY, agentId: 'agent-2' }).slice(2);
+    let diff = 0;
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) diff++;
+    const ratio = diff / a.length;
+    // keccak256 avalanche typically ~93.75% nibble mismatch for two
+    // independent outputs. The window catches BOTH degradation below 85%
+    // AND nonsense outputs above 1.0 (which would mean a counting bug).
+    expect(ratio).toBeGreaterThanOrEqual(0.85);
+    expect(ratio).toBeLessThanOrEqual(1.0);
+  });
+
+  it('all 9 SCHEMA_ID fixtures produce 9 UNIQUE hashes (literal count pin)', () => {
     const hashes = new Set<string>();
     for (const env of Object.values(FIXTURES)) {
       hashes.add(computeFeedbackHash(env));
     }
-    expect(hashes.size).toBe(Object.values(FIXTURES).length);
+    expect(hashes.size).toBe(9);
   });
 });
 
 describe('computeFeedbackHash — boundary errors', () => {
-  it('malformed envelope → throws ZodError (round-1: matcher pins the error type)', () => {
-    // Use `Error` matcher because parseFeedbackEnvelope sanitizes ZodError
-    // via stripCtrl and rethrows a plain Error in round-2 schema hardening.
-    // We assert on the message shape to pin "fails at validation layer."
+  it('malformed envelope → throws at validation layer', () => {
     expect(() =>
       // biome-ignore lint/suspicious/noExplicitAny: deliberate
       computeFeedbackHash({ schema: 'not.a.real.id' } as any),
-    ).toThrow(/schema|envelope|parseFeedbackEnvelope/i);
+    ).toThrow(/parseFeedbackEnvelope|invalid|envelope/i);
   });
 
-  it('ZodError reachable via the schema directly (parse-first contract)', () => {
-    // biome-ignore lint/suspicious/noExplicitAny: deliberate
-    expect(() => computeFeedbackHash({} as any)).toThrow();
-    // And confirm Zod's native error type still exists for callers that
-    // import the schema directly.
+  it('round-2: parse-passes-canonicalize-throws (bigint payload survives Zod, dies at canonicalize)', () => {
+    // payload is z.unknown() so a bigint survives schema validation, then
+    // canonicalize throws because JSON has no bigint primitive. Confirms
+    // the error surfaces as a throw rather than a silent "[object Object]"
+    // hash that would never match on-chain.
+    const env = { ...AAVE_SUPPLY, payload: { amount: 100n } };
+    // biome-ignore lint/suspicious/noExplicitAny: bigint in z.unknown() requires cast
+    expect(() => computeFeedbackHash(env as any)).toThrow(/bigint/);
+  });
+
+  it('ZodError is reachable for callers that import the schema directly', () => {
     expect(ZodError).toBeDefined();
   });
 });
 
 describe('Cross-Process Determinism — fresh Node procs (against built dist) produce byte-equal hashes', () => {
   it('two spawned child processes hash the same envelope to the same bytes32 AND match the golden vector', async () => {
-    // round-1 fix: invoke `node` against the BUILT dist/, not `npx tsx`.
-    // npx can silently auto-install or pick a globally-cached older tsx,
-    // and both children would agree on the wrong version — masking the
-    // very drift this test exists to catch.
     const helperUrl = new URL('./__helpers__/hash-cross-process.mjs', import.meta.url);
     const helperPath = fileURLToPath(helperUrl);
     const payload = JSON.stringify(AAVE_SUPPLY);
@@ -120,9 +130,8 @@ describe('Cross-Process Determinism — fresh Node procs (against built dist) pr
     const [a, b] = await Promise.all([spawnOne(), spawnOne()]);
     expect(a).toBe(b);
     expect(a).toMatch(/^0x[a-f0-9]{64}$/);
-    // Sanity-pin: cross-process bytes match both the in-process call AND
-    // the literal golden anchor.
+    // Triple-anchor: cross-process == in-process == literal golden.
     expect(a).toBe(computeFeedbackHash(AAVE_SUPPLY));
-    expect(a).toBe(KNOWN_VECTOR_AAVE_SUPPLY);
+    expect(a).toBe(GOLDEN_AAVE_SUPPLY_HASH);
   }, 15_000);
 });

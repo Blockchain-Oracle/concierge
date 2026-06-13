@@ -23,6 +23,7 @@
   "scripts": {
     "build": "tsup",
     "prepare": "tsup",
+    "pretest": "tsup",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "prepack": "pnpm run build"
