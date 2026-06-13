@@ -3,55 +3,46 @@ import type { ToolSet } from 'ai';
 
 /**
  * Execute-phase tool names that MUST NEVER appear in the plan toolset.
- * Curated from the 7 providers (story-30..36) — any new execute action
- * MUST be added here AND covered by the plan-phase guard test, otherwise
- * a regression silently widens plan's authority.
+ * Hand-curated denylist — story-300 will introduce an allowlist via
+ * tool.metadata.phase tag (CWE-276 defense). Until then, additions to
+ * any provider's execute surface MUST also land here.
  */
 export const PLAN_BANNED_TOOL_NAMES = Object.freeze([
-  // Aave V3
   'supply',
   'borrow',
   'repay',
   'withdraw',
   'setUserEMode',
-  // Mantle DEXes
   'swap',
-  // Ethena sUSDe
   'wrapToSusde',
   'unwrapFromSusde',
-  // Ondo USDY
   'wrapToUsdy',
   'redeemUsdy',
-  // mETH staking
   'stakeMeth',
   'unstakeMeth',
-  // Li.Fi bridge
   'bridge',
-  // ERC-8004 attestation
   'attestAction',
   'giveFeedback',
 ] as const);
 
 export type PlanBannedToolName = (typeof PLAN_BANNED_TOOL_NAMES)[number];
 
+const BANNED_SET: ReadonlySet<string> = new Set(PLAN_BANNED_TOOL_NAMES);
+
+export function isBannedToolName(name: string): name is PlanBannedToolName {
+  return BANNED_SET.has(name);
+}
+
 /**
- * Filters a Vercel AI ToolSet down to read-only tools by REMOVING any
- * banned execute tools. The PLAN phase passes the filtered set to
- * `streamText`'s `tools` param.
- *
- * Throws `ConfigError` when the result is empty — a plan phase with NO
- * read tools cannot make any meaningful decision and is almost certainly
- * a wiring bug (caller forgot to pass provider factories or filtered too
- * aggressively).
- *
- * Returns a fresh object (input not mutated) so callers can keep the full
- * ToolSet around for subsequent phases.
+ * Strip banned execute tools from the ToolSet. Throws ConfigError if the
+ * filter leaves nothing — that's a wiring bug, not a silent skip.
+ * Returns a fresh object; input not mutated.
  */
 export function filterToPlanTools(tools: ToolSet): ToolSet {
   const filtered: ToolSet = {};
   const banned: string[] = [];
   for (const [name, tool] of Object.entries(tools)) {
-    if ((PLAN_BANNED_TOOL_NAMES as readonly string[]).includes(name)) {
+    if (BANNED_SET.has(name)) {
       banned.push(name);
       continue;
     }
@@ -64,13 +55,4 @@ export function filterToPlanTools(tools: ToolSet): ToolSet {
     );
   }
   return filtered;
-}
-
-/**
- * Type guard backed by a Set (O(1) include + narrowing). Useful for
- * downstream consumers building their own filters / proxies.
- */
-const BANNED_SET: ReadonlySet<PlanBannedToolName> = new Set(PLAN_BANNED_TOOL_NAMES);
-export function isBannedToolName(name: string): name is PlanBannedToolName {
-  return BANNED_SET.has(name as PlanBannedToolName);
 }
