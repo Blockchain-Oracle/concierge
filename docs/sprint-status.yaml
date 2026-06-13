@@ -584,17 +584,20 @@ stories:
   # ─────────────────────────────────────────────────────────────────
   # Epic E8 — MCP Server
   # ─────────────────────────────────────────────────────────────────
-  - id: story-130-cloudflare-worker-bootstrap
+  # Renamed 2026-06-13 to match story file rename per 2026-06-09 UPDATE block:
+  # MCP core moved to packages/mcp/ (not apps/mcp-server/). Worker variant is
+  # now optional secondary install in apps/mcp/ (story-133).
+  - id: story-130-mcp-server-bootstrap
     epic: "Epic E8 — MCP Server"
-    status: PENDING
-    depends_on: [story-22-sdk-skeleton]
+    status: COMPLETE
+    depends_on: [story-22-sdk-skeleton, story-300-tools-registry]
     issue_url: ""
-    pr_url: ""
-    merged_at: ""
+    pr_url: "https://github.com/Blockchain-Oracle/concierge/pull/127"
+    merged_at: "2026-06-13"
   - id: story-131-mcp-server-setup
     epic: "Epic E8 — MCP Server"
     status: PENDING
-    depends_on: [story-130-cloudflare-worker-bootstrap]
+    depends_on: [story-130-mcp-server-bootstrap]
     issue_url: ""
     pr_url: ""
     merged_at: ""
