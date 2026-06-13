@@ -406,11 +406,11 @@ stories:
     merged_at: "2026-06-13"
   - id: story-68-bullmq-cron-worker
     epic: "Epic E5 — Agent Runtime"
-    status: PENDING
+    status: COMPLETE
     depends_on: [story-62-tick-loop-orchestrator]
     issue_url: ""
-    pr_url: ""
-    merged_at: ""
+    pr_url: "https://github.com/Blockchain-Oracle/concierge/pull/112"
+    merged_at: "2026-06-13"
   - id: story-69-postgres-drizzle-schemas
     epic: "Epic E5 — Agent Runtime"
     status: COMPLETE
