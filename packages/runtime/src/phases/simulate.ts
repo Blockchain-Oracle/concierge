@@ -85,7 +85,11 @@ export interface RunSimulateOptions {
  * story-65 (propose) replaces with a number. `0` is a valid trade outcome
  * (break-even) so we cannot use it as a sentinel.
  */
-export type DetailedSim = Sim & { readonly expectedValueDeltaUsd: number | null } & (
+type SimBase = Omit<Sim, 'ok' | 'expectedValueDeltaUsd'> & {
+  readonly expectedValueDeltaUsd: number | null;
+};
+export type DetailedSim = SimBase &
+  (
     | { readonly ok: true; readonly deltaState: DeltaState; readonly error?: never }
     | { readonly ok: false; readonly deltaState: DeltaState; readonly error: SimError }
   );
@@ -201,10 +205,13 @@ export async function runSimulate(
     }
 
     if (!result.ok) {
-      // After the oracle-stale check above, the only remaining failure shape
-      // is `revert`. The discriminated union guarantees a reason exists; if
-      // a buggy simulator emitted `{ok:false, reason:{kind:'oracle-stale'}}`
-      // we'd have caught it above.
+      // Oracle-stale was handled above; narrow the union to revert here.
+      if (result.reason.kind !== 'revert') {
+        throw new ConciergeError(
+          'InvariantViolation',
+          `[@concierge/runtime] runSimulate: unhandled failure kind '${result.reason.kind}'.`,
+        );
+      }
       error = {
         kind: 'revert',
         failedAtIndex: i,
@@ -248,21 +255,21 @@ export async function runSimulate(
   const warnings: string[] = [];
   if (deltaState.oracleChecks.stale) warnings.push('oracle-stale-detected');
 
-  const sim = ok
-    ? ({
+  const sim: DetailedSim = ok
+    ? {
         ok: true,
         gasEstimateWei: totalGas,
         expectedValueDeltaUsd: null,
         warnings,
         deltaState,
-      } as DetailedSim)
-    : ({
+      }
+    : {
         ok: false,
         gasEstimateWei: totalGas,
         expectedValueDeltaUsd: null,
         warnings,
         deltaState,
         error: error as SimError,
-      } as DetailedSim);
+      };
   return { kind: 'continue', data: sim };
 }
