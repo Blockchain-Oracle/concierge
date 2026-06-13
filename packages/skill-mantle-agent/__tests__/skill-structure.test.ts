@@ -149,12 +149,21 @@ describe('Patron contamination guard (load-bearing per AUDIT-2026-06-04)', () =>
     }
   }
 
-  it('SKILL.md description positions Concierge correctly (autonomous + Mantle + ≥3 action surfaces)', () => {
+  it('SKILL.md description positions Concierge correctly (round-2: agent-verb floor + ≥3 surfaces)', () => {
+    // Round-2 (test analyzer #4): the ≥3-of-8 protocol keywords alone is
+    // gameable — a Patron-shaped pivot could keep aave/susde/meth as
+    // decoration. The agent-autonomy verbs (plan/simulate/execute/attest)
+    // are what a BNPL rewrite would have to strip; they're the real gate.
     const md = readSkillMd();
     const fm = readFrontmatter(md);
     const desc = (frontmatterField(fm, 'description') ?? '').toLowerCase();
     expect(desc).toContain('autonomous');
     expect(desc).toContain('mantle');
+    // Agent-autonomy verbs: at least 2 of 4 (the tick-loop primitives).
+    const agentVerbs = ['plan', 'simulate', 'execute', 'attest'];
+    const verbsMentioned = agentVerbs.filter((v) => desc.includes(v));
+    expect(verbsMentioned.length).toBeGreaterThanOrEqual(2);
+    // Action surface: at least 3 of 8 protocols mentioned.
     const protocols = ['aave', 'susde', 'usdy', 'meth', 'dex', 'bridg', 'erc-8004', 'ethena'];
     const mentioned = protocols.filter((p) => desc.includes(p));
     expect(mentioned.length).toBeGreaterThanOrEqual(3);

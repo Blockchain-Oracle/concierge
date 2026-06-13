@@ -88,23 +88,31 @@ describe.runIf(POSIX)('install.sh — CWE-74 JSON injection rejection', () => {
   });
 });
 
-describe.runIf(POSIX)('install.sh — CWE-601 OAuth host lockdown', () => {
-  it('CONCIERGE_URL is IGNORED without --dev (production OAuth endpoint is hardcoded)', () => {
-    // We can grep the script source for the lockdown rather than execute
-    // (the script bails on TTY guard before reaching OAUTH_URL print).
+describe.runIf(POSIX)('install.sh — CWE-601 OAuth host lockdown (round-2: tolerant regex)', () => {
+  it('CONCIERGE_URL is IGNORED without --dev', () => {
+    // Round-2 (test #2): regex with quote class so a single-vs-double-quote
+    // refactor doesn't false-positive fail. Load-bearing intent: PROD_URL
+    // is the literal hostname, gate is DEV_MODE.
     const source = readFileSync(SCRIPT, 'utf-8');
-    expect(source).toContain("readonly PROD_URL='https://concierge.xyz'");
-    // CONCIERGE_URL override path must be gated by DEV_MODE.
+    expect(source).toMatch(/readonly PROD_URL=['"]https:\/\/concierge\.xyz['"]/);
     expect(source).toMatch(/if\s*\[\[\s*"\$DEV_MODE"\s*-eq\s*1\s*\]\]/);
-    // Production path (DEV_MODE != 1) must set CONCIERGE_URL=PROD_URL,
-    // not from env.
-    expect(source).toMatch(/CONCIERGE_URL="\$PROD_URL"/);
+    expect(source).toMatch(/CONCIERGE_URL=['"]\$PROD_URL['"]/);
   });
 
-  it('--dev mode prints a WARNING when overriding production URL', () => {
+  it('round-2: --dev=value is REJECTED loudly (security info #3 footgun guard)', () => {
+    const r = runScript({
+      home: mkdtempSync(resolve(tmpdir(), 'cdev-')),
+      stdin: '',
+      args: ['--dev=true'],
+    });
+    expect(r.status).toBe(2);
+    expect(r.stderr).toMatch(/--dev does not accept a value/);
+  });
+
+  it('round-2: only emits the override WARNING when --dev URL actually differs from prod', () => {
     const source = readFileSync(SCRIPT, 'utf-8');
-    expect(source).toMatch(/--dev mode/i);
-    expect(source).toMatch(/WARNING/);
+    // Conditional log gate around the warning (not unconditional).
+    expect(source).toMatch(/if\s*\[\[\s*"\$CONCIERGE_URL"\s*!=\s*"\$PROD_URL"\s*\]\]/);
   });
 });
 
@@ -116,9 +124,64 @@ describe.runIf(POSIX)('install.sh — CWE-276 file mode + validation source revi
     expect(source).toMatch(/chmod 700 "\$CONFIG_DIR"/);
     expect(source).toMatch(/umask 077/);
   });
-
-  it('user_id validator is strict allow-list ^[A-Za-z0-9_-]{1,64}$', () => {
-    const source = readFileSync(SCRIPT, 'utf-8');
-    expect(source).toMatch(/\^\[A-Za-z0-9_-\]\{1,64\}\$/);
-  });
 });
+
+describe.runIf(POSIX)(
+  'install.sh — round-2: BEHAVIORAL validator tests (test gap CRITICAL)',
+  () => {
+    // Source-grep alone would green-light a regression to `.*`. These tests
+    // SOURCE the script + exercise the validators directly so a loosened
+    // regex fails LOUD.
+    function sourceAndRun(snippet: string): { code: number; stderr: string } {
+      // Sourced install.sh re-enables set -euo pipefail; disable AFTER source
+      // so a validator's rc=1 doesn't exit the test shell before we capture it.
+      const cmd = `source "${SCRIPT}" 2>/dev/null; set +e; ${snippet}; echo "__EXIT_$?"`;
+      const r = spawnSync('/bin/bash', ['-c', cmd], { encoding: 'utf-8' });
+      const out = (r.stdout ?? '') + (r.stderr ?? '');
+      const match = out.match(/__EXIT_(\d+)/);
+      return { code: match ? Number(match[1]) : -1, stderr: r.stderr ?? '' };
+    }
+
+    it('validate_user_id ACCEPTS canonical id [A-Za-z0-9_-]{1,64}', () => {
+      const r = sourceAndRun(`validate_user_id 'user_abc-123'`);
+      expect(r.code).toBe(0);
+    });
+
+    it('validate_user_id REJECTS double-quote (CWE-74 injection vector)', () => {
+      const r = sourceAndRun(`validate_user_id 'evil"'`);
+      expect(r.code).toBe(1);
+      expect(r.stderr).toMatch(/rejected user id/);
+    });
+
+    it('validate_user_id REJECTS backslash + newline + JSON-escape chars', () => {
+      expect(sourceAndRun(String.raw`validate_user_id 'a\\b'`).code).toBe(1);
+      // Newline literally in the value would be caught by length OR regex.
+      expect(sourceAndRun(`validate_user_id $'line1\\nline2'`).code).toBe(1);
+      expect(sourceAndRun(`validate_user_id 'a}b'`).code).toBe(1);
+      expect(sourceAndRun(`validate_user_id 'a b'`).code).toBe(1);
+    });
+
+    it('validate_user_id REJECTS empty + over-64-char input', () => {
+      expect(sourceAndRun(`validate_user_id ''`).code).toBe(1);
+      expect(sourceAndRun(`validate_user_id $(printf 'a%.0s' {1..65})`).code).toBe(1);
+    });
+
+    it('validate_user_id REJECTS Unicode lookalikes (ASCII-only allow-list)', () => {
+      // Fullwidth digit + Cyrillic 'a' — multi-byte UTF-8, never in [A-Za-z0-9_-].
+      expect(sourceAndRun(`validate_user_id '\\uff11user'`).code).toBe(1);
+    });
+
+    it('round-2 CWE-74-class: validate_url ACCEPTS proper http(s) origins', () => {
+      expect(sourceAndRun(`validate_url 'https://staging.concierge.xyz'`).code).toBe(0);
+      expect(sourceAndRun(`validate_url 'http://localhost:8787'`).code).toBe(0);
+      expect(sourceAndRun(`validate_url 'https://example.com/path/here'`).code).toBe(0);
+    });
+
+    it('round-2 CWE-74-class: validate_url REJECTS quotes, newlines, schemes', () => {
+      expect(sourceAndRun(`validate_url 'https://evil","userId":"x'`).code).toBe(1);
+      expect(sourceAndRun(`validate_url 'javascript:alert(1)'`).code).toBe(1);
+      expect(sourceAndRun(`validate_url 'ftp://example.com'`).code).toBe(1);
+      expect(sourceAndRun(`validate_url ''`).code).toBe(1);
+    });
+  },
+);
