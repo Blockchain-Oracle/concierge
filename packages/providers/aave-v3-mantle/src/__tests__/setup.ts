@@ -64,7 +64,34 @@ function getFreePort(): Promise<number> {
   });
 }
 
+const ANVIL_START_RETRIES = 5;
+
+/**
+ * Spawn an Anvil instance with retry-on-port-collision. `getFreePort` has a
+ * TOCTOU race: between closing the probe socket and Anvil binding the port,
+ * another parallel test suite can grab it. When that happens, Anvil exits
+ * with code 1 before the "Listening on" log — we treat that as a transient
+ * port collision and retry with a fresh port. Other startup failures
+ * (timeout, spawn error, code 1 after listening) surface immediately.
+ */
 export async function startAnvil(): Promise<AnvilInstance> {
+  let lastErr: Error | null = null;
+  for (let attempt = 0; attempt < ANVIL_START_RETRIES; attempt++) {
+    try {
+      return await startAnvilOnce();
+    } catch (err) {
+      lastErr = err instanceof Error ? err : new Error(String(err));
+      if (!/before listening/.test(lastErr.message)) throw lastErr;
+      // Port collision — back off briefly and try again with a fresh port.
+      await new Promise((res) => setTimeout(res, 50 * (attempt + 1)));
+    }
+  }
+  throw new Error(
+    `Anvil failed to start after ${ANVIL_START_RETRIES} attempts (port collisions): ${lastErr?.message ?? 'unknown'}`,
+  );
+}
+
+async function startAnvilOnce(): Promise<AnvilInstance> {
   const port = await getFreePort();
 
   return new Promise((resolve, reject) => {
