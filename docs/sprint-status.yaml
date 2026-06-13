@@ -633,17 +633,18 @@ stories:
   # ─────────────────────────────────────────────────────────────────
   # Epic E9 — RealClaw Skill Packaging
   # ─────────────────────────────────────────────────────────────────
-  - id: story-150-skill-manifest
+  # Renamed 2026-06-13 to match story file: docs/stories/story-150-skill-package-structure.md.
+  - id: story-150-skill-package-structure
     epic: "Epic E9 — RealClaw Skill Packaging"
-    status: PENDING
+    status: COMPLETE
     depends_on: [story-22-sdk-skeleton]
     issue_url: ""
-    pr_url: ""
-    merged_at: ""
+    pr_url: "https://github.com/Blockchain-Oracle/concierge/pull/129"
+    merged_at: "2026-06-13"
   - id: story-151-skill-cli-bootstrap
     epic: "Epic E9 — RealClaw Skill Packaging"
     status: PENDING
-    depends_on: [story-150-skill-manifest, story-22-sdk-skeleton]
+    depends_on: [story-150-skill-package-structure, story-22-sdk-skeleton]
     issue_url: ""
     pr_url: ""
     merged_at: ""
