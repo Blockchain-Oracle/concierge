@@ -6,8 +6,8 @@ const IPFS_URI_PREFIX = 'ipfs://';
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
 
-/** One entry in a paged history response. `payload`/`payloadError` are mutually exclusive. */
-export interface AgentHistoryEntry {
+/** Fields every history entry carries regardless of payload status. */
+export interface AgentHistoryEntryBase {
   readonly schema: string;
   readonly feedbackHash: `0x${string}`;
   readonly feedbackURI: string;
@@ -16,11 +16,16 @@ export interface AgentHistoryEntry {
   readonly txHash: `0x${string}`;
   readonly blockNumber: bigint;
   readonly revoked: boolean;
-  /** Decoded envelope payload, or `null` if `payloadError` is set. */
-  readonly payload: FeedbackEnvelope | null;
-  /** Typed reason payload couldn't be loaded; `null` when payload is set. */
-  readonly payloadError: PayloadError | null;
 }
+
+/**
+ * Round-1 type-design fix: discriminated union enforces payload/payloadError
+ * mutual exclusion at the type level — consumers `switch (entry.status)`
+ * instead of defensively null-checking both fields.
+ */
+export type AgentHistoryEntry =
+  | (AgentHistoryEntryBase & { readonly status: 'ok'; readonly payload: FeedbackEnvelope })
+  | (AgentHistoryEntryBase & { readonly status: 'error'; readonly payloadError: PayloadError });
 
 /** Raw on-chain feedback entries — matches `@concierge/erc8004` FeedbackEntrySchema. */
 export interface RawFeedbackEntry {
@@ -115,13 +120,13 @@ export async function loadAgentHistory(
     page.map(async (entry): Promise<AgentHistoryEntry> => {
       const cid = cidFromUri(entry.feedbackURI);
       if (cid === null) {
-        return { ...entry, payload: null, payloadError: 'NOT_FOUND' };
+        return { ...entry, status: 'error', payloadError: 'NOT_FOUND' };
       }
       const fetched = await getOrFetchPayload(cid, deps.ipfs);
       if (!fetched.ok) {
-        return { ...entry, payload: null, payloadError: fetched.error };
+        return { ...entry, status: 'error', payloadError: fetched.error };
       }
-      return { ...entry, payload: fetched.envelope, payloadError: null };
+      return { ...entry, status: 'ok', payload: fetched.envelope };
     }),
   );
 

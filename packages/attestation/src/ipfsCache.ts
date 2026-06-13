@@ -5,25 +5,21 @@ import { type FeedbackEnvelope, parseFeedbackEnvelope } from './schema.ts';
 /** Typed reasons a payload couldn't be returned — surfaces structured in the dashboard. */
 export type PayloadError = 'NOT_FOUND' | 'SCHEMA_VIOLATION' | 'TIMEOUT' | 'INVALID_HASH';
 
-const MAX_CONTENT_BYTES = 1_048_576; // 1MB — matches DB CHECK constraint
+export const MAX_CONTENT_BYTES = 1_048_576; // 1MB — matches DB CHECK constraint
 const DEFAULT_GATEWAY_TIMEOUT_MS = 10_000;
+const ALLOWED_SCHEMES = new Set(['https:', 'http:']);
 
-/**
- * Persisted cache backing — DI'd so production uses Postgres (story-84 Drizzle
- * table) and tests use an in-memory Map. Returning `null` for a miss lets the
- * caller decide between local-fallback vs gateway-fetch without throwing.
- */
+function stripCtrl(s: string): string {
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: CWE-117 mitigation
+  return s.replace(/[\u0000-\u001f\u007f]/g, '?');
+}
+
 export interface IpfsCacheRepo {
   get(cid: string): Promise<{ readonly content: string } | null>;
   put(row: { readonly cid: string; readonly content: string }): Promise<void>;
   touch(cid: string): Promise<void>;
 }
 
-/**
- * Fetches raw bytes for a CID from an IPFS gateway. Throws `PayloadError`-shaped
- * `ConciergeError('RpcError')` on transport failure so the orchestrator can
- * downgrade per-entry rather than failing the whole batch.
- */
 export interface IpfsGatewayFetcher {
   fetch(
     cid: string,
@@ -43,31 +39,23 @@ export type GetOrFetchResult =
 export interface GetOrFetchDeps {
   readonly repo: IpfsCacheRepo;
   readonly gateway: IpfsGatewayFetcher;
+  readonly logger?: { error(meta: Record<string, unknown>, msg: string): void };
   readonly signal?: AbortSignal;
 }
 
-function stripCtrl(s: string): string {
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: CWE-117 mitigation
-  return s.replace(/[\u0000-\u001f\u007f]/g, '?');
-}
-
-function parseOrSchemaViolation(content: string): GetOrFetchResult {
-  let envelope: FeedbackEnvelope;
+/** Parses + schema-validates content; returns ONLY the envelope so callers
+ *  attach their own `source` discriminator (no misleading literal default). */
+function parseEnvelope(
+  content: string,
+): { ok: true; envelope: FeedbackEnvelope } | { ok: false; cause: string } {
   try {
-    envelope = parseFeedbackEnvelope(JSON.parse(content));
+    return { ok: true, envelope: parseFeedbackEnvelope(JSON.parse(content)) };
   } catch (err) {
     const msg = err instanceof Error ? stripCtrl(err.message).slice(0, 256) : 'parse failed';
-    return { ok: false, error: 'SCHEMA_VIOLATION', cause: msg };
+    return { ok: false, cause: msg };
   }
-  return { ok: true, content, envelope, source: 'cache' };
 }
 
-/**
- * Cache-first lookup: returns cached envelope if present (and bumps
- * `lastAccessedAt` for LRU), otherwise fetches via gateway, validates, caches,
- * returns. Errors are returned as `{ ok: false }` — never thrown — so a single
- * bad CID in a batch doesn't fail the whole `loadAgentHistory` call.
- */
 export async function getOrFetchPayload(
   cid: string,
   deps: GetOrFetchDeps,
@@ -79,10 +67,9 @@ export async function getOrFetchPayload(
   const cached = await deps.repo.get(cid);
   if (cached !== null) {
     await deps.repo.touch(cid);
-    const result = parseOrSchemaViolation(cached.content);
-    // Cache content was validated on insert, so a SCHEMA_VIOLATION here means
-    // the schema itself was tightened after caching — still surface, don't crash.
-    return result;
+    const parsed = parseEnvelope(cached.content);
+    if (!parsed.ok) return { ok: false, error: 'SCHEMA_VIOLATION', cause: parsed.cause };
+    return { ok: true, content: cached.content, envelope: parsed.envelope, source: 'cache' };
   }
 
   const signal = deps.signal ?? AbortSignal.timeout(DEFAULT_GATEWAY_TIMEOUT_MS);
@@ -101,10 +88,7 @@ export async function getOrFetchPayload(
   if (resp.status < 200 || resp.status >= 300) {
     return { ok: false, error: 'NOT_FOUND', cause: `gateway status ${resp.status}` };
   }
-
   if (resp.text.length > MAX_CONTENT_BYTES) {
-    // Round-2 lesson applied: drop oversized payloads BEFORE parsing so a
-    // hostile gateway can't OOM us. Cache CHECK constraint enforces same cap.
     return {
       ok: false,
       error: 'SCHEMA_VIOLATION',
@@ -112,44 +96,115 @@ export async function getOrFetchPayload(
     };
   }
 
-  const parsed = parseOrSchemaViolation(resp.text);
-  if (!parsed.ok) return parsed;
+  const parsed = parseEnvelope(resp.text);
+  if (!parsed.ok) return { ok: false, error: 'SCHEMA_VIOLATION', cause: parsed.cause };
 
   try {
     await deps.repo.put({ cid, content: resp.text });
   } catch (err) {
-    // Cache write failure must not fail the read — surface as ok with
-    // source='gateway' and let caller observe the cache-write log separately.
+    // Round-1 (silent-failure CRITICAL): emit observable log before swallowing.
+    // Read MUST succeed even if cache write fails (content-addressed; re-fetch
+    // is idempotent), but ops must see the cache degradation.
+    deps.logger?.error(
+      {
+        cid,
+        errName: err instanceof Error ? err.name : 'unknown',
+        errMessage:
+          err instanceof Error ? stripCtrl(err.message).slice(0, 512) : String(err).slice(0, 512),
+      },
+      'ipfsCache.put failed (read returned ok; subsequent reads will re-fetch)',
+    );
     if (err instanceof ConciergeError) throw err;
   }
 
   return { ok: true, content: resp.text, envelope: parsed.envelope, source: 'gateway' };
 }
 
+/** Round-1 CWE-918: validate gateway base URL config. Origin-only, http(s). */
+function validateGatewayBase(label: string, base: string): URL {
+  let url: URL;
+  try {
+    url = new URL(base);
+  } catch {
+    throw new ConciergeError(
+      'ConfigError',
+      `[@concierge/attestation] ${label} URL must be a valid absolute URL (got '${stripCtrl(base).slice(0, 128)}').`,
+    );
+  }
+  if (!ALLOWED_SCHEMES.has(url.protocol)) {
+    throw new ConciergeError(
+      'ConfigError',
+      `[@concierge/attestation] ${label} URL must use http(s) scheme (got '${stripCtrl(url.protocol)}').`,
+    );
+  }
+  if (url.pathname !== '/' || url.search !== '' || url.hash !== '') {
+    throw new ConciergeError(
+      'ConfigError',
+      `[@concierge/attestation] ${label} URL must be origin-only (no path/query/fragment): '${stripCtrl(base).slice(0, 128)}'.`,
+    );
+  }
+  return url;
+}
+
 /**
- * Default gateway fetcher: tries primary, falls back to secondary on transport
- * error or non-2xx (per story-84 spec — both are free public gateways).
- * Production: `ipfs.io` primary + `cloudflare-ipfs.com` fallback.
+ * Default gateway fetcher with streaming size cap (CWE-770) + base URL
+ * validation (CWE-918). Tries primary → fallback on transport error or non-2xx.
  */
 export function createGatewayFetcher(opts: {
   readonly primary: string;
   readonly fallback?: string;
   readonly fetchImpl?: typeof globalThis.fetch;
 }): IpfsGatewayFetcher {
+  const primaryOrigin = validateGatewayBase('primary', opts.primary).origin;
+  const fallbackOrigin =
+    opts.fallback !== undefined ? validateGatewayBase('fallback', opts.fallback).origin : null;
   const fetchImpl = opts.fetchImpl ?? globalThis.fetch.bind(globalThis);
+
+  // Round-1 CWE-770: stream the body with a running counter so a hostile
+  // gateway streaming GBs can't OOM before the size guard fires.
+  const fetchCapped = async (
+    url: string,
+    signal: AbortSignal,
+  ): Promise<{ readonly status: number; readonly text: string }> => {
+    const r = await fetchImpl(url, { signal });
+    if (!r.ok) return { status: r.status, text: '' };
+    const lenHeader = r.headers.get('content-length');
+    if (lenHeader !== null && Number.parseInt(lenHeader, 10) > MAX_CONTENT_BYTES) {
+      // Surface oversized as SCHEMA_VIOLATION upstream via the post-fetch cap.
+      return { status: r.status, text: 'x'.repeat(MAX_CONTENT_BYTES + 1) };
+    }
+    if (r.body === null) return { status: r.status, text: await r.text() };
+
+    const reader = r.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_CONTENT_BYTES) {
+        await reader.cancel();
+        return { status: r.status, text: 'x'.repeat(MAX_CONTENT_BYTES + 1) };
+      }
+      chunks.push(value);
+    }
+    const text = new TextDecoder('utf-8', { fatal: false }).decode(
+      chunks.length === 1 ? chunks[0] : Buffer.concat(chunks),
+    );
+    return { status: r.status, text };
+  };
+
   return {
     async fetch(cid, signal) {
-      const primaryUrl = `${opts.primary.replace(/\/$/, '')}/ipfs/${cid}`;
+      const primaryUrl = `${primaryOrigin}/ipfs/${cid}`;
       try {
-        const r = await fetchImpl(primaryUrl, { signal });
-        if (r.ok) return { status: r.status, text: await r.text() };
-        if (!opts.fallback) return { status: r.status, text: '' };
+        const r = await fetchCapped(primaryUrl, signal);
+        if (r.status >= 200 && r.status < 300) return r;
+        if (fallbackOrigin === null) return r;
       } catch (err) {
-        if (!opts.fallback) throw err;
+        if (fallbackOrigin === null) throw err;
       }
-      const fallbackUrl = `${opts.fallback.replace(/\/$/, '')}/ipfs/${cid}`;
-      const r = await fetchImpl(fallbackUrl, { signal });
-      return { status: r.status, text: r.ok ? await r.text() : '' };
+      return fetchCapped(`${fallbackOrigin}/ipfs/${cid}`, signal);
     },
   };
 }

@@ -113,9 +113,10 @@ describe('loadAgentHistory — happy path', () => {
     expect(out.entries).toHaveLength(5);
     expect(out.totalCount).toBe(5);
     for (const e of out.entries) {
-      expect(e.payload).not.toBeNull();
-      expect(e.payloadError).toBeNull();
-      expect(e.payload?.schema).toBe('concierge.aave.v3.supply.v1');
+      expect(e.status).toBe('ok');
+      if (e.status === 'ok') {
+        expect(e.payload.schema).toBe('concierge.aave.v3.supply.v1');
+      }
     }
   });
 });
@@ -132,9 +133,8 @@ describe('loadAgentHistory — partial results', () => {
       { agentId: 1n },
       deps(fakeReadFeedback([ok, bad]), { repo: inMemRepo(), gateway }),
     );
-    expect(out.entries[0]?.payloadError).toBeNull();
-    expect(out.entries[1]?.payload).toBeNull();
-    expect(out.entries[1]?.payloadError).toBe('NOT_FOUND');
+    expect(out.entries[0]?.status).toBe('ok');
+    expect(out.entries[1]).toMatchObject({ status: 'error', payloadError: 'NOT_FOUND' });
   });
 
   it('malformed JSON on gateway → SCHEMA_VIOLATION (not throw)', async () => {
@@ -146,7 +146,7 @@ describe('loadAgentHistory — partial results', () => {
       { agentId: 1n },
       deps(fakeReadFeedback([e]), { repo: inMemRepo(), gateway }),
     );
-    expect(out.entries[0]?.payloadError).toBe('SCHEMA_VIOLATION');
+    expect(out.entries[0]).toMatchObject({ status: 'error', payloadError: 'SCHEMA_VIOLATION' });
   });
 
   it('envelope JSON parses but fails schema → SCHEMA_VIOLATION', async () => {
@@ -161,7 +161,7 @@ describe('loadAgentHistory — partial results', () => {
       { agentId: 1n },
       deps(fakeReadFeedback([e]), { repo: inMemRepo(), gateway }),
     );
-    expect(out.entries[0]?.payloadError).toBe('SCHEMA_VIOLATION');
+    expect(out.entries[0]).toMatchObject({ status: 'error', payloadError: 'SCHEMA_VIOLATION' });
   });
 
   it('non-ipfs:// URI → NOT_FOUND (typed, not throw)', async () => {
@@ -171,7 +171,7 @@ describe('loadAgentHistory — partial results', () => {
       { agentId: 1n },
       deps(fakeReadFeedback([e]), { repo: inMemRepo(), gateway }),
     );
-    expect(out.entries[0]?.payloadError).toBe('NOT_FOUND');
+    expect(out.entries[0]).toMatchObject({ status: 'error', payloadError: 'NOT_FOUND' });
     expect(gateway.calls).toHaveLength(0);
   });
 });
@@ -186,7 +186,7 @@ describe('loadAgentHistory — cache behavior', () => {
       { agentId: 1n },
       deps(fakeReadFeedback([e]), { repo, gateway }),
     );
-    expect(out.entries[0]?.payloadError).toBeNull();
+    expect(out.entries[0]?.status).toBe('ok');
     expect(gateway.calls).toHaveLength(0);
     expect(repo.touchCalls).toEqual([cid]);
   });
