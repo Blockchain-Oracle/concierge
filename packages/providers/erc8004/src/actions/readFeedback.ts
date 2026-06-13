@@ -14,7 +14,10 @@ export const FeedbackEntrySchema = z.object({
   feedbackHash: z
     .string()
     .regex(/^0x[0-9a-fA-F]{64}$/)
-    .describe('EIP-712 payload commitment stored on-chain'),
+    .describe('Payload commitment stored on-chain (EIP-712 or keccak; see provider schema)'),
+  feedbackURI: z
+    .string()
+    .describe('Off-chain pointer to feedback content (typically `ipfs://<cid>`)'),
   feedbackIndex: z.bigint().describe('Feedback index in the ReputationRegistry'),
   clientAddress: z.string().describe('Address that submitted the feedback'),
   blockNumber: z.bigint().describe('Block number of the NewFeedback event'),
@@ -94,6 +97,7 @@ export async function executeReadFeedback(
       args.feedbackIndex === undefined ||
       args.tag2 === undefined ||
       args.feedbackHash === undefined ||
+      args.feedbackURI === undefined ||
       args.clientAddress === undefined
     ) {
       return [];
@@ -102,6 +106,7 @@ export async function executeReadFeedback(
       {
         schema: args.tag2,
         feedbackHash: args.feedbackHash,
+        feedbackURI: args.feedbackURI,
         feedbackIndex: args.feedbackIndex,
         clientAddress: args.clientAddress,
         blockNumber,
