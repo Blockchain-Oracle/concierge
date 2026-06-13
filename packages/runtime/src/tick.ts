@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { ConciergeError } from '@concierge/sdk';
+import { sanitizeError as defaultSanitize } from './sanitize.ts';
 import type {
   OrchestratedPhase,
   PhaseOutcome,
@@ -10,54 +11,70 @@ import type {
 
 const DEFAULT_LOCK_TTL_MS = 60_000;
 const ABORT_MARGIN_MS = 5_000;
-const URL_API_KEY_RE = /([?&](?:api[_-]?key|key|token|secret)=)[^&\s"'<>]+/gi;
-const AGENT_ID_RE = /^[a-zA-Z0-9_-]{1,128}$/;
+const AGENT_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 
-/**
- * Default error sanitizer. Mirrors story-55's `sanitizeMessage` — strips
- * apikey/token URL params before the error message lands in logs or the
- * TickResult. Stories 63-67 will call Pimlico (URL has `?apikey=…`), so this
- * runs at every phase boundary, not just on RPC errors.
- *
- * Preserves the original `cause` chain so downstream observers (Sentry,
- * pino's err serializer) keep the stack trace and the (sanitized) inner
- * error's `.name` for class-based dispatch.
- */
-function defaultSanitizeError(err: unknown): Error {
-  if (err instanceof Error) {
-    const sanitized = new Error(err.message.replace(URL_API_KEY_RE, '$1<redacted>'), {
-      cause: err,
-    });
-    sanitized.name = err.name;
-    return sanitized;
+/** Wrap the caller's sanitizeError so a buggy override can't throw out of tick. */
+function safeSanitize(sanitize: (err: unknown) => Error, err: unknown): Error {
+  try {
+    return sanitize(err);
+  } catch {
+    try {
+      return defaultSanitize(err);
+    } catch {
+      return new Error('<sanitize failed>');
+    }
   }
-  return new Error(String(err).replace(URL_API_KEY_RE, '$1<redacted>'));
 }
 
-/**
- * Tick orchestrator. Sequences the 5-phase agent run (decide is out-of-loop)
- * under a Redis NX lock. Phases are DI-injected so this module is unit-
- * testable without provider/LLM imports. Each phase receives an AbortSignal
- * that fires at `lockTtlMs - 5s` so long-running RPCs cancel cleanly before
- * the lock expires and another worker races in.
- */
-export async function tick(config: TickConfig): Promise<TickResult> {
+function assertConfigShape(config: TickConfig): void {
   if (!AGENT_ID_RE.test(config.agentId)) {
-    // CWE-74 defense — agentId is interpolated into a Redis key. Reject
-    // anything that could namespace-collide or contain control chars.
     throw new ConciergeError(
       'ConfigError',
       `[@concierge/runtime] tick: agentId must match ${AGENT_ID_RE.source}.`,
     );
   }
+  const ttl = config.lockTtlMs ?? DEFAULT_LOCK_TTL_MS;
+  if (ttl <= ABORT_MARGIN_MS) {
+    throw new ConciergeError(
+      'ConfigError',
+      `[@concierge/runtime] tick: lockTtlMs (${ttl}) MUST exceed ABORT_MARGIN_MS (${ABORT_MARGIN_MS}) or phases abort before they run.`,
+    );
+  }
+  // Defensive shape check at the JS boundary — MCP / AgentKit / LangChain
+  // adapters may construct TickConfig from non-TS sources (per ADR-014).
+  for (const field of ['loadState', 'plan', 'simulate', 'propose', 'execute', 'record'] as const) {
+    if (typeof config[field] !== 'function') {
+      throw new ConciergeError(
+        'ConfigError',
+        `[@concierge/runtime] tick: required config field '${field}' is missing or not a function.`,
+      );
+    }
+  }
+  if (!config.lock || typeof config.lock.acquire !== 'function') {
+    throw new ConciergeError(
+      'ConfigError',
+      `[@concierge/runtime] tick: required config field 'lock' is missing or malformed.`,
+    );
+  }
+}
+
+/**
+ * Tick orchestrator. Sequences the 5-phase agent run (decide is out-of-loop)
+ * under a Redis NX lock. Phases DI-injected. Each phase receives an
+ * AbortSignal that fires at `lockTtlMs - 5s`; the orchestrator ALSO checks
+ * `signal.aborted` between phases so a phase that ignored the signal can't
+ * cascade work after the lock has expired.
+ */
+export async function tick(config: TickConfig): Promise<TickResult> {
+  assertConfigShape(config);
+
   const ttlMs = config.lockTtlMs ?? DEFAULT_LOCK_TTL_MS;
   const lockKey = `lock:agent:${config.agentId}`;
   const log = config.logger ?? NOOP_LOGGER;
   const tickId = randomUUID();
-  const sanitize = config.sanitizeError ?? defaultSanitizeError;
+  const callerSanitize = config.sanitizeError ?? defaultSanitize;
+  const sanitize = (err: unknown) => safeSanitize(callerSanitize, err);
 
-  // Wrap acquire so Redis errors carry agent/key context instead of bubbling
-  // as opaque ioredis ReplyError.
   let acquired: boolean;
   try {
     acquired = await config.lock.acquire(lockKey, ttlMs);
@@ -65,7 +82,7 @@ export async function tick(config: TickConfig): Promise<TickResult> {
     const sErr = sanitize(err);
     log.error({ agentId: config.agentId, tickId, lockKey, err: sErr }, 'tick.lock_acquire_failed');
     throw new ConciergeError(
-      'RpcError',
+      'LockError',
       `[@concierge/runtime] tick: lock acquire failed for agent '${config.agentId}'.`,
       sErr,
     );
@@ -75,71 +92,58 @@ export async function tick(config: TickConfig): Promise<TickResult> {
     return { kind: 'skipped' };
   }
 
-  // AbortSignal cancels at TTL - 5s so phases can clean-cancel before the
-  // lock expires and a second worker races in.
   const abortCtl = new AbortController();
-  const abortTimer = setTimeout(() => abortCtl.abort(), Math.max(0, ttlMs - ABORT_MARGIN_MS));
+  const abortTimer = setTimeout(() => abortCtl.abort(), ttlMs - ABORT_MARGIN_MS);
+
+  // Closure-capture phase runner: each call site shrinks to two lines.
+  const run = <T>(phase: OrchestratedPhase, fn: () => Promise<PhaseOutcome<T>>) =>
+    runPhase(phase, fn, log, config.agentId, tickId, sanitize);
+
+  /** Between-phase abort defense — phase fn may have ignored the signal. */
+  const checkAborted = (nextPhase: OrchestratedPhase): TickResult | null => {
+    if (!abortCtl.signal.aborted) return null;
+    log.warn({ agentId: config.agentId, tickId, nextPhase }, 'tick.aborted_before_phase');
+    return { kind: 'aborted', phase: nextPhase, reason: 'ttl_exceeded' };
+  };
 
   try {
-    const state = await config.loadState(config.agentId);
+    const state = await config.loadState(config.agentId).catch((err: unknown) => {
+      // Apply the same sanitize boundary as the phase chain — loadState
+      // touches the DB and may carry a credentialed connection-string in
+      // its error message.
+      throw sanitize(err);
+    });
 
-    const planOut = await runPhase(
-      'plan',
-      () => config.plan(state, abortCtl.signal),
-      log,
-      config.agentId,
-      tickId,
-      sanitize,
-    );
-    if (planOut.kind !== 'continue')
-      return outcomeToResult('plan', planOut, log, config.agentId, tickId);
+    let aborted = checkAborted('plan');
+    if (aborted) return aborted;
+    const planOut = await run('plan', () => config.plan(state, abortCtl.signal));
+    if (planOut.kind !== 'continue') return toResult('plan', planOut);
 
-    const simOut = await runPhase(
-      'simulate',
-      () => config.simulate(state, planOut.data, abortCtl.signal),
-      log,
-      config.agentId,
-      tickId,
-      sanitize,
+    aborted = checkAborted('simulate');
+    if (aborted) return aborted;
+    const simOut = await run('simulate', () =>
+      config.simulate(state, planOut.data, abortCtl.signal),
     );
-    if (simOut.kind !== 'continue')
-      return outcomeToResult('simulate', simOut, log, config.agentId, tickId);
+    if (simOut.kind !== 'continue') return toResult('simulate', simOut);
 
-    const propOut = await runPhase(
-      'propose',
-      () => config.propose(state, simOut.data, abortCtl.signal),
-      log,
-      config.agentId,
-      tickId,
-      sanitize,
-    );
-    if (propOut.kind !== 'continue')
-      return outcomeToResult('propose', propOut, log, config.agentId, tickId);
+    aborted = checkAborted('propose');
+    if (aborted) return aborted;
+    const propOut = await run('propose', () => config.propose(state, simOut.data, abortCtl.signal));
+    if (propOut.kind !== 'continue') return toResult('propose', propOut);
 
-    const execOut = await runPhase(
-      'execute',
-      () => config.execute(state, propOut.data, abortCtl.signal),
-      log,
-      config.agentId,
-      tickId,
-      sanitize,
+    aborted = checkAborted('execute');
+    if (aborted) return aborted;
+    const execOut = await run('execute', () =>
+      config.execute(state, propOut.data, abortCtl.signal),
     );
-    if (execOut.kind !== 'continue')
-      return outcomeToResult('execute', execOut, log, config.agentId, tickId);
+    if (execOut.kind !== 'continue') return toResult('execute', execOut);
 
-    const recOut = await runPhase(
-      'record',
-      () => config.record(state, execOut.data, abortCtl.signal),
-      log,
-      config.agentId,
-      tickId,
-      sanitize,
-    );
+    aborted = checkAborted('record');
+    if (aborted) return aborted;
+    const recOut = await run('record', () => config.record(state, execOut.data, abortCtl.signal));
     if (recOut.kind !== 'continue') {
-      // ADR-004 load-bearing: execute succeeded but record (attestation) did
-      // NOT — distinct warn so operators can build a separate alert.
       log.warn({ agentId: config.agentId, tickId }, 'tick.execute_without_attestation');
-      return outcomeToResult('record', recOut, log, config.agentId, tickId);
+      return toResult('record', recOut);
     }
 
     log.info(
@@ -150,10 +154,16 @@ export async function tick(config: TickConfig): Promise<TickResult> {
   } finally {
     clearTimeout(abortTimer);
     try {
-      await config.lock.release(lockKey);
+      const outcome = await config.lock.release(lockKey);
+      if (outcome === 'nonce-mismatch') {
+        // The Lua CAS rejected the DEL — our nonce no longer owns the lock,
+        // which means TTL expired and another worker has it. This is the
+        // exact double-execute window the lock exists to prevent.
+        log.error({ agentId: config.agentId, tickId, lockKey }, 'tick.lock_release_nonce_mismatch');
+      } else if (outcome === 'not-held') {
+        log.warn({ agentId: config.agentId, tickId, lockKey }, 'tick.lock_release_no_nonce');
+      }
     } catch (releaseErr) {
-      // TTL fallback handles the next tick; we surface the error object so
-      // pino's err serializer keeps the stack + cause chain.
       log.error(
         { agentId: config.agentId, tickId, lockKey, err: sanitize(releaseErr) },
         'tick.lock_release_failed',
@@ -162,12 +172,14 @@ export async function tick(config: TickConfig): Promise<TickResult> {
   }
 }
 
-/** Internal wrapper carrying thrown-vs-returned discrimination through to the result. */
-type RunPhaseOutcome<T> =
-  | { kind: 'continue'; data: T }
-  | { kind: 'stop'; reason: string }
-  | { kind: 'error'; error: Error; cause: 'thrown' | 'returned' };
-
+/**
+ * Runs a phase function, normalising any returned `error` outcome AND any
+ * thrown value to the orchestrator-internal shape `{ kind: 'error', error,
+ * cause }`. `cause: 'thrown'` means the phase function threw (likely
+ * programmer bug); `cause: 'returned'` means it returned a typed error
+ * (legitimate domain failure). Both are sanitized before they touch logs or
+ * the final TickResult.
+ */
 async function runPhase<T>(
   phase: OrchestratedPhase,
   fn: () => Promise<PhaseOutcome<T>>,
@@ -175,11 +187,15 @@ async function runPhase<T>(
   agentId: string,
   tickId: string,
   sanitize: (err: unknown) => Error,
-): Promise<RunPhaseOutcome<T>> {
-  const startedAt = Date.now();
+): Promise<
+  | { kind: 'continue'; data: T }
+  | { kind: 'stop'; reason: string }
+  | { kind: 'error'; error: Error; cause: 'thrown' | 'returned' }
+> {
+  const startedAt = performance.now();
   try {
     const out = await fn();
-    const durationMs = Date.now() - startedAt;
+    const durationMs = Math.round(performance.now() - startedAt);
     if (out.kind === 'continue') {
       log.info({ agentId, tickId, phase, durationMs }, 'tick.phase.continue');
       return out;
@@ -195,7 +211,7 @@ async function runPhase<T>(
     );
     return { kind: 'error', error: sErr, cause: 'returned' };
   } catch (err) {
-    const durationMs = Date.now() - startedAt;
+    const durationMs = Math.round(performance.now() - startedAt);
     const sErr = sanitize(err);
     log.error(
       { agentId, tickId, phase, durationMs, err: sErr, cause: 'thrown' },
@@ -205,22 +221,14 @@ async function runPhase<T>(
   }
 }
 
-function outcomeToResult(
+function toResult(
   phase: OrchestratedPhase,
-  outcome: RunPhaseOutcome<unknown>,
-  log: TickLogger,
-  agentId: string,
-  tickId: string,
+  outcome:
+    | { kind: 'stop'; reason: string }
+    | { kind: 'error'; error: Error; cause: 'thrown' | 'returned' },
 ): TickResult {
   if (outcome.kind === 'stop') return { kind: 'stopped', phase, reason: outcome.reason };
-  if (outcome.kind === 'error') {
-    return { kind: 'errored', phase, error: outcome.error, cause: outcome.cause };
-  }
-  log.error({ agentId, tickId, phase }, 'tick.internal_unreachable');
-  throw new ConciergeError(
-    'ConfigError',
-    `[@concierge/runtime] outcomeToResult: unexpected 'continue' for phase '${phase}'.`,
-  );
+  return { kind: 'errored', phase, error: outcome.error, cause: outcome.cause };
 }
 
 const NOOP_LOGGER: TickLogger = {

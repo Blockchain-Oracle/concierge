@@ -47,6 +47,10 @@ export const CONCIERGE_ERROR_TYPES = Object.freeze([
   // loadSessionKey IDOR defense. Indistinguishable from NotFound by design
   // (don't leak existence to unauthorized callers).
   'NotAuthorized',
+  // Distributed-lock infrastructure failure (story-62). Use when the lock
+  // backend (Redis NX) is unreachable / misconfigured, NOT for "lock held"
+  // — that's a normal tick.skipped result, not an error.
+  'LockError',
 ] as const);
 
 export type ConciergeErrorType = (typeof CONCIERGE_ERROR_TYPES)[number];

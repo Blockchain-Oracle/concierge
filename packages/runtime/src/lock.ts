@@ -1,12 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import type Redis from 'ioredis';
-import type { TickLock } from './types.ts';
+import type { ReleaseOutcome, TickLock } from './types.ts';
 
 /**
- * Redis NX lock. The Lua release script does an atomic check+DEL so a stale
- * TTL expiry can't accidentally drop someone else's lock. Nonce uses
- * `crypto.randomUUID()` (security CWE-338 — Math.random predictable enough
- * for spoofed release racing).
+ * Redis NX lock. Atomic Lua check+DEL release with a `crypto.randomUUID`
+ * nonce; closure-scoped `nonceFor` Map (avoids cross-instance contamination
+ * + the same-key overwrite race that would silently release another
+ * holder's lock).
  */
 const RELEASE_SCRIPT = `
 if redis.call('GET', KEYS[1]) == ARGV[1] then
@@ -17,11 +17,14 @@ end
 `.trim();
 
 export function createLock(redis: Redis): TickLock {
-  // Closure-scoped per createLock() call — module-global Map was a cross-
-  // instance + cross-test contamination smell flagged by 4 reviewers.
   const nonceFor = new Map<string, string>();
   return {
     async acquire(key: string, ttlMs: number): Promise<boolean> {
+      // Defensive: if THIS instance already holds the key, refuse the second
+      // acquire instead of overwriting the in-memory nonce — that overwrite
+      // would cause the first holder's release to use the wrong nonce and
+      // silently release the second holder's lock.
+      if (nonceFor.has(key)) return false;
       const nonce = randomUUID();
       const ok = await redis.set(key, nonce, 'PX', ttlMs, 'NX');
       if (ok === 'OK') {
@@ -30,17 +33,17 @@ export function createLock(redis: Redis): TickLock {
       }
       return false;
     },
-    async release(key: string): Promise<void> {
+    async release(key: string): Promise<ReleaseOutcome> {
       const nonce = nonceFor.get(key);
-      if (nonce === undefined) {
-        // We never held it (acquire never returned true OR already released).
-        // The bare return is intentional but observable through tick.ts which
-        // wraps release() in its own try/catch and logs.
-        return;
-      }
+      if (nonce === undefined) return 'not-held';
       nonceFor.delete(key);
+      // Lua DEL returns 1 on success, 0 when our nonce didn't match
+      // (TTL expired and someone else owns the key now — the race the
+      // CAS exists to prevent). Surface the distinction so callers can
+      // alert on stale-holder situations.
       // biome-ignore lint/suspicious/noExplicitAny: ioredis eval typing
-      await (redis as any).eval(RELEASE_SCRIPT, 1, key, nonce);
+      const result = await (redis as any).eval(RELEASE_SCRIPT, 1, key, nonce);
+      return result === 1 ? 'released' : 'nonce-mismatch';
     },
   };
 }

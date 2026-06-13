@@ -74,6 +74,7 @@ function makeLock(
       async release(key) {
         cap.released.push(key);
         if (opts.releaseThrows) throw opts.releaseThrows;
+        return 'released';
       },
     },
   };
@@ -143,8 +144,8 @@ describe('tick — lock contention', () => {
     await tick(makeConfig({ lock }));
     expect(cap.acquired[0]?.ttl).toBe(60_000);
     const { lock: lock2, cap: cap2 } = makeLock();
-    await tick(makeConfig({ lock: lock2, lockTtlMs: 5_000 }));
-    expect(cap2.acquired[0]?.ttl).toBe(5_000);
+    await tick(makeConfig({ lock: lock2, lockTtlMs: 10_000 }));
+    expect(cap2.acquired[0]?.ttl).toBe(10_000);
   });
 
   it('Redis throw during acquire wraps as ConciergeError(RpcError) with structured log', async () => {
@@ -152,7 +153,7 @@ describe('tick — lock contention', () => {
     const { lock } = makeLock({ acquireThrows: boom });
     const logger = makeLogger();
     await expect(tick(makeConfig({ lock, logger }))).rejects.toSatisfy(
-      (e: unknown) => e instanceof ConciergeError && e.type === 'RpcError',
+      (e: unknown) => e instanceof ConciergeError && e.type === 'LockError',
     );
     expect(logger.error).toHaveBeenCalledWith(
       expect.objectContaining({ agentId: AGENT_ID, lockKey: `lock:agent:${AGENT_ID}` }),
