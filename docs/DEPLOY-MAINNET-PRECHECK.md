@@ -14,6 +14,23 @@ driver runs the deploy command. Two signatures required (driver + observer).
 - [ ] **Working tree clean.** `git status` shows no uncommitted changes.
 - [ ] **On main, not a feature branch.** `git rev-parse --abbrev-ref HEAD` returns `main`.
 
+## Security hardening
+
+- [ ] **NEVER `curl ... | bash`** any deploy step. Always: clone the repo,
+      checksum the script (`shasum -a 256 scripts/preflight-mainnet.sh`),
+      visually review the diff vs main, THEN run with explicit `bash <path>`.
+      Pipe-to-shell removes the review step that catches typosquats /
+      compromised mirrors.
+- [ ] **Prefer Foundry encrypted keystore over `OPS_PRIVATE_KEY` env**
+      (CWE-214 — `--private-key` in argv leaks via `ps auxe` and
+      `/proc/<pid>/cmdline`). Set up with:
+      ```bash
+      cast wallet new                       # creates keystore at ~/.foundry/keystores/
+      forge script ... --account ops-mainnet --sender 0x...
+      ```
+      The env-var path is supported for legacy compatibility but produces
+      a loud WARNING in the preflight log.
+
 ## Environment
 
 - [ ] `MANTLE_RPC_URL` is set to `https://rpc.mantle.xyz` (not a fork / proxy).
