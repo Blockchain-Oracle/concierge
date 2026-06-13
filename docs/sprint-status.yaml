@@ -350,11 +350,11 @@ stories:
   # ─────────────────────────────────────────────────────────────────
   - id: story-60-anthropic-sdk-bootstrap
     epic: "Epic E5 — Agent Runtime"
-    status: PENDING
+    status: COMPLETE
     depends_on: [story-22-sdk-skeleton]
     issue_url: ""
-    pr_url: ""
-    merged_at: ""
+    pr_url: "https://github.com/Blockchain-Oracle/concierge/pull/98"
+    merged_at: "2026-06-13T08:20:00Z"
   - id: story-61-vercel-ai-sdk-chat-api
     epic: "Epic E5 — Agent Runtime"
     status: PENDING
