@@ -103,11 +103,39 @@ function sanitizeReason(input: string): string {
   return sanitizeError(input.slice(0, MAX_REVERT_REASON_LEN)).message;
 }
 
-/** Run simulator races against signal abort so a stuck simulator can't outrun the tick budget. */
+/**
+ * Sentinel class so abort rejections can be identified by `instanceof` rather
+ * than by string-matching `signal.aborted` (round-2: a simulator that throws
+ * its own `new Error('aborted')` pre-abort could otherwise be misclassified as
+ * a clean abort).
+ */
+class AbortRejection extends Error {
+  constructor() {
+    super('aborted');
+    this.name = 'AbortRejection';
+  }
+}
+
+/**
+ * Race the simulator promise against signal abort. When abort wins, attach a
+ * `.catch(noop)` to the still-pending worker so a later infra rejection from
+ * the abandoned simulator does NOT surface as an unhandledRejection.
+ *
+ * Skip the race entirely on the NEVER_ABORT sentinel: no point allocating a
+ * listener on a signal that cannot fire, and avoids any theoretical listener
+ * accumulation on the module-scoped controller.
+ */
 async function raceAgainstAbort<T>(worker: Promise<T>, signal: AbortSignal): Promise<T> {
-  if (signal.aborted) throw new Error('aborted');
+  if (signal === NEVER_ABORT) return worker;
+  if (signal.aborted) {
+    worker.catch(() => {});
+    throw new AbortRejection();
+  }
   return new Promise<T>((resolve, reject) => {
-    const onAbort = () => reject(new Error('aborted'));
+    const onAbort = () => {
+      worker.catch(() => {});
+      reject(new AbortRejection());
+    };
     signal.addEventListener('abort', onAbort, { once: true });
     worker.then(
       (v) => {
@@ -177,8 +205,9 @@ export async function runSimulate(
     try {
       result = await raceAgainstAbort(simulator(inputs.preState, safeArgs, signal), signal);
     } catch (err) {
-      // Distinguish "we aborted" from "simulator threw infra error".
-      if (signal.aborted) {
+      // Identity check: only OUR AbortRejection means clean abort. A simulator
+      // throwing its own 'aborted' string pre-abort is an infra failure.
+      if (err instanceof AbortRejection) {
         error = { kind: 'aborted', failedAtIndex: i, provider: safeProvider, action: safeAction };
         break;
       }

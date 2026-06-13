@@ -100,6 +100,8 @@ describe('runSimulate — abort signal', () => {
       },
       { abortSignal: ctl.signal },
     );
+    expect(out.kind).toBe('continue');
+    if (out.kind === 'continue') expect(out.data.ok).toBe(false);
     if (out.kind === 'continue' && !out.data.ok) {
       expect(out.data.error.kind).toBe('aborted');
     }
@@ -121,6 +123,8 @@ describe('runSimulate — abort signal', () => {
       },
       { abortSignal: ctl.signal },
     );
+    expect(out.kind).toBe('continue');
+    if (out.kind === 'continue') expect(out.data.ok).toBe(false);
     if (out.kind === 'continue' && !out.data.ok) {
       expect(out.data.error.kind).toBe('aborted');
     }

@@ -60,6 +60,32 @@ function registryOf(entries: Array<[string, ActionSimulator]>): SimulatorRegistr
   return new Map(entries.map(([k, fn]) => [k as `${string}:${string}`, fn]));
 }
 
+/**
+ * Assert `out` is a `kind:'continue'` PhaseOutcome with `ok:false` data and
+ * return the failed `DetailedSim` for further assertion. Replaces the
+ * `if (out.kind === 'continue' && !out.data.ok)` pattern that silently passed
+ * when the branch was unreachable (round-2 fix).
+ */
+function expectFailed(
+  out: Awaited<ReturnType<typeof runSimulate>>,
+): Extract<Extract<typeof out, { kind: 'continue' }>['data'], { ok: false }> {
+  expect(out.kind).toBe('continue');
+  if (out.kind !== 'continue') throw new Error('unreachable');
+  expect(out.data.ok).toBe(false);
+  if (out.data.ok) throw new Error('unreachable');
+  return out.data;
+}
+
+function expectOk(
+  out: Awaited<ReturnType<typeof runSimulate>>,
+): Extract<Extract<typeof out, { kind: 'continue' }>['data'], { ok: true }> {
+  expect(out.kind).toBe('continue');
+  if (out.kind !== 'continue') throw new Error('unreachable');
+  expect(out.data.ok).toBe(true);
+  if (!out.data.ok) throw new Error('unreachable');
+  return out.data;
+}
+
 describe('runSimulate — happy path', () => {
   it('single supply returns ok=true with aggregated gas + delta', async () => {
     const sim: ActionSimulator = vi
@@ -147,6 +173,8 @@ describe('runSimulate — ADR-008 oracle-stale always poisons the tick (round-1 
       registry: registryOf([['aave:supply', sim]]),
       healthFactorBefore: HF_BEFORE,
     });
+    expect(out.kind).toBe('continue');
+    if (out.kind === 'continue') expect(out.data.ok).toBe(false);
     if (out.kind === 'continue' && !out.data.ok) {
       expect(out.data.error.kind).toBe('oracle-stale');
     }
@@ -162,6 +190,8 @@ describe('runSimulate — domain failures (returned, NOT thrown)', () => {
       registry: registryOf([['aave:borrow', sim]]),
       healthFactorBefore: HF_BEFORE,
     });
+    expect(out.kind).toBe('continue');
+    if (out.kind === 'continue') expect(out.data.ok).toBe(false);
     if (out.kind === 'continue' && !out.data.ok) {
       expect(out.data.error.kind).toBe('revert');
       if (out.data.error.kind === 'revert') {
@@ -203,6 +233,8 @@ describe('runSimulate — domain failures (returned, NOT thrown)', () => {
       registry: registryOf([['aave:borrow', sim]]),
       healthFactorBefore: HF_BEFORE,
     });
+    expect(out.kind).toBe('continue');
+    if (out.kind === 'continue') expect(out.data.ok).toBe(false);
     if (out.kind === 'continue' && !out.data.ok) {
       expect(out.data.error.kind).toBe('hf-breach');
     }
@@ -215,6 +247,8 @@ describe('runSimulate — domain failures (returned, NOT thrown)', () => {
       registry: registryOf([]),
       healthFactorBefore: HF_BEFORE,
     });
+    expect(out.kind).toBe('continue');
+    if (out.kind === 'continue') expect(out.data.ok).toBe(false);
     if (out.kind === 'continue' && !out.data.ok) {
       expect(out.data.error.kind).toBe('unknown-action');
     }
@@ -228,6 +262,8 @@ describe('runSimulate — domain failures (returned, NOT thrown)', () => {
       registry: registryOf([['aave:supply', sim]]),
       healthFactorBefore: HF_BEFORE,
     });
+    expect(out.kind).toBe('continue');
+    if (out.kind === 'continue') expect(out.data.ok).toBe(false);
     if (out.kind === 'continue' && !out.data.ok) {
       expect(out.data.error.kind).toBe('gas-overrun');
     }
@@ -250,6 +286,8 @@ describe('runSimulate — domain failures (returned, NOT thrown)', () => {
       registry: registryOf(entries),
       healthFactorBefore: HF_BEFORE,
     });
+    expect(out.kind).toBe('continue');
+    if (out.kind === 'continue') expect(out.data.ok).toBe(false);
     if (out.kind === 'continue' && !out.data.ok) {
       expect(out.data.error.kind).toBe('plan-gas-overrun');
     }
@@ -281,9 +319,73 @@ describe('runSimulate — domain failures (returned, NOT thrown)', () => {
       registry: registryOf([['aave:supply', sim]]),
       healthFactorBefore: HF_BEFORE,
     });
+    expect(out.kind).toBe('continue');
+    if (out.kind === 'continue') expect(out.data.ok).toBe(false);
     if (out.kind === 'continue' && !out.data.ok) {
       expect(JSON.stringify(out.data.error)).not.toContain('FAKE_ENVELOPE_KEY');
     }
+  });
+
+  it('multi-action: HF threads through last successful action (round-2 coverage)', async () => {
+    const sim1: ActionSimulator = vi
+      .fn()
+      .mockResolvedValue(ok({ healthFactorAfter: 1_900_000_000_000_000_000n }));
+    const sim2: ActionSimulator = vi
+      .fn()
+      .mockResolvedValue(ok({ healthFactorAfter: 1_800_000_000_000_000_000n }));
+    const sim3: ActionSimulator = vi
+      .fn()
+      .mockResolvedValue(ok({ healthFactorAfter: 1_700_000_000_000_000_000n }));
+    const out = await runSimulate({
+      preState: STATE,
+      plan: planOf(
+        { provider: 'aave', action: 'supply' },
+        { provider: 'aave', action: 'borrow' },
+        { provider: 'aave', action: 'repay' },
+      ),
+      registry: registryOf([
+        ['aave:supply', sim1],
+        ['aave:borrow', sim2],
+        ['aave:repay', sim3],
+      ]),
+      healthFactorBefore: HF_BEFORE,
+    });
+    const okData = expectOk(out);
+    expect(okData.deltaState.healthFactorAfter).toBe(1_700_000_000_000_000_000n);
+  });
+
+  it('multi-action ADR-008: oracleStale on action[0] poisons even when action[1] is clean', async () => {
+    const sim1: ActionSimulator = vi.fn().mockResolvedValue(ok({ oracleStale: true }));
+    const sim2: ActionSimulator = vi.fn().mockResolvedValue(ok({ oracleStale: false }));
+    const out = await runSimulate({
+      preState: STATE,
+      plan: planOf({ provider: 'aave', action: 'supply' }, { provider: 'aave', action: 'borrow' }),
+      registry: registryOf([
+        ['aave:supply', sim1],
+        ['aave:borrow', sim2],
+      ]),
+      healthFactorBefore: HF_BEFORE,
+    });
+    const failed = expectFailed(out);
+    expect(failed.error.kind).toBe('oracle-stale');
+    expect(sim2).not.toHaveBeenCalled();
+  });
+
+  it('round-2 CWE-1321: __proto__ token key in balanceDeltas is skipped, not assigned', async () => {
+    const malicious: ActionSimulator = vi.fn().mockResolvedValue(
+      ok({
+        balanceDeltas: Object.assign(Object.create(null), { __proto__: 1n, [USDC]: 5n }),
+      }),
+    );
+    const out = await runSimulate({
+      preState: STATE,
+      plan: planOf({ provider: 'aave', action: 'supply' }),
+      registry: registryOf([['aave:supply', malicious]]),
+      healthFactorBefore: HF_BEFORE,
+    });
+    const okData = expectOk(out);
+    expect(okData.deltaState.balanceDeltas[USDC]).toBe(5n);
+    expect(Object.keys(okData.deltaState.balanceDeltas).includes('__proto__')).toBe(false);
   });
 
   it('SECURITY: revertReason length-capped before sanitize (4096 chars)', async () => {

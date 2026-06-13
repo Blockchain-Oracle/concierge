@@ -47,18 +47,23 @@ export interface ComputeDeltaStateInput {
  * On the first failure, HF projection freezes at the prior success.
  * `oracleChecks.stale` ORs across all actions (ADR-008).
  */
+/** Skip `__proto__`/`constructor`/`prototype` token keys (CWE-1321). */
+const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
 export function computeDeltaState(input: ComputeDeltaStateInput): DeltaState {
-  const balanceDeltas: Record<string, bigint> = {};
-  const debtDeltas: Record<string, bigint> = {};
+  const balanceDeltas: Record<string, bigint> = Object.create(null);
+  const debtDeltas: Record<string, bigint> = Object.create(null);
   let healthFactorAfter = input.healthFactorBefore;
   let oracleStale = false;
 
   for (const r of input.perAction) {
     if (r.ok) {
       for (const [token, delta] of Object.entries(r.balanceDeltas)) {
+        if (FORBIDDEN_KEYS.has(token)) continue;
         balanceDeltas[token] = (balanceDeltas[token] ?? 0n) + delta;
       }
       for (const [token, delta] of Object.entries(r.debtDeltas)) {
+        if (FORBIDDEN_KEYS.has(token)) continue;
         debtDeltas[token] = (debtDeltas[token] ?? 0n) + delta;
       }
       if (r.oracleStale) oracleStale = true;
