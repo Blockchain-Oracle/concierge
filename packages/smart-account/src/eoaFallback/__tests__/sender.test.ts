@@ -1,5 +1,11 @@
 import { ConciergeError } from '@concierge/sdk';
-import type { Address, Hex, PublicClient, TransactionSerializable } from 'viem';
+import {
+  type Address,
+  type Hex,
+  type PublicClient,
+  TransactionNotFoundError,
+  type TransactionSerializable,
+} from 'viem';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { enqueue } from '../queue.ts';
@@ -56,7 +62,9 @@ function makePublicClient(opts: {
       };
     }),
     getTransaction: vi.fn(async () => {
-      if (opts.getTransactionReturns === 'notfound') throw new Error('not found');
+      if (opts.getTransactionReturns === 'notfound') {
+        throw new TransactionNotFoundError({ hash: TX_HASH });
+      }
       return { hash: TX_HASH };
     }),
   };

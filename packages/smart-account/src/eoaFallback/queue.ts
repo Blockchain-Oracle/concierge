@@ -35,12 +35,22 @@ export interface EnqueueInput {
 export type QueueRow = EoaTx;
 
 /**
- * Discriminated return type for state-machine writes. Replaces `QueueRow | null`
- * so callers (and operators reading logs) can distinguish "lost the CAS race"
- * from "the row doesn't exist" from "wrong tenant tried to touch this row".
+ * Discriminated return type for state-machine writes.
+ *
+ *   `updated`        — UPDATE matched. row is the freshly-written state.
+ *   `lost-race`      — row IS in an expected `from` state, but the UPDATE
+ *                      missed because a concurrent worker won the CAS.
+ *                      Idempotent-retryable; do NOT escalate to operator.
+ *   `wrong-state`    — row exists, owned by the right tenant, but is in a
+ *                      terminal/unrelated state (e.g. failed/confirmed when
+ *                      markSigned was attempted). Operator-visible bug.
+ *   `not-found`      — row id doesn't exist.
+ *   `not-authorized` — row exists but belongs to a different tenant. Same
+ *                      shape as not-found by design (no info leak).
  */
 export type MarkResult =
   | { kind: 'updated'; row: QueueRow }
+  | { kind: 'lost-race'; current: QueueRow }
   | { kind: 'wrong-state'; current: QueueRow }
   | { kind: 'not-found' }
   | { kind: 'not-authorized' };
@@ -136,10 +146,12 @@ async function probeAndExplain(
   const [row] = await db.select().from(eoaTxQueue).where(eq(eoaTxQueue.id, id)).limit(1);
   if (!row) return { kind: 'not-found' };
   if (row.userId !== expectedUserId) return { kind: 'not-authorized' };
-  // Either the row IS in an expected state (UPDATE lost a race) or it's in an
-  // unexpected state — both shape as 'wrong-state' so callers always carry the
-  // current snapshot without corrupting it.
-  void expectedFromStates;
+  // Distinguish lost-CAS-race (row IS in a legal from-state — benign retry)
+  // from terminal-state drift (row in confirmed/failed when we expected
+  // pending/signed — real bug, operator-visible).
+  if ((expectedFromStates as readonly string[]).includes(row.status)) {
+    return { kind: 'lost-race', current: row };
+  }
   return { kind: 'wrong-state', current: row };
 }
 
