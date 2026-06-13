@@ -1,0 +1,47 @@
+# Files NOT to ship in the published skill bundle.
+# Mirrors `files` in package.json, enforced at the skill-tooling layer.
+
+# Development artifacts
+*.test.ts
+*.test.tsx
+__tests__/
+src/
+
+# TypeScript build leftovers
+tsconfig.json
+tsconfig.build.json
+tsconfig.tsbuildinfo
+dist/
+*.tsbuildinfo
+*.d.ts.map
+*.js.map
+
+# Local config + secrets
+.env
+.env.*
+*.local
+
+# Node tooling
+node_modules/
+.npmrc
+
+# Repository tooling
+.gitignore
+.gitkeep
+.git/
+
+# Round-1 defense-in-depth: never ship dotfile credentials even if a
+# contributor publishes from a dirty working tree.
+.ssh/
+.aws/
+.gnupg/
+.netrc
+id_rsa*
+id_ecdsa*
+id_ed25519*
+*.pem
+*.key
+*.p12
+*.pfx
+.DS_Store
+Thumbs.db

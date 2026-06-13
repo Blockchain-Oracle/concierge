@@ -1,0 +1,22 @@
+{
+  "name": "@concierge/skill-mantle-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "RealClaw skill package for Concierge — see SKILL.md for the user-facing description (source of truth).",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "files": [
+    "SKILL.md",
+    "assets",
+    "scripts",
+    "references"
+  ],
+  "devDependencies": {
+    "@types/node": "22.19.20"
+  }
+}

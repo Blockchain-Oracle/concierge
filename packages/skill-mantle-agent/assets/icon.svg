@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+  <title>Concierge Mantle Agent — placeholder icon (designer agent owns final)</title>
+  <rect width="128" height="128" rx="24" fill="#0d1b2a"/>
+  <circle cx="64" cy="64" r="36" fill="none" stroke="#00d4aa" stroke-width="4"/>
+  <text x="64" y="74" font-family="system-ui, -apple-system, sans-serif" font-size="32" font-weight="700" text-anchor="middle" fill="#00d4aa">C</text>
+</svg>
