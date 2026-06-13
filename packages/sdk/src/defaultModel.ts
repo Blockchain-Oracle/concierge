@@ -20,13 +20,6 @@ export const SUPPORTED_PROVIDERS = Object.freeze(['anthropic', 'openai', 'google
 export type SupportedProvider = (typeof SUPPORTED_PROVIDERS)[number];
 
 /**
- * Compile-time template-literal type for `"provider:model"` specs. Lets
- * consumers building specs programmatically catch typos at the type level
- * (e.g. `'anthropic:claude'` typechecks; `'anthropi:claude'` does not).
- */
-export type ProviderModelSpec = `${SupportedProvider}:${string}`;
-
-/**
  * Env-auto-detect model helper per ADR-016: `AI_MODEL="provider:model"`
  * selects the model without touching code; unset (or empty) falls back to
  * `anthropic:claude-sonnet-4-6`. An explicit `spec` argument beats the env
@@ -114,5 +107,13 @@ export function defaultModel(spec = process.env['AI_MODEL']): LanguageModelV3 {
       return google(model);
     case 'xai':
       return xai(model);
+    default: {
+      // Round-2 (test-analyzer rating 9): TS exhaustiveness check — if a
+      // future PR adds a provider to SUPPORTED_PROVIDERS but forgets the
+      // switch case, this line fails to compile. Belt-and-suspenders with
+      // the runtime isSupportedProvider guard above.
+      const _exhaustive: never = provider;
+      throw new Error(`unreachable: ${String(_exhaustive)}`);
+    }
   }
 }

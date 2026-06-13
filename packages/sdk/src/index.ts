@@ -46,7 +46,6 @@ export { getVercelAITools, toVercelAITool } from '@concierge/vercel-ai';
 export { type ConciergeConfig, ConfigSchema, loadConfig } from './config.ts';
 export {
   defaultModel,
-  type ProviderModelSpec,
   SUPPORTED_PROVIDERS,
   type SupportedProvider,
 } from './defaultModel.ts';

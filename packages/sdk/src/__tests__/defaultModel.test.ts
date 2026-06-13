@@ -4,12 +4,7 @@
 // needs no keys — these tests assert routing, not authentication.
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import {
-  defaultModel,
-  type ProviderModelSpec,
-  SUPPORTED_PROVIDERS,
-  type SupportedProvider,
-} from '../defaultModel.ts';
+import { defaultModel, SUPPORTED_PROVIDERS } from '../defaultModel.ts';
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -137,18 +132,25 @@ describe('defaultModel (ADR-016 env auto-detect)', () => {
     expect(Object.isFrozen(SUPPORTED_PROVIDERS)).toBe(true);
   });
 
-  it('round-1: ProviderModelSpec template literal type accepts valid specs at compile time', () => {
-    // Type-level assertion: if the template-literal narrowing regresses, this
-    // file won't compile. Each spec asserts the same modelId round-trips.
-    const valid: ProviderModelSpec[] = [
-      'anthropic:claude-sonnet-4-6',
-      'openai:gpt-5.1',
-      'google:gemini-2.5-pro',
-      'xai:grok-4',
-    ];
-    for (const spec of valid) {
-      const provider = spec.split(':')[0] as SupportedProvider;
-      expect(SUPPORTED_PROVIDERS).toContain(provider);
+  it('round-2: SUPPORTED_PROVIDERS mutation is blocked at runtime (frozen + strict)', () => {
+    // Object.freeze + ESM strict mode → push / index-assignment THROW, not
+    // silently no-op. A regression that swaps freeze() for a plain const
+    // would make these expects pass spuriously, so we assert both paths.
+    expect(() => (SUPPORTED_PROVIDERS as unknown as string[]).push('mistral')).toThrow();
+    expect(() => {
+      (SUPPORTED_PROVIDERS as unknown as string[])[0] = 'mistral';
+    }).toThrow();
+  });
+
+  it('round-2: every SUPPORTED_PROVIDERS entry routes through the switch (no drift)', () => {
+    // Test-analyzer rating 9: future PR adds a provider to SUPPORTED_PROVIDERS
+    // but forgets the switch case. Compile-time `_exhaustive: never` catches
+    // it, but pair with a runtime smoke that calls defaultModel for each
+    // provider with a known model id and confirms it returns a model object.
+    for (const provider of SUPPORTED_PROVIDERS) {
+      const model = defaultModel(`${provider}:some-model-id`);
+      expect(model).toBeDefined();
+      expect(typeof model.modelId).toBe('string');
     }
   });
 

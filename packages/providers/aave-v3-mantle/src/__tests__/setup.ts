@@ -74,6 +74,12 @@ const ANVIL_START_RETRIES = 5;
  * port collision and retry with a fresh port. Other startup failures
  * (timeout, spawn error, code 1 after listening) surface immediately.
  */
+// Round-2 silent-failure HIGH: broadened beyond /before listening/ to catch
+// EADDRINUSE bubbling through spawn.on('error') and stderr hints. Lowercase
+// match so the classifier is stable across Anvil/Node wording.
+const PORT_COLLISION_RE =
+  /before listening|eaddrinuse|address (already )?in use|port already in use/i;
+
 export async function startAnvil(): Promise<AnvilInstance> {
   let lastErr: Error | null = null;
   for (let attempt = 0; attempt < ANVIL_START_RETRIES; attempt++) {
@@ -81,8 +87,10 @@ export async function startAnvil(): Promise<AnvilInstance> {
       return await startAnvilOnce();
     } catch (err) {
       lastErr = err instanceof Error ? err : new Error(String(err));
-      if (!/before listening/.test(lastErr.message)) throw lastErr;
-      // Port collision — back off briefly and try again with a fresh port.
+      if (!PORT_COLLISION_RE.test(lastErr.message)) throw lastErr;
+      process.stderr.write(
+        `[setup] Anvil port collision attempt ${attempt + 1}/${ANVIL_START_RETRIES}: ${lastErr.message}\n`,
+      );
       await new Promise((res) => setTimeout(res, 50 * (attempt + 1)));
     }
   }
@@ -161,7 +169,14 @@ async function startAnvilOnce(): Promise<AnvilInstance> {
     proc.on('exit', (code, signal) => {
       if (!started) {
         clearTimeout(timer);
-        reject(new Error(`Anvil exited with code ${String(code)} before listening`));
+        // Round-2: include stderr/stdout buffer in the error so EADDRINUSE
+        // hints surface to PORT_COLLISION_RE in the retry classifier.
+        const tail = buf.join('').slice(-200).trim();
+        reject(
+          new Error(
+            `Anvil exited with code ${String(code)} before listening${tail ? ` (stderr: ${tail})` : ''}`,
+          ),
+        );
       } else if (!stopping) {
         process.stderr.write(
           `[setup] Anvil (port ${port}) exited unexpectedly: code=${String(code)} signal=${String(signal)}. Subsequent RPC calls will fail.\n`,
