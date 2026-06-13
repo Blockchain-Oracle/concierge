@@ -166,6 +166,64 @@ describe('revokeSessionKey (story-54)', () => {
     expect((agg.errors[1] as Error).message).toMatch(/timeout/);
   });
 
+  it('AggregateError attempts survive ConciergeError.toJSON via causeSummary', async () => {
+    onChainRevoker
+      .mockRejectedValueOnce(new Error('revert: validator not installed'))
+      .mockRejectedValueOnce(new Error('bundler timeout'));
+    const { db } = makeDb([
+      { id: SK_1, agentId: AGENT_ID, publicAddress: SK_ADDR_A, revokedAt: null },
+    ]);
+    let captured: ConciergeError | undefined;
+    try {
+      await revokeSessionKey({
+        db,
+        sessionKeyId: SK_1,
+        expectedAgentId: AGENT_ID,
+        onChainRevoker,
+        onChainBackoffMs: 0,
+      });
+    } catch (e) {
+      captured = e as ConciergeError;
+    }
+    const json = captured?.toJSON();
+    const summary = json?.['causeSummary'] as {
+      kind: string;
+      attempts: { name: string; message: string }[];
+    };
+    expect(summary?.kind).toBe('AggregateError');
+    expect(summary?.attempts).toHaveLength(2);
+    expect(summary?.attempts[0]?.message).toMatch(/revert/);
+    expect(summary?.attempts[1]?.message).toMatch(/timeout/);
+  });
+
+  it('scrubLeakage redacts apiKey/token query params from retry errors before AggregateError', async () => {
+    const leakyMsg =
+      'Pimlico 401 from https://api.pimlico.io/v2/mantle/rpc?apikey=pim_secret_abc123&otherparam=ok';
+    onChainRevoker.mockRejectedValue(new Error(leakyMsg));
+    const { db } = makeDb([
+      { id: SK_1, agentId: AGENT_ID, publicAddress: SK_ADDR_A, revokedAt: null },
+    ]);
+    let captured: ConciergeError | undefined;
+    try {
+      await revokeSessionKey({
+        db,
+        sessionKeyId: SK_1,
+        expectedAgentId: AGENT_ID,
+        onChainRevoker,
+        onChainBackoffMs: 0,
+      });
+    } catch (e) {
+      captured = e as ConciergeError;
+    }
+    const agg = captured?.cause as AggregateError;
+    expect(agg).toBeInstanceOf(AggregateError);
+    for (const e of agg.errors as Error[]) {
+      expect(e.message).not.toContain('pim_secret_abc123');
+      expect(e.message).toContain('<redacted>');
+      expect(e.message).toContain('otherparam=ok');
+    }
+  });
+
   it('rejects onChainMaxAttempts < 1 with ConfigError', async () => {
     const { db } = makeDb([
       { id: SK_1, agentId: AGENT_ID, publicAddress: SK_ADDR_A, revokedAt: null },

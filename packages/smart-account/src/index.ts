@@ -52,5 +52,5 @@ export type {
   RevokeSessionKeyConfig,
   RevokeSessionKeyResult,
 } from './revokeSessionKey.ts';
-export { revokeSessionKey } from './revokeSessionKey.ts';
+export { isRevocationPartialFailure, revokeSessionKey } from './revokeSessionKey.ts';
 export type { ConciergeAccount, SupportedChain } from './types.ts';

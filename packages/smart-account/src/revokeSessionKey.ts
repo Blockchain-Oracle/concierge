@@ -29,6 +29,34 @@ export interface RevocationEventEmitter {
  */
 export type OnChainRevoker = (input: { sessionKeyAddress: Address }) => Promise<{ txHash: Hex }>;
 
+/**
+ * Runtime guard for `RevocationPartialFailure` errors. Use in catch handlers
+ * or when filtering EmergencyStopResult buckets to narrow without `as` casts.
+ */
+export function isRevocationPartialFailure(
+  err: unknown,
+): err is ConciergeError & { type: 'RevocationPartialFailure' } {
+  return err instanceof ConciergeError && err.type === 'RevocationPartialFailure';
+}
+
+/**
+ * Defense-in-depth scrubber for retry errors before they're stored in the
+ * AggregateError cause. The OnChainRevoker's JSDoc says callers must sanitize,
+ * but a non-compliant revoker would smuggle Pimlico apiKey URL fragments into
+ * `err.stack` (which ConciergeError.toJSON omits but `console.error(err)` does
+ * not). Strips common apiKey/token query-param shapes.
+ */
+function scrubLeakage(err: unknown): unknown {
+  if (!(err instanceof Error)) return err;
+  const KEY_PARAM_RE = /([?&](?:api[_-]?key|key|token|secret)=)[^&\s"'<>]+/gi;
+  const sanitized = err.message.replace(KEY_PARAM_RE, '$1<redacted>');
+  if (sanitized === err.message) return err;
+  const out = new Error(sanitized);
+  out.name = err.name;
+  if (err.stack) out.stack = err.stack.replace(KEY_PARAM_RE, '$1<redacted>');
+  return out;
+}
+
 export interface RevokeSessionKeyConfig {
   readonly db: DbClient;
   readonly sessionKeyId: string;
@@ -101,16 +129,26 @@ export async function revokeSessionKey(
 
   const winner = updated[0];
   if (winner) {
+    // returning() reads back the row we just SET — null here means schema
+    // drift or driver column-mapping bug, NOT a normal state. Fail loudly
+    // rather than substitute `now` and emit a phantom timestamp downstream.
+    if (winner.revokedAt === null) {
+      throw new ConciergeError(
+        'ConfigError',
+        `[@concierge/smart-account] revokeSessionKey: UPDATE returned null revokedAt for session key '${winner.id}'. Schema or driver mismatch.`,
+      );
+    }
+    const revokedAt = winner.revokedAt;
     const txHash = await runOnChainWithRetry(config, winner.publicAddress as Address);
     await emitRevokedEvent(config, {
       sessionKeyId: winner.id,
       agentId: winner.agentId,
-      revokedAt: winner.revokedAt ?? now,
+      revokedAt,
     });
     return {
       sessionKeyId: winner.id,
       agentId: winner.agentId,
-      revokedAt: winner.revokedAt ?? now,
+      revokedAt,
       onChainTxHash: txHash,
     };
   }
@@ -172,7 +210,7 @@ async function runOnChainWithRetry(
       const { txHash } = await config.onChainRevoker({ sessionKeyAddress });
       return txHash;
     } catch (err) {
-      errors.push(err);
+      errors.push(scrubLeakage(err));
       if (attempt < max) await sleep(backoffMs);
     }
   }
