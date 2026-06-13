@@ -54,3 +54,16 @@ export type ExecuteOutcome =
       readonly executionId: string;
       readonly queueId: string;
     };
+
+/**
+ * Compile-time bidirectional check: the literal-union members of
+ * `ExecuteOutcomeKind` and `ExecuteOutcome['status']` must stay in lockstep.
+ * Adding a 6th outcome to one but not the other fails to typecheck here.
+ */
+type _OutcomeKindMatch = ExecuteOutcome['status'] extends ExecuteOutcomeKind
+  ? ExecuteOutcomeKind extends ExecuteOutcome['status']
+    ? true
+    : false
+  : false;
+const _outcomeKindCheck: _OutcomeKindMatch = true;
+void _outcomeKindCheck;

@@ -1,81 +1,26 @@
 import { ConciergeError } from '@concierge/sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { AgentState } from '../../types.ts';
 import {
-  type ApprovedProposal,
   type EoaQueueEnqueue,
   type ExecutionRepository,
-  type ExecutorClient,
   runExecute,
   type SessionKeyLoader,
-  type UserOpReceipt,
 } from '../execute.ts';
-import type { ExecutionRow } from '../executeSchema.ts';
+import {
+  makeExecutor,
+  makeQueue,
+  makeRepo,
+  noKey,
+  okReceipt,
+  PROPOSAL,
+  revertReceipt,
+  STATE,
+  TX_HASH,
+  USER_OP,
+  withKey,
+} from './_executeFixtures.ts';
 
 afterEach(() => vi.restoreAllMocks());
-
-const STATE: AgentState = {
-  agentId: 'agent-1',
-  userId: 'user-1',
-  chain: 'mantle-sepolia',
-  goal: 'idle yield',
-  policyId: 'p',
-  recentTicks: [],
-  openPositions: [],
-};
-
-const PROPOSAL: ApprovedProposal = {
-  id: 'prop-1',
-  txParams: [{ to: '0xabc', data: '0xdeadbeef', value: '0' }],
-  gasEstimateWei: 100_000n,
-};
-
-const USER_OP = '0xuop';
-const TX_HASH = '0xtx';
-
-function withKey(): SessionKeyLoader {
-  return { load: vi.fn().mockResolvedValue({ kind: 'present' }) };
-}
-function noKey(): SessionKeyLoader {
-  return { load: vi.fn().mockResolvedValue({ kind: 'missing' }) };
-}
-
-function makeExecutor(
-  receipt: UserOpReceipt | null,
-  over: Partial<ExecutorClient> = {},
-): ExecutorClient {
-  return {
-    submit: vi.fn().mockResolvedValue({ userOpHash: USER_OP }),
-    waitForReceipt: vi.fn().mockResolvedValue(receipt),
-    ...over,
-  };
-}
-
-function makeRepo(): ExecutionRepository & { rows: ExecutionRow[] } {
-  const rows: ExecutionRow[] = [];
-  return {
-    rows,
-    insert: vi.fn().mockImplementation(async (row: ExecutionRow) => {
-      rows.push(row);
-      return { id: `exec-${rows.length}` };
-    }),
-  };
-}
-
-function makeQueue(): EoaQueueEnqueue {
-  return { enqueue: vi.fn().mockResolvedValue({ queueId: 'q-1' }) };
-}
-
-function okReceipt(over: Partial<UserOpReceipt> = {}): UserOpReceipt {
-  return {
-    userOpHash: USER_OP,
-    txHash: TX_HASH,
-    blockNumber: 100n,
-    gasUsedActual: 100_000n,
-    success: true,
-    ...over,
-  };
-}
 
 describe('runExecute — happy path', () => {
   it('confirmed: submits, waits, returns confirmed with gas drift', async () => {
@@ -137,7 +82,7 @@ describe('runExecute — domain failure outcomes', () => {
     const out = await runExecute(
       { state: STATE, proposal: PROPOSAL },
       {
-        executor: makeExecutor(okReceipt({ success: false, revertReason: 'INSUFFICIENT' })),
+        executor: makeExecutor(revertReceipt('INSUFFICIENT')),
         sessionKey: withKey(),
         repository: repo,
         eoaQueue: makeQueue(),
@@ -181,7 +126,12 @@ describe('runExecute — domain failure outcomes', () => {
         eoaQueue: makeQueue(),
       },
     );
-    if (out.kind === 'continue') expect(out.data.status).toBe('session_key_expired');
+    expect(out.kind).toBe('continue');
+    if (out.kind === 'continue') {
+      expect(out.data.status).toBe('session_key_expired');
+    } else {
+      throw new Error('expected continue');
+    }
   });
 
   it('SessionKeyPolicyRejected: submit throws → rethrown as ConciergeError', async () => {
@@ -331,5 +281,108 @@ describe('runExecute — boundary validation', () => {
         },
       ),
     ).rejects.toBeInstanceOf(ConciergeError);
+  });
+});
+
+describe('runExecute — round-1 hardening', () => {
+  it('CWE-117: executor returns malformed userOpHash → InvariantViolation', async () => {
+    const executor = makeExecutor(null, {
+      submit: vi.fn().mockResolvedValue({ userOpHash: '0xnotahash\nINJECTED' }),
+    });
+    await expect(
+      runExecute(
+        { state: STATE, proposal: PROPOSAL },
+        {
+          executor,
+          sessionKey: withKey(),
+          repository: makeRepo(),
+          eoaQueue: makeQueue(),
+        },
+      ),
+    ).rejects.toSatisfy(
+      (e: unknown) => e instanceof ConciergeError && e.type === 'InvariantViolation',
+    );
+  });
+
+  it('AbortSignal fires between submit and waitForReceipt → timeout row preserves userOpHash', async () => {
+    const ctl = new AbortController();
+    const repo = makeRepo();
+    const executor = makeExecutor(null, {
+      submit: vi.fn().mockImplementation(async () => {
+        ctl.abort();
+        return { userOpHash: USER_OP };
+      }),
+      waitForReceipt: vi.fn(), // MUST NOT be called
+    });
+    const out = await runExecute(
+      { state: STATE, proposal: PROPOSAL },
+      {
+        executor,
+        sessionKey: withKey(),
+        repository: repo,
+        eoaQueue: makeQueue(),
+        abortSignal: ctl.signal,
+      },
+    );
+    if (out.kind === 'continue' && out.data.status === 'timeout') {
+      expect(out.data.userOpHash).toBe(USER_OP);
+    } else {
+      throw new Error('expected timeout');
+    }
+    expect(executor.waitForReceipt).not.toHaveBeenCalled();
+    expect(repo.rows[0]?.status).toBe('timeout');
+  });
+
+  it('EOA orphan reconciliation: enqueue succeeds, insert fails → error metadata carries queueId', async () => {
+    const queue = makeQueue();
+    const repo: ExecutionRepository = {
+      insert: vi.fn().mockRejectedValue(new Error('insert exploded')),
+    };
+    await expect(
+      runExecute(
+        { state: STATE, proposal: PROPOSAL },
+        {
+          executor: makeExecutor(null),
+          sessionKey: noKey(),
+          repository: repo,
+          eoaQueue: queue,
+        },
+      ),
+    ).rejects.toSatisfy((e: unknown) => {
+      if (!(e instanceof ConciergeError)) return false;
+      const md = e.metadata as { queueId?: unknown } | undefined;
+      return e.type === 'RpcError' && md?.queueId === 'q-1';
+    });
+  });
+
+  it('drift threshold boundary: actual = 120_000n (exactly 20%) → no log', async () => {
+    const driftLog = vi.fn();
+    await runExecute(
+      { state: STATE, proposal: PROPOSAL },
+      {
+        executor: makeExecutor(okReceipt({ gasUsedActual: 120_000n })),
+        sessionKey: withKey(),
+        repository: makeRepo(),
+        eoaQueue: makeQueue(),
+        logDrift: driftLog,
+      },
+    );
+    // strict > means 20% itself does NOT log
+    expect(driftLog).not.toHaveBeenCalled();
+  });
+
+  it('drift threshold boundary: actual = 120_100n (just over 20%) → log fires', async () => {
+    const driftLog = vi.fn();
+    await runExecute(
+      { state: STATE, proposal: PROPOSAL },
+      {
+        executor: makeExecutor(okReceipt({ gasUsedActual: 120_100n })),
+        sessionKey: withKey(),
+        repository: makeRepo(),
+        eoaQueue: makeQueue(),
+        logDrift: driftLog,
+      },
+    );
+    expect(driftLog).toHaveBeenCalledTimes(1);
   });
 });

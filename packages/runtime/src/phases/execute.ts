@@ -3,11 +3,20 @@ import { sanitizeError } from '../sanitize.ts';
 import type { AgentState, PhaseOutcome } from '../types.ts';
 import type { ExecuteOutcome, ExecutionRow } from './executeSchema.ts';
 
+/** Mantle block time ~6s; 30s wait = 5 confirmations of margin (per story spec). */
 const DEFAULT_WAIT_TIMEOUT_MS = 30_000;
 const GAS_DRIFT_THRESHOLD_PCT = 20;
-/** Mantle block time ~6s; 30s wait = 5 confirmations of margin (per story spec). */
 const MIN_WAIT_TIMEOUT_MS = 1_000;
 const MAX_REVERT_REASON_LEN = 4096;
+/** UserOp hash shape — 0x + 64 hex chars. Rejecting malformed values closes
+ * a CWE-117 log-injection vector via executor-supplied hash interpolation. */
+const USER_OP_HASH_RE = /^0x[0-9a-fA-F]{64}$/;
+
+function defaultDriftLog(msg: string): void {
+  // Stderr so the warning is visible even when no logger is wired (round-1:
+  // logDrift? optional made drift signal silently disable-able).
+  process.stderr.write(`[concierge/runtime] ${msg}\n`);
+}
 
 export interface ApprovedProposal {
   readonly id: string;
@@ -19,15 +28,28 @@ export interface ApprovedProposal {
   readonly gasEstimateWei: bigint;
 }
 
-/** Result-shape contract returned by the bundler wait. Domain failures encoded as fields. */
-export interface UserOpReceipt {
-  readonly userOpHash: string;
-  readonly txHash: string;
-  readonly blockNumber: bigint;
-  readonly gasUsedActual: bigint;
-  readonly success: boolean;
-  readonly revertReason?: string;
-}
+/**
+ * Result-shape contract returned by the bundler wait. DISCRIMINATED on
+ * `success` so `revertReason` is required iff failure (illegal state
+ * unrepresentable: a `success:true` receipt cannot carry a revert reason,
+ * and a `success:false` receipt MUST carry one).
+ */
+export type UserOpReceipt =
+  | {
+      readonly success: true;
+      readonly userOpHash: string;
+      readonly txHash: string;
+      readonly blockNumber: bigint;
+      readonly gasUsedActual: bigint;
+    }
+  | {
+      readonly success: false;
+      readonly userOpHash: string;
+      readonly txHash: string;
+      readonly blockNumber: bigint;
+      readonly gasUsedActual: bigint;
+      readonly revertReason: string;
+    };
 
 /**
  * DI'd execution client. Production wires ZeroDev kernel client + Pimlico
@@ -155,7 +177,16 @@ export async function runExecute(
       signal,
     });
     userOpHash = submitted.userOpHash;
+    if (!USER_OP_HASH_RE.test(userOpHash)) {
+      // Defense-in-depth: a malformed userOpHash interpolated into logs and
+      // error messages is a CWE-117 vector. Reject at the boundary.
+      throw new ConciergeError(
+        'InvariantViolation',
+        `[@concierge/runtime] runExecute: executor returned malformed userOpHash.`,
+      );
+    }
   } catch (err) {
+    if (err instanceof ConciergeError && err.type === 'InvariantViolation') throw err;
     if (isSessionKeyExpired(err)) {
       const row = await insertOrThrow(deps.repository, {
         proposalId: inputs.proposal.id,
@@ -174,6 +205,22 @@ export async function runExecute(
       `[@concierge/runtime] runExecute: bundler submit failed: ${safe.message}`,
       safe,
     );
+  }
+
+  // Round-1: abort fired BETWEEN submit-resolve and wait-start. The UserOp is
+  // already on the bundler; persisting a timeout row preserves the hash so a
+  // late poller can reconcile rather than orphaning the on-chain op DB-side.
+  if (signal.aborted) {
+    const row = await insertOrThrow(deps.repository, {
+      proposalId: inputs.proposal.id,
+      agentId: inputs.state.agentId,
+      userOpHash,
+      status: 'timeout',
+    });
+    return {
+      kind: 'continue',
+      data: { status: 'timeout', executionId: row.id, userOpHash },
+    };
   }
 
   let receipt: UserOpReceipt | null;
@@ -202,7 +249,7 @@ export async function runExecute(
   }
 
   if (!receipt.success) {
-    const revertReason = (receipt.revertReason ?? 'unknown').slice(0, MAX_REVERT_REASON_LEN);
+    const revertReason = receipt.revertReason.slice(0, MAX_REVERT_REASON_LEN);
     const row = await insertOrThrow(deps.repository, {
       proposalId: inputs.proposal.id,
       agentId: inputs.state.agentId,
@@ -228,7 +275,9 @@ export async function runExecute(
 
   const drift = driftPct(receipt.gasUsedActual, inputs.proposal.gasEstimateWei);
   if (drift > GAS_DRIFT_THRESHOLD_PCT) {
-    deps.logDrift?.(
+    // Round-1: default to stderr writer so drift cannot be silently disabled
+    // by an unwired logDrift dep (a provider-regression signal must always fire).
+    (deps.logDrift ?? defaultDriftLog)(
       `gas_estimate_drift agent=${inputs.state.agentId} userOpHash=${userOpHash} drift=${drift.toFixed(2)}%`,
     );
   }
@@ -275,11 +324,25 @@ async function eoaFallback(
       safe,
     );
   }
-  const row = await insertOrThrow(deps.repository, {
-    proposalId: inputs.proposal.id,
-    agentId: inputs.state.agentId,
-    status: 'awaiting_user_signature',
-  });
+  // Round-1: orphan reconciliation. If the row insert fails AFTER the queue
+  // entry is committed, the queueId is structured into the error metadata
+  // so ops can cancel the queue row (or hand-insert the missing execution).
+  let row: { readonly id: string };
+  try {
+    row = await deps.repository.insert({
+      proposalId: inputs.proposal.id,
+      agentId: inputs.state.agentId,
+      status: 'awaiting_user_signature',
+    });
+  } catch (err) {
+    const safe = sanitizeError(err);
+    throw new ConciergeError(
+      'RpcError',
+      `[@concierge/runtime] runExecute (EOA fallback): row insert failed AFTER queue enqueue; reconcile queueId=${queued.queueId}: ${safe.message}`,
+      safe,
+      { proposalId: inputs.proposal.id, queueId: queued.queueId },
+    );
+  }
   return {
     kind: 'continue',
     data: {
