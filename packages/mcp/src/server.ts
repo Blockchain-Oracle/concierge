@@ -3,39 +3,24 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
 const SERVER_INFO = { name: 'concierge-mcp', version: '0.0.0' } as const;
-const PROTO_POLLUTION_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+const SANITIZE_ERR_MSG_MAX = 512;
 
 export interface CreateConciergeMcpServerOpts {
-  /**
-   * Tools to expose via MCP. Each tool's `inputSchema` / `outputSchema` flow
-   * straight into `server.registerTool(...)` — `outputSchema` is MANDATORY per
-   * ADR-014/017 (drives MCP `structuredContent` + `@concierge/react-ui`
-   * parse-then-render).
-   */
   readonly tools: ReadonlyArray<ConciergeTool>;
   readonly info?: { readonly name: string; readonly version: string };
-  /**
-   * Optional logger for tool-failure observability. Defaults to stderr so the
-   * stdio bin keeps stdout reserved for MCP JSON-RPC. Override in tests +
-   * worker context for structured logging.
-   */
+  /** Observability for tool failures. Defaults to a stderr writer. */
   readonly onToolError?: (info: { readonly toolName: string; readonly error: unknown }) => void;
+  /** Round-2: empty-toolset warning callback. Defaults to stderr so the Worker
+   *  (story-133) gets the same warning as the stdio bin. Pass `() => {}` to suppress. */
+  readonly onEmptyToolset?: () => void;
 }
 
-/**
- * Transport-agnostic MCP server factory per ADR-011 amendment. Stdio +
- * streamable-http wrappers both consume this factory; only the transport
- * adapter changes.
- *
- * Each `ConciergeTool` is registered with its `inputSchema` (re-parsed inside
- * the handler so schema mismatches surface as a typed MCP error rather than a
- * crash) and `outputSchema` (exposed for MCP `structuredContent`). Tool
- * failures return `isError: true` + sanitized message AND emit an observable
- * log so ops sees which tools are failing in production.
- */
+/** ADR-011 amended factory. Stdio + streamable-http share this. */
 export function createConciergeMcpServer(opts: CreateConciergeMcpServerOpts): McpServer {
   const info = opts.info ?? SERVER_INFO;
   const onToolError = opts.onToolError ?? defaultOnToolError;
+  const onEmptyToolset = opts.onEmptyToolset ?? defaultOnEmptyToolset;
+  if (opts.tools.length === 0) onEmptyToolset();
   const server = new McpServer(info);
 
   for (const tool of opts.tools) {
@@ -51,24 +36,24 @@ export function createConciergeMcpServer(opts: CreateConciergeMcpServerOpts): Mc
       },
       async (args: unknown) => {
         try {
-          // The SDK pre-validates `args` against the registered zod schema
-          // (shape + refinements) BEFORE this handler runs — invalid inputs
-          // surface to the client as -32602 Invalid params and never reach
-          // here. So no re-parse needed; trust the SDK contract.
+          // SDK pre-validates the FULL zod schema (shape + refinements) before
+          // this handler runs. Invalid inputs surface as -32602; never reach here.
           const rawResult = await tool.invoke(args as never);
           const result = scrubPrototypePollution(rawResult);
-          const text = sanitize(bigintSafeStringify(result));
+          // Round-2: do NOT cap success-path text (was 512 chars truncating
+          // mid-JSON). The text channel is the readable form of
+          // structuredContent; only the error path needs the regex-cost cap.
+          const text = bigintSafeStringify(result);
           return {
             content: [{ type: 'text', text }],
             structuredContent: result as Record<string, unknown>,
           };
         } catch (err) {
           onToolError({ toolName: tool.name, error: err });
-          const message = err instanceof Error ? sanitize(err.message) : 'tool execution failed';
+          const message =
+            err instanceof Error ? sanitizeErrMessage(err.message) : 'tool execution failed';
           return {
             content: [{ type: 'text', text: `Tool '${tool.name}' failed: ${message}` }],
-            // Round-1 (test gap 8/10): explicitly omit structuredContent on
-            // error to prevent partial-data leakage on the failure path.
             isError: true,
           };
         }
@@ -93,41 +78,81 @@ function assertZodObject(
 }
 
 /**
- * Round-1 CWE-1321: drop prototype-pollution keys from tool outputs. Required
- * because @concierge tools using `z.record()` / `z.passthrough()` (Li.Fi
- * quotes, DEX payloads) don't strip unknown keys via Zod alone — the upstream
- * JSON containing `__proto__` / `constructor.prototype` would otherwise flow
- * through `structuredContent` to MCP clients that deep-merge.
- *
- * One-pass JSON round-trip with a reviver — cheap on the typical sub-100KB
- * payload size; strings/bigints preserved via bigintSafeStringify downstream.
+ * Round-2 CWE-1321: scrub prototype-pollution keys from JSON.parse-shaped
+ * payloads (the actual wire-format attack vector). Guards against
+ * Date/Map/Set/typed-array corruption — those have no own enumerable keys
+ * and would be silently flattened to `{}` by Object.entries walk.
+ * `constructor` is dropped ONLY when its value is an object (i.e. the
+ * `{constructor:{prototype:{polluted:true}}}` shape), preserving legit data
+ * fields literally named `constructor`.
  */
 function scrubPrototypePollution<T>(value: T): T {
-  if (value === null || typeof value !== 'object') return value;
   return walk(value) as T;
 }
 
 function walk(node: unknown): unknown {
-  if (Array.isArray(node)) return node.map(walk);
   if (node === null || typeof node !== 'object') return node;
+  // Round-2: preserve non-plain objects. Object.entries({Date|Map|Set|TypedArray})
+  // returns [] for built-ins, so without these guards the values would silently
+  // become {} — corrupting timestamps (Aave/Ondo), calldata (Uint8Array), etc.
+  if (
+    node instanceof Date ||
+    node instanceof Map ||
+    node instanceof Set ||
+    node instanceof RegExp ||
+    ArrayBuffer.isView(node) ||
+    node instanceof ArrayBuffer
+  ) {
+    return node;
+  }
+  if (Array.isArray(node)) return node.map(walk);
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(node)) {
-    if (PROTO_POLLUTION_KEYS.has(k)) continue;
+    if (k === '__proto__' || k === 'prototype') continue;
+    // Narrow `constructor` skip to object-value only — preserves data fields
+    // named 'constructor' (ABI fragments, OpenAPI mirrors of Solidity terms).
+    if (k === 'constructor' && v !== null && typeof v === 'object') continue;
     out[k] = walk(v);
   }
   return out;
 }
 
-/** Round-1 CWE-400: slice BEFORE strip so the regex scan is O(min(n, 512)). */
-function sanitize(s: string): string {
+/** Round-2: cap restricted to error messages (was truncating success text). */
+function sanitizeErrMessage(s: string): string {
   // biome-ignore lint/suspicious/noControlCharactersInRegex: CWE-117 mitigation
-  return s.slice(0, 512).replace(/[\u0000-\u001f\u007f]/g, '?');
+  return s.slice(0, SANITIZE_ERR_MSG_MAX).replace(/[\u0000-\u001f\u007f]/g, '?');
+}
+
+function sanitizeForStderr(s: string): string {
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: CWE-117 log injection mitigation
+  return s.replace(/[\u0000-\u001f\u007f]/g, '?');
 }
 
 function defaultOnToolError(info: { readonly toolName: string; readonly error: unknown }): void {
+  // Round-2 CWE-117: sanitize name/message/stack BEFORE writing to stderr so
+  // attacker-controlled error content can't inject ANSI/CRLF into ops logs.
   const errLine =
     info.error instanceof Error
-      ? `${info.error.name}: ${info.error.message}\n${info.error.stack ?? ''}`
-      : String(info.error);
-  process.stderr.write(`[concierge-mcp] tool '${info.toolName}' failed: ${errLine}\n`);
+      ? `${sanitizeForStderr(info.error.name)}: ${sanitizeForStderr(info.error.message)}\n${sanitizeForStderr(info.error.stack ?? '')}`
+      : sanitizeForStderr(String(info.error));
+  const toolName = sanitizeForStderr(info.toolName);
+  // Round-2 HIGH: wrap stderr.write in try/catch. EPIPE on a closed stderr
+  // would otherwise propagate out of the tool handler, escape MCP's per-
+  // request error envelope, and tear down the entire transport session.
+  try {
+    process.stderr.write(`[concierge-mcp] tool '${toolName}' failed: ${errLine}\n`);
+  } catch {
+    /* observability loss is acceptable; session death is not */
+  }
+}
+
+function defaultOnEmptyToolset(): void {
+  try {
+    process.stderr.write(
+      '[concierge-mcp] WARNING: starting with 0 tools registered. ' +
+        'See the @concierge/agent integration story for the production toolset.\n',
+    );
+  } catch {
+    /* same EPIPE-safe guard */
+  }
 }

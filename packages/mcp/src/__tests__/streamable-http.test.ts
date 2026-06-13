@@ -15,6 +15,7 @@ describe('createStreamableHttpHandler', () => {
     let n = 0;
     const handler = createStreamableHttpHandler({
       tools: [],
+      onEmptyToolset: () => {},
       sessionIdGenerator: () => {
         const id = `test-session-${n++}`;
         calls.push(n);
@@ -71,6 +72,7 @@ describe('createStreamableHttpHandler', () => {
     const onToolError = () => {};
     const handler = createStreamableHttpHandler({
       tools: [],
+      onEmptyToolset: () => {},
       info: { name: 'worker-mcp', version: '1.0.0' },
       onToolError,
     });

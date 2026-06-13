@@ -37,6 +37,7 @@ export function createStreamableHttpHandler(opts: StreamableHttpHandlerOpts): {
     tools: opts.tools,
     ...(opts.info !== undefined ? { info: opts.info } : {}),
     ...(opts.onToolError !== undefined ? { onToolError: opts.onToolError } : {}),
+    ...(opts.onEmptyToolset !== undefined ? { onEmptyToolset: opts.onEmptyToolset } : {}),
   });
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator });
   return { server, transport };

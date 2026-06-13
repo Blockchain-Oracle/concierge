@@ -25,6 +25,9 @@ async function connect(
 ) {
   const server = createConciergeMcpServer({
     tools,
+    onEmptyToolset: () => {
+      /* suppress in tests */
+    },
     ...(onToolError ? { onToolError } : {}),
   });
   const client = new Client({ name: 'test-client', version: '0.0.0' });
@@ -104,6 +107,7 @@ describe('createConciergeMcpServer', () => {
     const server = createConciergeMcpServer({
       tools: [],
       info: { name: 'custom-server', version: '9.9.9' },
+      onEmptyToolset: () => {},
     });
     expect(server).toBeDefined();
   });
@@ -130,26 +134,64 @@ describe('createConciergeMcpServer', () => {
     expect(() => createConciergeMcpServer({ tools: [bad] })).toThrow(/bad-output.*outputSchema/);
   });
 
-  it('round-1 CWE-1321: prototype-pollution keys scrubbed from structuredContent', async () => {
+  it('round-2 CWE-1321: prototype-pollution scrub via JSON.parse fixture (real wire shape)', async () => {
+    // Test-analyzer #1: object literal `{__proto__: x}` sets prototype, NOT
+    // own property — round-1 test was theatre. JSON.parse is the real wire
+    // shape: `__proto__` and `constructor` BECOME own enumerable keys.
+    const pollutedJson =
+      '{"legit":"ok","__proto__":{"polluted":true},"constructor":{"prototype":{"polluted":true}}}';
     const evil = tool({
       name: 'evil',
-      description: 'returns proto-polluted payload',
+      description: 'returns JSON.parse-shaped proto-polluted payload',
       inputSchema: z.object({}),
       outputSchema: z.object({}).passthrough(),
-      invoke: async () =>
-        ({
-          legit: 'ok',
-          __proto__: { polluted: true },
-          constructor: { prototype: { polluted: true } },
-        }) as never,
+      invoke: async () => JSON.parse(pollutedJson) as never,
     }) as ConciergeTool;
     const { client } = await connect([evil]);
     const res = await client.callTool({ name: 'evil', arguments: {} });
     const structured = res.structuredContent as Record<string, unknown>;
     expect(structured?.['legit']).toBe('ok');
-    expect(structured).not.toHaveProperty('__proto__');
-    expect(structured).not.toHaveProperty('constructor');
-    expect(structured).not.toHaveProperty('prototype');
+    expect(Object.hasOwn(structured, '__proto__')).toBe(false);
+    expect(Object.hasOwn(structured, 'constructor')).toBe(false);
+    // Defense in depth: ensure baseline Object.prototype was NOT polluted.
+    expect(({} as Record<string, unknown>)['polluted']).toBeUndefined();
+  });
+
+  it('round-2: scrub preserves data fields literally named "constructor" with non-object values', async () => {
+    // E.g. ABI fragments / OpenAPI schemas mirroring Solidity terms.
+    const legit = tool({
+      name: 'legit-ctor',
+      description: 'has a constructor:string field',
+      inputSchema: z.object({}),
+      outputSchema: z.object({}).passthrough(),
+      invoke: async () => JSON.parse('{"constructor":"function abi","other":"ok"}') as never,
+    }) as ConciergeTool;
+    const { client } = await connect([legit]);
+    const res = await client.callTool({ name: 'legit-ctor', arguments: {} });
+    const structured = res.structuredContent as Record<string, unknown>;
+    expect(structured?.['constructor']).toBe('function abi');
+    expect(structured?.['other']).toBe('ok');
+  });
+
+  it('round-2: scrub preserves Date/Map/Set/Uint8Array values (not flattened to {})', async () => {
+    const date = new Date('2026-06-13T12:00:00Z');
+    const map = new Map<string, number>([['k', 1]]);
+    const set = new Set([1, 2]);
+    const bytes = new Uint8Array([1, 2, 3]);
+    const richTool = tool({
+      name: 'rich',
+      description: 'returns built-ins',
+      inputSchema: z.object({}),
+      outputSchema: z.object({}).passthrough(),
+      invoke: async () => ({ date, map, set, bytes }) as never,
+    }) as ConciergeTool;
+    const { client } = await connect([richTool]);
+    const res = await client.callTool({ name: 'rich', arguments: {} });
+    const structured = res.structuredContent as Record<string, unknown>;
+    expect(structured?.['date']).toBe(date);
+    expect(structured?.['map']).toBe(map);
+    expect(structured?.['set']).toBe(set);
+    expect(structured?.['bytes']).toBe(bytes);
   });
 
   it('round-1: input fails Zod refinement → SDK rejects pre-handler (no onToolError fired)', async () => {
@@ -169,5 +211,45 @@ describe('createConciergeMcpServer', () => {
     const res = await client.callTool({ name: 'strict', arguments: { q: 'x' } });
     expect(res.isError).toBe(true);
     expect(onToolError).not.toHaveBeenCalled();
+  });
+
+  it('round-2: default onToolError writes a sanitized line to process.stderr', async () => {
+    // Test-analyzer #2: default path was untested. A regression to
+    // console.log would corrupt stdio MCP framing.
+    const writeSpy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+    try {
+      const failing = tool({
+        name: 'crash',
+        description: 'throws with control chars',
+        inputSchema: z.object({}),
+        outputSchema: z.object({ ok: z.boolean() }),
+        invoke: async () => {
+          throw new Error('boom\r\n[INJECT]');
+        },
+      }) as ConciergeTool;
+      // NO onToolError override → exercises the default stderr path.
+      const { client } = await connect([failing]);
+      const res = await client.callTool({ name: 'crash', arguments: {} });
+      expect(res.isError).toBe(true);
+      expect(writeSpy).toHaveBeenCalled();
+      const calls = writeSpy.mock.calls.map((c) => String(c[0])).join('');
+      expect(calls).toContain("[concierge-mcp] tool 'crash' failed:");
+      // CWE-117: stderr log content is sanitized.
+      expect(calls).not.toContain('\r\n[INJECT]');
+    } finally {
+      writeSpy.mockRestore();
+    }
+  });
+
+  it('round-2: empty-toolset warning fires from the factory (covers Worker path too)', () => {
+    const onEmptyToolset = vi.fn();
+    createConciergeMcpServer({ tools: [], onEmptyToolset });
+    expect(onEmptyToolset).toHaveBeenCalledTimes(1);
+  });
+
+  it('round-2: non-empty toolset does NOT fire empty-toolset warning', () => {
+    const onEmptyToolset = vi.fn();
+    createConciergeMcpServer({ tools: [fakeTool('a')], onEmptyToolset });
+    expect(onEmptyToolset).not.toHaveBeenCalled();
   });
 });

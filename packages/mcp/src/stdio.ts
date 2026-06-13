@@ -4,7 +4,7 @@
 // for MCP JSON-RPC; ALL logs MUST go to stderr.
 
 import { realpathSync } from 'node:fs';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { type CreateConciergeMcpServerOpts, createConciergeMcpServer } from './server.ts';
 
@@ -19,17 +19,19 @@ import { type CreateConciergeMcpServerOpts, createConciergeMcpServer } from './s
  * — silent no-op would route bug reports to the wrong layer.
  */
 export async function runStdio(
-  opts: { readonly tools?: CreateConciergeMcpServerOpts['tools'] } = {},
+  opts: {
+    readonly tools?: CreateConciergeMcpServerOpts['tools'];
+    readonly info?: CreateConciergeMcpServerOpts['info'];
+    readonly onToolError?: CreateConciergeMcpServerOpts['onToolError'];
+  } = {},
 ): Promise<void> {
-  const tools = opts.tools ?? [];
-  if (tools.length === 0) {
-    process.stderr.write(
-      '[concierge-mcp] WARNING: starting with 0 tools registered. ' +
-        'The transport core is functional but no tools are wired. ' +
-        'See the @concierge/agent integration story for the production toolset.\n',
-    );
-  }
-  const server = createConciergeMcpServer({ tools });
+  // Empty-toolset warning lives in createConciergeMcpServer (round-2) so both
+  // stdio AND streamable-http get the same diagnostic.
+  const server = createConciergeMcpServer({
+    tools: opts.tools ?? [],
+    ...(opts.info !== undefined ? { info: opts.info } : {}),
+    ...(opts.onToolError !== undefined ? { onToolError: opts.onToolError } : {}),
+  });
   const transport = new StdioServerTransport();
   // connect() resolves after transport close (process kill / peer disconnect).
   // Until then the Promise stays pending, keeping the event loop alive.
@@ -48,9 +50,14 @@ function isInvokedAsBin(): boolean {
   try {
     const realArgv = realpathSync(process.argv[1]);
     const realModule = realpathSync(fileURLToPath(import.meta.url));
-    if (realArgv === realModule) return true;
-    return pathToFileURL(realArgv).href === pathToFileURL(realModule).href;
-  } catch {
+    return realArgv === realModule;
+  } catch (err) {
+    // Round-2: don't silently no-op on realpath failure (ENOENT/EACCES during
+    // npx transient FS races). Log to stderr so users see why the server
+    // didn't auto-start instead of "process exited 0 with nothing".
+    process.stderr.write(
+      `[concierge-mcp] bin detection failed (${err instanceof Error ? err.message : String(err)}) — not auto-starting. Import runStdio() directly if the bin shim was meant to run.\n`,
+    );
     return false;
   }
 }
