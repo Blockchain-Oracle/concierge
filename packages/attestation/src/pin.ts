@@ -1,57 +1,66 @@
 import { ConciergeError } from '@concierge/sdk';
 import { computeFeedbackPair } from './hash.ts';
-import type { PinService, PinServiceName } from './pinService.ts';
+import { type PinService, type PinServiceName, PinServiceNotConfigured } from './pinService.ts';
 import type { FeedbackEnvelope } from './schema.ts';
 
-const NEVER_ABORT = new AbortController().signal;
-
-export interface PinAttempt {
-  readonly service: PinServiceName;
-  readonly ok: boolean;
-  readonly cid?: string;
-  readonly pinId?: string;
-  readonly error?: string;
-}
+const DEFAULT_TIMEOUT_MS = 15_000;
 
 /**
- * Outcome of pinFeedback. `cid` is the final returned CID — Pinata's if it
- * succeeded, otherwise web3.storage's. Both attempts are reported so the
- * caller can persist receipts AND surface partial-redundancy state.
- *
- * **Both services run on the happy path** for redundancy per ADR-004 +
- * story-81 BDD. If only one is available (missing JWT / token), the other
- * still runs alone and `fallback.ok` reflects "service not configured."
+ * PinAttempt is a discriminated union on `ok`. Illegal states
+ * (`ok:true` with no cid; `ok:false` with no error) are unrepresentable.
+ * The `notConfigured` boolean carries the round-1 sentinel — distinguishes
+ * "service refused to run because deps missing" from "service ran and threw."
  */
+export type PinAttempt =
+  | {
+      readonly service: PinServiceName;
+      readonly ok: true;
+      readonly cid: string;
+      readonly pinId: string;
+    }
+  | {
+      readonly service: PinServiceName;
+      readonly ok: false;
+      readonly error: string;
+      readonly notConfigured: boolean;
+    };
+
 export interface PinFeedbackResult {
   readonly cid: string;
   readonly canonical: string;
   readonly hash: `0x${string}`;
   readonly primary: PinAttempt;
   readonly fallback: PinAttempt;
+  /** True iff both services succeeded AND returned different CIDs (multicodec divergence). */
+  readonly cidDivergence: boolean;
 }
 
 export interface PinFeedbackDeps {
-  /** Pinata adapter (createPinataPinService). Optional → caller skipped Pinata config. */
   readonly primary?: PinService;
-  /** web3.storage adapter (createWeb3StoragePinService). Optional → caller skipped. */
   readonly fallback?: PinService;
   readonly logger?: {
     warn(meta: Record<string, unknown>, msg: string): void;
     error(meta: Record<string, unknown>, msg: string): void;
   };
+  /**
+   * Caller's AbortSignal. If omitted, defaults to `AbortSignal.timeout(15_000)`
+   * so a hung connection cannot pin the tick worker indefinitely (round-1
+   * security MEDIUM CWE-400 fix).
+   */
   readonly signal?: AbortSignal;
+  readonly timeoutMs?: number;
 }
 
 /**
- * Canonicalize → keccak256 → pin to Pinata + web3.storage (redundant).
+ * Canonicalize → keccak256 → pin to BOTH services in parallel for redundancy.
  *
  * Failure matrix:
- *   - both configured + both succeed → returns Pinata's CID (primary wins)
- *   - both configured + Pinata fails → returns web3.storage's CID; primary.ok=false
- *   - both configured + BOTH fail → throws ConciergeError('IPFSPinFailed', ...)
- *   - only Pinata configured + succeeds → returns Pinata's CID; fallback marked "not configured"
- *   - only web3.storage configured + succeeds → returns web3.storage's CID
- *   - NEITHER configured → throws ConciergeError('ConfigError', ...) at the boundary
+ *   - both succeed (same CID)     → primary.cid wins; cidDivergence=false
+ *   - both succeed (DIFFERENT CIDs) → primary.cid wins; cidDivergence=TRUE; logger.warn fires
+ *   - primary ok, fallback throws/not-configured → primary.cid wins
+ *   - primary throws, fallback ok → fallback.cid wins; logger.warn fires
+ *   - BOTH fail → ConciergeError('IPFSPinFailed', metadata: { primary, fallback, hash, agentId })
+ *   - NEITHER configured → ConciergeError('ConfigError', ...) at the boundary
  */
 export async function pinFeedback(
   envelope: FeedbackEnvelope,
@@ -64,24 +73,28 @@ export async function pinFeedback(
     );
   }
 
-  // Hash + canonicalize ONCE — pair from story-82 round-2. The canonical
-  // string is what gets uploaded; `hash === keccak256(toBytes(canonical))`
-  // is provable by construction so the on-chain dataHash matches the
-  // pinned content byte-for-byte.
   const { hash, canonical } = computeFeedbackPair(envelope);
   const displayName = `concierge-${envelope.agentId}-${envelope.schema}`;
-  const signal = deps.signal ?? NEVER_ABORT;
+  const signal = deps.signal ?? AbortSignal.timeout(deps.timeoutMs ?? DEFAULT_TIMEOUT_MS);
 
-  // Run BOTH in parallel for redundancy. The CID is content-addressed,
-  // so both services will return the SAME CID for the same canonical
-  // bytes — we use Pinata's as the canonical answer when available.
+  // Schedule only configured services. Unconfigured services produce a
+  // PinAttempt directly (no rejected promise required) — distinguished by
+  // the `notConfigured: true` discriminator so audit queries can split
+  // "service was unconfigured" from "service ran and failed."
+  const primaryName: PinServiceName = deps.primary?.name ?? 'pinata';
+  const fallbackName: PinServiceName = deps.fallback?.name ?? '<unconfigured>';
+
   const [primaryRes, fallbackRes] = await Promise.allSettled([
-    deps.primary?.pin({ canonical, displayName, signal }) ?? Promise.reject(notConfigured()),
-    deps.fallback?.pin({ canonical, displayName, signal }) ?? Promise.reject(notConfigured()),
+    deps.primary
+      ? deps.primary.pin({ canonical, displayName, signal })
+      : Promise.reject(new PinServiceNotConfigured(primaryName)),
+    deps.fallback
+      ? deps.fallback.pin({ canonical, displayName, signal })
+      : Promise.reject(new PinServiceNotConfigured(fallbackName)),
   ]);
 
-  const primary = toAttempt('pinata', primaryRes, deps.primary !== undefined);
-  const fallback = toAttempt('web3.storage', fallbackRes, deps.fallback !== undefined);
+  const primary = toAttempt(primaryName, primaryRes);
+  const fallback = toAttempt(fallbackName, fallbackRes);
 
   if (!primary.ok && !fallback.ok) {
     deps.logger?.error(
@@ -90,44 +103,59 @@ export async function pinFeedback(
     );
     throw new ConciergeError(
       'IPFSPinFailed',
-      `[@concierge/attestation] pinFeedback: BOTH services failed. primary=${primary.error ?? 'n/a'} | fallback=${fallback.error ?? 'n/a'}`,
+      `[@concierge/attestation] pinFeedback: BOTH services failed. primary=${primary.error} | fallback=${fallback.error}`,
       undefined,
       { hash, agentId: envelope.agentId, primary, fallback },
     );
   }
-  // Primary wins if available; otherwise fallback's CID is the answer.
-  const cid = primary.cid ?? fallback.cid;
-  if (cid === undefined) {
-    // Defensive — should be unreachable given the (!primary.ok && !fallback.ok) guard.
+
+  // Pick the winner — primary if ok, else fallback.
+  const winner = primary.ok ? primary : fallback;
+  if (!winner.ok) {
     throw new ConciergeError(
       'IPFSPinFailed',
-      `[@concierge/attestation] pinFeedback: no CID despite at least one service reporting ok=true. Invariant violated.`,
+      `[@concierge/attestation] pinFeedback: invariant violated — no winner despite ok branch.`,
     );
   }
+  const cid = winner.cid;
+
+  // CID divergence detection (round-1 silent-failure CRITICAL fix): Pinata
+  // dag-pb and a future fallback's `raw` codec produce DIFFERENT CIDs for
+  // the same content. The on-chain dataHash binds to CONTENT (keccak256),
+  // not the CID, so both CIDs are valid retrieval addresses — but auditors
+  // need to see the split. Both CIDs are persisted in the receipt row.
+  const cidDivergence = primary.ok && fallback.ok && primary.cid !== fallback.cid;
+  if (cidDivergence) {
+    deps.logger?.warn(
+      {
+        agentId: envelope.agentId,
+        hash,
+        primaryCid: primary.ok ? primary.cid : undefined,
+        fallbackCid: fallback.ok ? fallback.cid : undefined,
+      },
+      'pinFeedback: CID divergence (multicodec — same content, different addresses)',
+    );
+  }
+
   if (!primary.ok) {
     deps.logger?.warn(
       { agentId: envelope.agentId, hash, primaryError: primary.error, cid },
-      'pinFeedback: primary (Pinata) failed; web3.storage fallback succeeded',
+      'pinFeedback: primary (Pinata) failed; fallback succeeded',
     );
   }
-  return { cid, canonical, hash, primary, fallback };
-}
 
-function notConfigured(): Error {
-  return new Error('not configured');
+  return { cid, canonical, hash, primary, fallback, cidDivergence };
 }
 
 function toAttempt(
   service: PinServiceName,
   res: PromiseSettledResult<{ readonly cid: string; readonly pinId: string }>,
-  configured: boolean,
 ): PinAttempt {
-  if (!configured) {
-    return { service, ok: false, error: 'not configured' };
-  }
   if (res.status === 'fulfilled') {
     return { service, ok: true, cid: res.value.cid, pinId: res.value.pinId };
   }
-  const errMsg = res.reason instanceof Error ? res.reason.message : String(res.reason);
-  return { service, ok: false, error: errMsg.slice(0, 512) };
+  const reason = res.reason;
+  const notConfigured = reason instanceof PinServiceNotConfigured;
+  const errMsg = reason instanceof Error ? reason.message : String(reason);
+  return { service, ok: false, error: errMsg.slice(0, 512), notConfigured };
 }

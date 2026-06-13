@@ -1,29 +1,31 @@
 import { ConciergeError } from '@concierge/sdk';
-import type { PinFeedbackResult } from './pin.ts';
+import type { PinAttempt, PinFeedbackResult } from './pin.ts';
 
 /**
- * Row shape written to `pin_receipts` (Drizzle schema in @concierge/db).
- * Both pin attempts are recorded — including failures — so audit queries
- * can answer "did we pin everything?" + "which service was up when?".
+ * Row shape persisted to `pin_receipts`. Round-1: stores BOTH service CIDs
+ * (round-0 lost the fallback CID when divergence happened) and the explicit
+ * `notConfigured` flag distinguishing "service unconfigured" from "service
+ * ran and failed."
  */
 export interface PinReceiptRow {
   readonly cid: string;
   readonly agentId: string;
   readonly hash: `0x${string}`;
+  readonly cidDivergence: boolean;
   readonly primaryService: string;
+  readonly primaryCid: string | null;
   readonly primaryPinId: string | null;
   readonly primaryOk: boolean;
   readonly primaryError: string | null;
+  readonly primaryNotConfigured: boolean;
   readonly fallbackService: string;
+  readonly fallbackCid: string | null;
   readonly fallbackPinId: string | null;
   readonly fallbackOk: boolean;
   readonly fallbackError: string | null;
+  readonly fallbackNotConfigured: boolean;
 }
 
-/**
- * DI'd repository — production wires drizzle; tests stub. Keeps
- * @concierge/attestation free of a hard @concierge/db dependency.
- */
 export interface PinReceiptRepository {
   insert(row: PinReceiptRow): Promise<{ readonly id: string }>;
 }
@@ -33,29 +35,43 @@ export interface RecordPinReceiptInputs {
   readonly result: PinFeedbackResult;
 }
 
-/**
- * Persist a pin receipt for post-hoc audit. Failures from the repo are
- * surfaced as ConciergeError(RpcError) — losing a receipt row is NOT
- * silent (per CLAUDE.md no-silent-failures) but the CID is still valid
- * on-chain; ops can replay from the structured cause.
- */
+function attemptToRow(a: PinAttempt): {
+  cid: string | null;
+  pinId: string | null;
+  error: string | null;
+  notConfigured: boolean;
+  ok: boolean;
+} {
+  if (a.ok) {
+    return { cid: a.cid, pinId: a.pinId, error: null, notConfigured: false, ok: true };
+  }
+  return { cid: null, pinId: null, error: a.error, notConfigured: a.notConfigured, ok: false };
+}
+
 export async function recordPinReceipt(
   inputs: RecordPinReceiptInputs,
   deps: { readonly repository: PinReceiptRepository },
 ): Promise<{ readonly id: string }> {
   const { result, agentId } = inputs;
+  const p = attemptToRow(result.primary);
+  const f = attemptToRow(result.fallback);
   const row: PinReceiptRow = {
     cid: result.cid,
     agentId,
     hash: result.hash,
+    cidDivergence: result.cidDivergence,
     primaryService: result.primary.service,
-    primaryPinId: result.primary.pinId ?? null,
-    primaryOk: result.primary.ok,
-    primaryError: result.primary.error ?? null,
+    primaryCid: p.cid,
+    primaryPinId: p.pinId,
+    primaryOk: p.ok,
+    primaryError: p.error,
+    primaryNotConfigured: p.notConfigured,
     fallbackService: result.fallback.service,
-    fallbackPinId: result.fallback.pinId ?? null,
-    fallbackOk: result.fallback.ok,
-    fallbackError: result.fallback.error ?? null,
+    fallbackCid: f.cid,
+    fallbackPinId: f.pinId,
+    fallbackOk: f.ok,
+    fallbackError: f.error,
+    fallbackNotConfigured: f.notConfigured,
   };
   try {
     return await deps.repository.insert(row);

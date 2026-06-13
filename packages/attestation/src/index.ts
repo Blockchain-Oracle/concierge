@@ -14,10 +14,10 @@ export {
 } from './pinReceipt.ts';
 export {
   createPinataPinService,
-  createWeb3StoragePinService,
-  type PinResult,
+  isValidCid,
   type PinService,
   type PinServiceName,
+  PinServiceNotConfigured,
 } from './pinService.ts';
 export {
   type FeedbackEnvelope,
