@@ -1,6 +1,7 @@
 import type { DbClient } from '@concierge/db';
 import type { Address, Hex } from 'viem';
 import { type EnqueueInput, enqueue } from './queue.ts';
+import { sanitizeMessage } from './sanitize.ts';
 
 /**
  * Event payload broadcast to the user's connected web session so the UI can
@@ -62,14 +63,7 @@ export async function proposeForUser(config: ProposeForUserConfig): Promise<Prop
         createdAt,
       });
     } catch (err) {
-      // Sanitize: emitter errors may carry Redis/SSE URLs with apikeys.
-      const sanitizedMsg =
-        err instanceof Error
-          ? err.message.replace(
-              /([?&](?:api[_-]?key|key|token|secret)=)[^&\s"'<>]+/gi,
-              '$1<redacted>',
-            )
-          : String(err);
+      const sanitizedMsg = sanitizeMessage(err instanceof Error ? err.message : String(err));
       // biome-ignore lint/suspicious/noConsole: proposal event drop must be observable
       console.error(
         `[@concierge/smart-account] proposeForUser: eoa.proposal.pending emit failed (non-fatal — row queued, UI can poll)`,
