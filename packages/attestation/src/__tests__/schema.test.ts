@@ -53,9 +53,10 @@ describe('feedbackEnvelopeSchema — boundary errors', () => {
     expect(() => feedbackEnvelopeSchema.parse(bad)).toThrow();
   });
 
-  it('uppercase txHash → throws (round-1: lowercase-only for canonicalize stability)', () => {
-    const bad = { ...AAVE_SUPPLY, txHash: `0x${'A'.repeat(64)}` };
-    expect(() => feedbackEnvelopeSchema.parse(bad)).toThrow();
+  it('round-2: mixed-case txHash NORMALIZED to lowercase (ethers v6 compat)', () => {
+    const upper = `0x${'A'.repeat(64)}`;
+    const out = feedbackEnvelopeSchema.parse({ ...AAVE_SUPPLY, txHash: upper });
+    expect(out.txHash).toBe(upper.toLowerCase());
   });
 
   it('malformed txHash (wrong length) → throws', () => {
@@ -187,5 +188,81 @@ describe('canonicalize — determinism + key ordering', () => {
     expect(SCHEMA_IDS).toContain('concierge.lifi.bridge.v1');
     expect(SCHEMA_IDS).toContain('concierge.meth-staking.stake.v1');
     expect(LIFI_BRIDGE.schema).toBe('concierge.lifi.bridge.v1');
+  });
+});
+
+describe('round-2 hardening', () => {
+  it('golden bytes pin: canonicalize(AAVE_SUPPLY) is the exact preimage', () => {
+    // This locks the hash preimage. ANY accidental change to key naming,
+    // separator, JSON.stringify behavior, or sort order WILL fail here.
+    const s = canonicalize(AAVE_SUPPLY);
+    expect(s).toBe(
+      '{"agentId":"agent-1","chainId":5000,"createdAt":"2026-06-13T12:00:00Z","payload":{"amount":"100000000","asset":"0xUSDC"},"schema":"concierge.aave.v3.supply.v1","txHash":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","v":1}',
+    );
+  });
+
+  it('canonicalize({}) → "{}" and canonicalize([]) → "[]"', () => {
+    expect(canonicalize({})).toBe('{}');
+    expect(canonicalize([])).toBe('[]');
+    expect(canonicalize({ a: [] })).toBe('{"a":[]}');
+  });
+
+  it('-0 and 0 produce byte-identical canonical output', () => {
+    expect(canonicalize({ x: -0 })).toBe(canonicalize({ x: 0 }));
+    expect(canonicalize({ x: 1.0 })).toBe(canonicalize({ x: 1 }));
+  });
+
+  it('unicode keys sort by UTF-16 code-unit order (NOT locale collation)', () => {
+    // ä is U+00E4 (228), comes AFTER `z` (U+007A = 122) in code-unit order
+    // but in many locales sorts as `a`. The codepoint-order assertion locks
+    // cross-client hash equality against a future localeCompare "fix".
+    const s = canonicalize({ ä: 1, z: 1, a: 1 });
+    expect(s).toBe('{"a":1,"z":1,"ä":1}');
+  });
+
+  it('CWE-1321: rejects __defineGetter__/__lookupGetter__/__defineSetter__/__lookupSetter__', () => {
+    for (const k of [
+      '__defineGetter__',
+      '__defineSetter__',
+      '__lookupGetter__',
+      '__lookupSetter__',
+    ]) {
+      expect(() => canonicalize({ [k]: 1 })).toThrow(/forbidden/);
+    }
+  });
+
+  it('CWE-1321: JSON.parse-derived __proto__ as own-property → rejected', () => {
+    // The realistic attack vector: input arrives as JSON text containing
+    // "__proto__". JSON.parse turns it into an own enumerable property —
+    // exactly the case canonicalize must catch.
+    const parsed = JSON.parse('{"__proto__":{"polluted":true},"good":1}');
+    expect(() => canonicalize(parsed)).toThrow(/forbidden|prototype/i);
+  });
+
+  it('CWE-674: depth > maxDepth throws (default 64)', () => {
+    let nested: unknown = 1;
+    for (let i = 0; i < 70; i++) nested = { a: nested };
+    expect(() => canonicalize(nested)).toThrow(/max depth/);
+  });
+
+  it('CWE-674: configurable maxDepth — explicit small cap enforced', () => {
+    expect(() => canonicalize({ a: { b: { c: 1 } } }, { maxDepth: 2 })).toThrow(/max depth/);
+  });
+
+  it('non-enumerable own property → rejected (would diverge hash from JSON round-trip)', () => {
+    const obj: Record<string, unknown> = { good: 1 };
+    Object.defineProperty(obj, 'hidden', { value: 'oops', enumerable: false });
+    expect(() => canonicalize(obj)).toThrow(/non-enumerable/);
+  });
+
+  it('CWE-117: parseFeedbackEnvelope sanitizes control chars from error message', () => {
+    const bad = { ...AAVE_SUPPLY, schema: 'evil\n[ADMIN] override' };
+    try {
+      parseFeedbackEnvelope(bad);
+      throw new Error('expected throw');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      expect(msg).not.toContain('\n');
+    }
   });
 });

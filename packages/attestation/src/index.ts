@@ -1,4 +1,4 @@
-export { canonicalize } from './canonicalize.ts';
+export { type CanonicalizeOptions, canonicalize } from './canonicalize.ts';
 export {
   type FeedbackEnvelope,
   feedbackEnvelopeSchema,
