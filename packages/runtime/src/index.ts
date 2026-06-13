@@ -59,6 +59,26 @@ export type {
 } from './phases/propose.ts';
 export { decideRequiresApproval, runPropose } from './phases/propose.ts';
 export type {
+  AttestationPayloadBuilder,
+  AttestationRetryQueue,
+  ConfirmedExecution,
+  Erc8004Client,
+  ExecutionAttestationRepository,
+  RecordLogEntry,
+  RunRecordDeps,
+  RunRecordInputs,
+} from './phases/record.ts';
+export { runRecord } from './phases/record.ts';
+export { runRecordFallback } from './phases/recordFallback.ts';
+export {
+  type AttestationPayload,
+  attestationPayloadSchema,
+  RECORD_OUTCOMES,
+  type RecordOutcome,
+  type RecordOutcomeKind,
+  recordOutcomeSchema,
+} from './phases/recordSchema.ts';
+export type {
   ActionSimulator,
   DetailedSim,
   ProviderActionKey,

@@ -3,15 +3,13 @@ import { sanitizeError } from '../sanitize.ts';
 import type { AgentState, PhaseOutcome } from '../types.ts';
 import { defaultDriftLog, driftPct, eoaFallback, insertOrThrow } from './executeHelpers.ts';
 import type { ExecuteOutcome, ExecutionRow } from './executeSchema.ts';
+import { isHash32 } from './hash.ts';
 
 /** Mantle block time ~6s; 30s wait = 5 confirmations of margin (per story spec). */
 const DEFAULT_WAIT_TIMEOUT_MS = 30_000;
 const GAS_DRIFT_THRESHOLD_PCT = 20;
 const MIN_WAIT_TIMEOUT_MS = 1_000;
 const MAX_REVERT_REASON_LEN = 4096;
-/** UserOp hash shape — 0x + 64 hex chars. Rejecting malformed values closes
- * a CWE-117 log-injection vector via executor-supplied hash interpolation. */
-const USER_OP_HASH_RE = /^0x[0-9a-fA-F]{64}$/;
 
 export interface ApprovedProposal {
   readonly id: string;
@@ -164,7 +162,7 @@ export async function runExecute(
       txParams: inputs.proposal.txParams,
       signal,
     });
-    if (!USER_OP_HASH_RE.test(submitted.userOpHash)) {
+    if (!isHash32(submitted.userOpHash)) {
       // CWE-117 boundary: reject malformed hash before any interpolation.
       throw new ConciergeError(
         'InvariantViolation',

@@ -9,14 +9,13 @@ export const EXECUTE_OUTCOMES = [
 ] as const;
 export type ExecuteOutcomeKind = (typeof EXECUTE_OUTCOMES)[number];
 
-/** EVM-side hash shapes — both 32-byte. Keeps schema in lockstep with runtime regex. */
-const HASH_32 = z.string().regex(/^0x[a-fA-F0-9]{64}$/);
+import { hash32Schema } from './hash.ts';
 
 export const executionRowSchema = z.object({
   proposalId: z.string().min(1),
   agentId: z.string().min(1),
-  userOpHash: HASH_32.optional(),
-  txHash: HASH_32.optional(),
+  userOpHash: hash32Schema.optional(),
+  txHash: hash32Schema.optional(),
   blockNumber: z.bigint().nonnegative().optional(),
   gasUsedActual: z.bigint().nonnegative().optional(),
   status: z.enum(EXECUTE_OUTCOMES),
