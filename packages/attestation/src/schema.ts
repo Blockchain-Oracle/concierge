@@ -2,9 +2,14 @@ import { z } from 'zod';
 
 /**
  * Canonical schema discriminator strings — one per provider's attestation
- * shape. Mirrors story-67 `providerSchemaIdSchema` (lowercase + dot-segment +
- * `.v\d+`) so the on-chain attestation pointer + the off-chain envelope's
- * `schema` field are byte-equal.
+ * shape. Mirrors story-67 `providerSchemaIdSchema` so the on-chain
+ * attestation pointer + the off-chain envelope's `schema` field are
+ * byte-equal.
+ *
+ * **Dual-versioning intent (round-1 doc):** envelope `v` versions the
+ * wrapper shape; the `.vN` suffix in the schema id versions the payload
+ * shape. They evolve INDEPENDENTLY — `concierge.aave.v3.supply.v2` can
+ * ship under envelope `v: 1`.
  */
 export const SCHEMA_IDS = [
   'concierge.aave.v3.supply.v1',
@@ -19,41 +24,46 @@ export const SCHEMA_IDS = [
 ] as const;
 export type SchemaId = (typeof SCHEMA_IDS)[number];
 
-/** ISO-8601 datetime per RFC 3339 — Zod v4 `.datetime()` is strict UTC. */
-const isoDateTimeSchema = z.string().datetime({ offset: false });
+const isoDateTimeSchema = z
+  .string()
+  .datetime({ offset: false, message: 'createdAt must be a UTC ISO-8601 datetime (suffix Z).' });
 
-/** 0x-prefixed 32-byte hex. Reused for txHash. */
-const hash32Schema = z.string().regex(/^0x[a-fA-F0-9]{64}$/);
+/** 0x-prefixed lowercase 32-byte hex. Lowercase-only so canonicalize-then-hash is case-stable. */
+const hash32Schema = z
+  .string()
+  .regex(/^0x[a-f0-9]{64}$/, '32-byte hex MUST be lowercase to canonicalize stably.');
 
 /**
- * The v1 feedback envelope wrapping a per-provider payload. The `v` literal
- * is an explicit version gate — a future `v: 2` MUST be a distinct parser,
- * not a backwards-compat fork. `payload` is intentionally `z.unknown()` at
- * this layer; provider packages refine it via `discriminate(envelope)`.
+ * v1 feedback envelope. Round-1: `schema` is now a `z.discriminatedUnion`
+ * over each SCHEMA_ID's literal — illegal schema ids fail at envelope
+ * parse, not at a downstream allowlist check. Each variant carries the
+ * same wrapper shape with `payload: unknown` — provider packages refine
+ * payload via their own per-schema parsers; THIS layer is the shape gate.
  */
-export const feedbackEnvelopeSchema = z.object({
-  v: z.literal(1),
-  schema: z.string().min(1).max(128),
-  agentId: z.string().min(1).max(128),
-  chainId: z.number().int().nonnegative(),
-  txHash: hash32Schema.optional(),
-  payload: z.unknown(),
-  createdAt: isoDateTimeSchema,
-});
+const envelopeVariant = (schemaId: SchemaId) =>
+  z.object({
+    v: z.literal(1),
+    schema: z.literal(schemaId),
+    agentId: z.string().min(1).max(128),
+    chainId: z.number().int().nonnegative(),
+    txHash: hash32Schema.optional(),
+    payload: z.unknown(),
+    createdAt: isoDateTimeSchema,
+  });
+
+const variants = SCHEMA_IDS.map(envelopeVariant) as unknown as readonly [
+  ReturnType<typeof envelopeVariant>,
+  ...ReturnType<typeof envelopeVariant>[],
+];
+
+export const feedbackEnvelopeSchema = z.discriminatedUnion('schema', variants);
 export type FeedbackEnvelope = z.infer<typeof feedbackEnvelopeSchema>;
 
 /**
- * Parse + assert the `schema` discriminator is a KNOWN id. Producing a
- * clear error message instead of a generic Zod-level rejection is the
- * BDD contract: ops should see "unknown schema 'concierge.foo.v1'" not
- * "expected one of [literal lists 9 entries deep]".
+ * Thin parse wrapper for symmetry with the rest of the SDK. The
+ * unknown-schema-id case is now Zod's native discriminated-union error
+ * (which lists all known ids), so the round-1 hand-thrown branch is gone.
  */
 export function parseFeedbackEnvelope(input: unknown): FeedbackEnvelope {
-  const parsed = feedbackEnvelopeSchema.parse(input);
-  if (!(SCHEMA_IDS as readonly string[]).includes(parsed.schema)) {
-    throw new Error(
-      `[@concierge/attestation] parseFeedbackEnvelope: unknown schema id '${parsed.schema}'. Known: ${SCHEMA_IDS.join(', ')}.`,
-    );
-  }
-  return parsed;
+  return feedbackEnvelopeSchema.parse(input);
 }

@@ -1,20 +1,13 @@
 /**
  * Deterministic JSON serialization for the feedback envelope.
  *
- * **Contract:** the byte output MUST be identical across runs / clients for
- * any input that compares structurally equal — keys sorted at every nesting
- * level, no whitespace, no indentation, no newlines. This is the input to
- * `keccak256()` for the on-chain attestation pointer; any drift breaks
- * verification.
- *
- * - String / number / boolean / null → JSON.stringify (handles escapes).
- * - Array → preserve element order; each element canonicalized.
- * - Plain object → keys sorted alphabetically; each value canonicalized.
- * - bigint → throws (caller MUST stringify before passing in; JSON has no
- *   bigint primitive and silent number coercion would lose precision).
- * - undefined / function / symbol → throws (no valid JSON encoding).
- * - cyclic graphs → throws (would JSON.stringify-loop otherwise).
+ * **Contract:** byte output MUST be identical across runs/clients for any
+ * input that compares structurally equal. Keys sorted at every level, no
+ * whitespace, arrays preserve order. This is the input to `keccak256()`
+ * for the on-chain attestation pointer; any drift breaks verification.
  */
+const FORBIDDEN_KEYS: ReadonlySet<string> = new Set(['__proto__', 'constructor', 'prototype']);
+
 export function canonicalize(input: unknown): string {
   return walk(input, new WeakSet<object>());
 }
@@ -60,10 +53,22 @@ function walk(value: unknown, seen: WeakSet<object>): string {
     const keys = Object.keys(obj).sort();
     const parts: string[] = [];
     for (const k of keys) {
-      // Skip undefined values (matches JSON.stringify behavior for object
-      // fields, where `undefined` is dropped). Throwing here would break
-      // round-tripping JSON-shaped data through the canonicalizer.
-      if (obj[k] === undefined) continue;
+      // CWE-1321: reject prototype-pollution-ish own-property keys. The
+      // hash preimage must never include these (downstream JSON.parse +
+      // unsafe merge utilities are a real foot-gun).
+      if (FORBIDDEN_KEYS.has(k)) {
+        throw new Error(`[@concierge/attestation] canonicalize: forbidden key '${k}' (CWE-1321).`);
+      }
+      // ROUND-1 FIX: throw on `undefined` object values too. The pre-round
+      // behavior silently dropped them, so `{a:1,b:undefined}` and `{a:1}`
+      // produced identical canonical bytes → identical keccak → two
+      // semantically-different envelopes hashed to the same on-chain
+      // pointer. Producers MUST `delete` keys they don't want included.
+      if (obj[k] === undefined) {
+        throw new Error(
+          `[@concierge/attestation] canonicalize: undefined value at key '${k}' — delete the key explicitly.`,
+        );
+      }
       parts.push(`${JSON.stringify(k)}:${walk(obj[k], seen)}`);
     }
     seen.delete(value);
