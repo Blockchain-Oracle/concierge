@@ -1,3 +1,4 @@
+import { ConciergeError } from '@concierge/sdk';
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_MODEL_BY_PHASE,
@@ -61,8 +62,15 @@ describe('routeModelForPhase', () => {
     expect(routeModelForPhase('decide', { riskFlagged: false })).toBe(MODEL_SONNET);
   });
 
-  it('throws on unknown phase (runtime guard for JS callers)', () => {
-    expect(() => routeModelForPhase('mystery' as unknown as TickPhase)).toThrow(/unknown phase/);
+  it('throws ConciergeError on unknown phase (typed discriminator for JS callers)', () => {
+    try {
+      routeModelForPhase('mystery' as unknown as TickPhase);
+      throw new Error('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(ConciergeError);
+      expect((e as ConciergeError).type).toBe('ConfigError');
+      expect((e as ConciergeError).message).toMatch(/unknown phase/);
+    }
   });
 
   it('DEFAULT_MODEL_BY_PHASE matches routeModelForPhase for non-risk-flagged decide', () => {
@@ -86,9 +94,11 @@ describe('runtime narrowers (silent-failure C1 — JS-caller boundary)', () => {
     expect(assertModel(MODEL_SONNET)).toBe(MODEL_SONNET);
   });
 
-  it('assertModel: throws with the valid model list on miss', () => {
+  it('assertModel: throws with EVERY valid model id on miss (catches partial-drop regression)', () => {
     expect(() => assertModel('claude-sonnet-4.6')).toThrow(/Expected one of:/);
     expect(() => assertModel('claude-sonnet-4.6')).toThrow(/claude-sonnet-4-6/);
+    expect(() => assertModel('claude-sonnet-4.6')).toThrow(/claude-opus-4-7/);
+    expect(() => assertModel('claude-sonnet-4.6')).toThrow(/claude-haiku-4-5/);
   });
 
   it('isTickPhase: matches frozen TICK_PHASES set', () => {
