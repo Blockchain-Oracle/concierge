@@ -35,10 +35,19 @@ export const pinReceipts = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
   },
   (table) => ({
-    /** CIDv1 base32 lowercase OR CIDv0 base58btc (round-1: tighter than (bafy|Qm).*). */
+    /** CIDv1 base32 (any codec) OR CIDv0 base58btc — round-2 broadened from `bafy`-only. */
     cidShape: check(
       'pin_receipts_cid_shape',
-      sql`${table.cid} ~ '^bafy[a-z2-7]{52,}$' OR ${table.cid} ~ '^Qm[1-9A-HJ-NP-Za-km-z]{44}$'`,
+      sql`${table.cid} ~ '^ba[a-z2-7]{56,256}$' OR ${table.cid} ~ '^Qm[1-9A-HJ-NP-Za-km-z]{44}$'`,
+    ),
+    /** Round-2 fix (code-reviewer): primary_cid/fallback_cid had NO shape CHECK. */
+    primaryCidShape: check(
+      'pin_receipts_primary_cid_shape',
+      sql`${table.primaryCid} IS NULL OR ${table.primaryCid} ~ '^ba[a-z2-7]{56,256}$' OR ${table.primaryCid} ~ '^Qm[1-9A-HJ-NP-Za-km-z]{44}$'`,
+    ),
+    fallbackCidShape: check(
+      'pin_receipts_fallback_cid_shape',
+      sql`${table.fallbackCid} IS NULL OR ${table.fallbackCid} ~ '^ba[a-z2-7]{56,256}$' OR ${table.fallbackCid} ~ '^Qm[1-9A-HJ-NP-Za-km-z]{44}$'`,
     ),
     /** agent_id uint256 decimal string. */
     agentIdUint256: check('pin_receipts_agent_id_uint256', sql`${table.agentId} ~ '^[0-9]+$'`),

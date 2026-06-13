@@ -11,7 +11,8 @@
  * interface stays so a second provider (Pinata backup account, Lighthouse,
  * a real Storacha client, etc.) can be wired in a follow-up.
  */
-export type PinServiceName = 'pinata' | (string & { readonly __pinServiceName?: never });
+/** Production wires 'pinata' here; second adapter (future) can use any string. */
+export type PinServiceName = string;
 
 export interface PinService {
   readonly name: PinServiceName;
@@ -34,12 +35,17 @@ export class PinServiceNotConfigured extends Error {
 const PINATA_V3_HOST = 'https://uploads.pinata.cloud';
 
 /**
- * Lightweight CIDv1 (base32 lowercase) + CIDv0 (base58btc) regex.
- *   - CIDv1 base32: `bafy[a-z2-7]{52,}` (multibase 'b' prefix → base32 lowercase no-padding)
- *   - CIDv0 base58btc: `Qm[1-9A-HJ-NP-Za-km-z]{44}` (excludes 0/O/I/l)
- * Avoids the multiformats runtime dep; tightens vs the round-0 startsWith.
+ * CIDv1 base32 lowercase (any codec) + CIDv0 base58btc regex.
+ *
+ * Round-2 CRITICAL fix: round-1's `^bafy[a-z2-7]{52,}$` only accepted
+ * dag-pb codec. Pinata V3 returns `bafk` for the `raw` codec, which is
+ * what we ACTUALLY get when uploading JSON via multipart. The round-1
+ * regex would silently reject every legitimate Pinata V3 response with
+ * "malformed CID." Broadened to `ba[a-z2-7]{56,256}$` accepting all
+ * base32-encoded CIDv1 codecs (bafy/bafk/bafr/etc) with a 256-char
+ * upper bound (CWE-1284 DoS guard; real CIDv1 sha2-256 is ~59 chars).
  */
-const CID_V1_RE = /^bafy[a-z2-7]{52,}$/;
+const CID_V1_RE = /^ba[a-z2-7]{56,256}$/;
 const CID_V0_RE = /^Qm[1-9A-HJ-NP-Za-km-z]{44}$/;
 function isValidCid(s: string): boolean {
   return CID_V1_RE.test(s) || CID_V0_RE.test(s);
@@ -66,16 +72,17 @@ export function createPinataPinService(config: {
   return {
     name: 'pinata',
     async pin({ canonical, displayName, signal }) {
+      // Round-2 CWE-93: sanitize before multipart embedding. Control chars
+      // and quotes could escape the Content-Disposition `filename="…"` line
+      // in legacy multipart encoders. WHATWG FormData URL-encodes today,
+      // but defense-in-depth keeps the data Pinata-dashboard-friendly too.
+      const safeName = sanitizeDisplayName(displayName);
       const form = new FormData();
-      // Blob with explicit JSON content-type preserves the raw bytes; the
-      // multipart encoder does not re-serialize.
-      form.set(
-        'file',
-        new Blob([canonical], { type: 'application/json' }),
-        `${displayName.slice(0, 128)}.json`,
-      );
+      // Blob with explicit JSON content-type preserves raw bytes; multipart
+      // encoder does NOT re-serialize. THIS is the round-1 CRITICAL fix.
+      form.set('file', new Blob([canonical], { type: 'application/json' }), `${safeName}.json`);
       form.set('network', network);
-      form.set('name', displayName.slice(0, 128));
+      form.set('name', safeName);
       const res = await fetchImpl(`${host}/v3/files`, {
         method: 'POST',
         headers: { authorization: `Bearer ${config.jwt}` },
@@ -83,9 +90,20 @@ export function createPinataPinService(config: {
         signal,
       });
       if (!res.ok) {
-        throw new Error(`pinata: ${res.status} ${res.statusText}`);
+        // Round-2 CWE-117: strip control chars from server-supplied statusText
+        // to prevent log-line forgery.
+        const safeStatus = stripCtrl(res.statusText).slice(0, 128);
+        throw new Error(`pinata: ${res.status} ${safeStatus}`);
       }
-      const body = (await res.json()) as { data?: { cid?: unknown } };
+      const body = (await res.json()) as { data?: { cid?: unknown }; error?: unknown };
+      // Round-2: handle the 200-with-error-envelope case. Pinata can return
+      // 200 + `{ error: 'quota exceeded' }` for soft failures. Without this
+      // check, body.data?.cid is undefined and the malformed-CID error path
+      // catches it — but with a cryptic "''" message instead of the real cause.
+      if (body.error !== undefined) {
+        const safeErr = stripCtrl(String(body.error)).slice(0, 512);
+        throw new Error(`pinata: 200 with error envelope: ${safeErr}`);
+      }
       const cid = typeof body.data?.cid === 'string' ? body.data.cid : '';
       if (!isValidCid(cid)) {
         throw new Error(`pinata: returned malformed CID '${cid.slice(0, 64)}'`);
@@ -93,6 +111,16 @@ export function createPinataPinService(config: {
       return { cid, pinId: `pinata:${cid}` };
     },
   };
+}
+
+/** Allow `[A-Za-z0-9_.-]` only; cap 128. Prevents CR/LF/quote injection (CWE-93). */
+function sanitizeDisplayName(s: string): string {
+  return s.replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 128);
+}
+
+function stripCtrl(s: string): string {
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: deliberate control strip (CWE-117 mitigation)
+  return s.replace(/[\u0000-\u001f\u007f]/g, '?');
 }
 
 export { isValidCid };

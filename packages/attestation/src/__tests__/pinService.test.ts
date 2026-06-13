@@ -27,18 +27,28 @@ function fail(status: number, statusText: string): Response {
   } as any;
 }
 
-describe('isValidCid — round-1 stricter regex', () => {
-  it('accepts CIDv1 base32 lowercase', () => {
+describe('isValidCid — round-2 broadened across CIDv1 codecs', () => {
+  it('accepts CIDv1 dag-pb (bafy prefix)', () => {
     expect(isValidCid(VALID_CIDV1)).toBe(true);
+  });
+  it('round-2 CRITICAL: accepts CIDv1 raw codec (bafk prefix) — Pinata V3 returns this for JSON uploads', () => {
+    const bafk = `bafk${'a'.repeat(56)}`;
+    expect(isValidCid(bafk)).toBe(true);
+  });
+  it('accepts CIDv1 dag-cbor (bafyr prefix variant) + any base32 codec', () => {
+    expect(isValidCid(`bafr${'2'.repeat(56)}`)).toBe(true);
   });
   it('accepts CIDv0 base58btc', () => {
     expect(isValidCid(VALID_CIDV0)).toBe(true);
   });
-  it('REJECTS uppercase CIDv1 (round-0 regex would pass; round-1 must not)', () => {
+  it('REJECTS uppercase CIDv1', () => {
     expect(isValidCid('bafyBEIBQ2J5P4D3XRR5N6JXHQXHQXHQXHQXHQXHQXHQXHQXHQXHQXHQXHQ')).toBe(false);
   });
-  it('REJECTS bafy with arbitrary suffix shorter than 52 chars', () => {
+  it('REJECTS short suffix', () => {
     expect(isValidCid('bafyabc')).toBe(false);
+  });
+  it('round-2 CWE-1284: REJECTS suffix > 256 chars (DoS guard)', () => {
+    expect(isValidCid(`bafy${'a'.repeat(300)}`)).toBe(false);
   });
   it('REJECTS Qm with wrong length', () => {
     expect(isValidCid('Qm12345')).toBe(false);
@@ -117,5 +127,78 @@ describe('createPinataPinService — V3 multipart (round-1 CRITICAL fix: raw byt
     await expect(
       svc.pin({ canonical: CANONICAL, displayName: 'x', signal: new AbortController().signal }),
     ).rejects.toThrow(/ECONNRESET/);
+  });
+});
+
+describe('createPinataPinService — round-2 hardening', () => {
+  it('CRITICAL byte-identical round-trip: the Blob payload === CANONICAL (locks the V3 fix)', async () => {
+    // Pre-round-2 test only checked `file instanceof Blob`; a regression
+    // wrapping CANONICAL in JSON.stringify before `new Blob([...])` would
+    // STILL produce a Blob and pass. This reads the actual bytes back.
+    const fetchSpy = vi.fn().mockResolvedValue(ok({ data: { cid: VALID_CIDV1 } }));
+    const svc = createPinataPinService({ jwt: 'jwt-1', fetch: fetchSpy });
+    await svc.pin({
+      canonical: CANONICAL,
+      displayName: 'x',
+      signal: new AbortController().signal,
+    });
+    const call = fetchSpy.mock.calls[0];
+    if (call === undefined) throw new Error('expected fetch invoked');
+    const form = call[1].body as FormData;
+    const file = form.get('file');
+    if (!(file instanceof Blob)) throw new Error('expected Blob file part');
+    const text = await file.text();
+    expect(text).toBe(CANONICAL);
+  });
+
+  it('200 with `{ error }` envelope → throws WITH the error message (no opaque malformed-CID)', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue(ok({ error: 'quota exceeded' }));
+    const svc = createPinataPinService({ jwt: 'jwt-1', fetch: fetchSpy });
+    await expect(
+      svc.pin({ canonical: CANONICAL, displayName: 'x', signal: new AbortController().signal }),
+    ).rejects.toThrow(/quota exceeded/);
+  });
+
+  it('200 with `{ data: {} }` (missing cid) → throws malformed-CID (NOT TypeError)', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue(ok({ data: {} }));
+    const svc = createPinataPinService({ jwt: 'jwt-1', fetch: fetchSpy });
+    await expect(
+      svc.pin({ canonical: CANONICAL, displayName: 'x', signal: new AbortController().signal }),
+    ).rejects.toThrow(/malformed CID/);
+  });
+
+  it('CWE-93: displayName with CR/LF/quote characters → sanitized in multipart fields', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue(ok({ data: { cid: VALID_CIDV1 } }));
+    const svc = createPinataPinService({ jwt: 'jwt-1', fetch: fetchSpy });
+    await svc.pin({
+      canonical: CANONICAL,
+      displayName: 'bad\r\nname"with quote',
+      signal: new AbortController().signal,
+    });
+    const call = fetchSpy.mock.calls[0];
+    if (call === undefined) throw new Error('expected fetch invoked');
+    const form = call[1].body as FormData;
+    const nameField = String(form.get('name'));
+    expect(nameField).not.toContain('\r');
+    expect(nameField).not.toContain('\n');
+    expect(nameField).not.toContain('"');
+  });
+
+  it('CWE-117: server statusText with control chars → stripped in error', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue(fail(503, 'Service\nUnavailable\r\n[ADMIN]'));
+    const svc = createPinataPinService({ jwt: 'jwt-1', fetch: fetchSpy });
+    let caught: unknown = null;
+    try {
+      await svc.pin({
+        canonical: CANONICAL,
+        displayName: 'x',
+        signal: new AbortController().signal,
+      });
+    } catch (e) {
+      caught = e;
+    }
+    if (!(caught instanceof Error)) throw new Error('expected Error');
+    expect(caught.message).not.toContain('\n');
+    expect(caught.message).not.toContain('\r');
   });
 });

@@ -109,15 +109,11 @@ export async function pinFeedback(
     );
   }
 
-  // Pick the winner — primary if ok, else fallback.
-  const winner = primary.ok ? primary : fallback;
-  if (!winner.ok) {
-    throw new ConciergeError(
-      'IPFSPinFailed',
-      `[@concierge/attestation] pinFeedback: invariant violated — no winner despite ok branch.`,
-    );
-  }
-  const cid = winner.cid;
+  // Pick the winner — primary if ok, else fallback (line-99 check guaranteed
+  // at least one ok, so the fallback branch is `ok:true` by construction).
+  // The cast is the TS-narrowing assertion the type system can't prove across
+  // the ternary; round-2 dropped the defensive throw (was unreachable).
+  const cid = primary.ok ? primary.cid : (fallback as Extract<PinAttempt, { ok: true }>).cid;
 
   // CID divergence detection (round-1 silent-failure CRITICAL fix): Pinata
   // dag-pb and a future fallback's `raw` codec produce DIFFERENT CIDs for

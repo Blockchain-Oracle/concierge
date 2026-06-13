@@ -20,7 +20,9 @@ CREATE TABLE IF NOT EXISTS "pin_receipts" (
   "fallback_error" text,
   "fallback_not_configured" boolean NOT NULL DEFAULT false,
   "created_at" timestamp with time zone DEFAULT now() NOT NULL,
-  CONSTRAINT "pin_receipts_cid_shape" CHECK ("cid" ~ '^bafy[a-z2-7]{52,}$' OR "cid" ~ '^Qm[1-9A-HJ-NP-Za-km-z]{44}$'),
+  CONSTRAINT "pin_receipts_cid_shape" CHECK ("cid" ~ '^ba[a-z2-7]{56,256}$' OR "cid" ~ '^Qm[1-9A-HJ-NP-Za-km-z]{44}$'),
+  CONSTRAINT "pin_receipts_primary_cid_shape" CHECK ("primary_cid" IS NULL OR "primary_cid" ~ '^ba[a-z2-7]{56,256}$' OR "primary_cid" ~ '^Qm[1-9A-HJ-NP-Za-km-z]{44}$'),
+  CONSTRAINT "pin_receipts_fallback_cid_shape" CHECK ("fallback_cid" IS NULL OR "fallback_cid" ~ '^ba[a-z2-7]{56,256}$' OR "fallback_cid" ~ '^Qm[1-9A-HJ-NP-Za-km-z]{44}$'),
   CONSTRAINT "pin_receipts_agent_id_uint256" CHECK ("agent_id" ~ '^[0-9]+$'),
   CONSTRAINT "pin_receipts_hash_bytes32" CHECK ("hash" ~ '^0x[0-9a-fA-F]{64}$'),
   CONSTRAINT "pin_receipts_at_least_one_ok" CHECK ("primary_ok" = true OR "fallback_ok" = true)
