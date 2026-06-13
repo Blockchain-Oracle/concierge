@@ -1,6 +1,23 @@
 export { type CanonicalizeOptions, canonicalize } from './canonicalize.ts';
 export { computeFeedbackHash, computeFeedbackPair } from './hash.ts';
 export {
+  createGatewayFetcher,
+  type GetOrFetchDeps,
+  type GetOrFetchResult,
+  getOrFetchPayload,
+  type IpfsCacheRepo,
+  type IpfsGatewayFetcher,
+  type PayloadError,
+} from './ipfsCache.ts';
+export {
+  type AgentHistoryEntry,
+  type LoadAgentHistoryDeps,
+  type LoadAgentHistoryInputs,
+  type LoadAgentHistoryResult,
+  loadAgentHistory,
+  type RawFeedbackEntry,
+} from './loadAgentHistory.ts';
+export {
   type PinAttempt,
   type PinFeedbackDeps,
   type PinFeedbackResult,

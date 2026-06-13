@@ -25,6 +25,11 @@ export {
   type NewExecution,
 } from './executions.ts';
 export {
+  type IpfsCacheRow,
+  ipfsCache,
+  type NewIpfsCacheRow,
+} from './ipfsCache.ts';
+export {
   type NewPinReceipt,
   type PinReceipt,
   pinReceipts,
