@@ -51,6 +51,10 @@ export const CONCIERGE_ERROR_TYPES = Object.freeze([
   // backend (Redis NX) is unreachable / misconfigured, NOT for "lock held"
   // — that's a normal tick.skipped result, not an error.
   'LockError',
+  // LLM output failed Zod schema validation (story-63). Distinct from
+  // RpcError so the planner can route retries (Zod failures are
+  // deterministic; RPC failures retryable with backoff).
+  'PlanSchemaViolation',
 ] as const);
 
 export type ConciergeErrorType = (typeof CONCIERGE_ERROR_TYPES)[number];
