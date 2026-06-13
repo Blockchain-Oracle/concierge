@@ -1,12 +1,8 @@
-/**
- * Cross-process determinism helper. Reads a JSON envelope from stdin,
- * computes the hash, prints the bytes32 hex on stdout. Invoked via
- * child_process by the spawn-spawn-compare test in hash.test.ts.
- *
- * Kept minimal so any future divergence between fresh-Node and warm-Vitest
- * keccak implementations shows up cleanly.
- */
-import { computeFeedbackHash } from '../../hash.ts';
+// Cross-process determinism helper. Invoked via `node` against the BUILT
+// dist/ output — NOT tsx. Reading from a network-fetched tsx would let two
+// children silently agree on the same wrong version, masking the very
+// drift this test exists to catch.
+import { computeFeedbackHash } from '../../../dist/index.js';
 
 let buf = '';
 process.stdin.setEncoding('utf8');

@@ -1,5 +1,5 @@
 export { type CanonicalizeOptions, canonicalize } from './canonicalize.ts';
-export { computeFeedbackHash, computeFeedbackHashUnchecked } from './hash.ts';
+export { computeFeedbackHash } from './hash.ts';
 export {
   type FeedbackEnvelope,
   feedbackEnvelopeSchema,
