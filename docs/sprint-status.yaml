@@ -641,10 +641,14 @@ stories:
     issue_url: ""
     pr_url: "https://github.com/Blockchain-Oracle/concierge/pull/129"
     merged_at: "2026-06-13"
-  - id: story-151-skill-cli-bootstrap
+  # Renamed 2026-06-13: story file is story-151-skill-manifest-yaml.md;
+  # scope is canonical SKILL.md frontmatter + Zod validator, NOT a CLI bootstrap.
+  # depends_on relaxed: story-132 not yet in sprint — replaced with story-150
+  # which is what the substantive work actually needs.
+  - id: story-151-skill-manifest-yaml
     epic: "Epic E9 — RealClaw Skill Packaging"
-    status: PENDING
-    depends_on: [story-150-skill-package-structure, story-22-sdk-skeleton]
+    status: COMPLETE
+    depends_on: [story-150-skill-package-structure]
     issue_url: ""
     pr_url: ""
     merged_at: ""

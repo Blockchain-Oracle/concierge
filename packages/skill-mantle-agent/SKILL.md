@@ -3,7 +3,13 @@ name: concierge-mantle-agent
 description: Autonomous DeFi agent for Mantle. Plans, simulates, executes, and attests positions across Aave V3, Ethena sUSDe, Ondo USDY, mETH staking, Mantle DEXes, and Li.Fi bridging — with ERC-8004 reputation per tick.
 version: 0.1.0
 homepage: https://concierge.xyz
+repository: https://github.com/Blockchain-Oracle/concierge
 license: MIT
+mcp_server_url: https://mcp.concierge.xyz/mcp
+oauth_client_id: concierge-mantle-agent-skill
+supported_chains:
+  - 5000
+  - 5003
 tools:
   - name: get_agent_state
     permission: read:agent

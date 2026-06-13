@@ -1,0 +1,90 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://concierge.xyz/schemas/skill-manifest.schema.json",
+  "title": "RealClaw Skill Manifest (SKILL.md frontmatter)",
+  "description": "Canonical metadata for a RealClaw-packaged Concierge skill. Lives in the YAML frontmatter of SKILL.md. Runtime gate: packages/skill-mantle-agent/scripts/validate-manifest.ts.",
+  "type": "object",
+  "required": [
+    "name",
+    "description",
+    "version",
+    "homepage",
+    "repository",
+    "license",
+    "mcp_server_url",
+    "oauth_client_id",
+    "supported_chains",
+    "tools",
+    "permissions"
+  ],
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "description": "Skill ID. kebab-case; unique within the RealClaw registry."
+    },
+    "description": {
+      "type": "string",
+      "minLength": 20,
+      "description": "One-paragraph user-facing summary. Appears in skill registry listings."
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Semver MAJOR.MINOR.PATCH. Pre-release tags (e.g. 0.1.0-rc.1) NOT supported by the registry today."
+    },
+    "homepage": {
+      "type": "string",
+      "format": "uri"
+    },
+    "repository": {
+      "type": "string",
+      "format": "uri"
+    },
+    "license": {
+      "type": "string",
+      "enum": ["MIT"],
+      "description": "Mantle-ecosystem norm. Other licenses require an audit conversation before listing."
+    },
+    "mcp_server_url": {
+      "type": "string",
+      "format": "uri",
+      "description": "Production MCP endpoint clients talk to. Streamable-HTTP per ADR-011 (story-133)."
+    },
+    "oauth_client_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "OAuth client ID registered with concierge.xyz's OAuth server (story-134). MCP clients use it to start the OAuth flow on 401."
+    },
+    "supported_chains": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "integer", "minimum": 1 },
+      "description": "EVM chain IDs the agent operates on. Mantle Mainnet = 5000, Mantle Sepolia = 5003."
+    },
+    "tools": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["name", "description", "permission"],
+        "properties": {
+          "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+          "description": { "type": "string", "minLength": 10 },
+          "permission": {
+            "type": "string",
+            "description": "OAuth scope required to invoke. MUST appear in top-level `permissions`."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "permissions": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string" },
+      "description": "OAuth scopes the skill requests at install time. Per tool, see tools[].permission."
+    }
+  },
+  "additionalProperties": true
+}
