@@ -438,11 +438,11 @@ stories:
     merged_at: "2026-06-13"
   - id: story-81-ipfs-pinning-pinata
     epic: "Epic E6 — ERC-8004 Attestation Flow"
-    status: PENDING
+    status: COMPLETE
     depends_on: [story-80-feedback-uri-schema]
     issue_url: ""
-    pr_url: ""
-    merged_at: ""
+    pr_url: "https://github.com/Blockchain-Oracle/concierge/pull/119"
+    merged_at: "2026-06-13"
   - id: story-82-feedback-hash-compute
     epic: "Epic E6 — ERC-8004 Attestation Flow"
     status: COMPLETE
