@@ -745,8 +745,8 @@ stories:
     status: COMPLETE
     depends_on: [story-19-deploy-script-mainnet-gated]
     issue_url: ""
-    pr_url: ""
-    merged_at: ""
+    pr_url: "https://github.com/Blockchain-Oracle/concierge/pull/134"
+    merged_at: "2026-06-13"
   - id: story-191-sepolia-faucet-page
     epic: "Epic E11 — Mainnet Deployment + Sepolia Playground"
     status: PENDING
