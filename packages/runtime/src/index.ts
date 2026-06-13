@@ -1,6 +1,24 @@
 export { createLock } from './lock.ts';
 export type { ActionSimResult, ComputeDeltaStateInput, DeltaState } from './phases/deltaState.ts';
 export { computeDeltaState } from './phases/deltaState.ts';
+export type {
+  ApprovedProposal,
+  EoaQueueEnqueue,
+  ExecutionRepository,
+  ExecutorClient,
+  RunExecuteDeps,
+  RunExecuteInputs,
+  SessionKeyLoader,
+  UserOpReceipt,
+} from './phases/execute.ts';
+export { runExecute } from './phases/execute.ts';
+export {
+  EXECUTE_OUTCOMES,
+  type ExecuteOutcome,
+  type ExecuteOutcomeKind,
+  type ExecutionRow,
+  executionRowSchema,
+} from './phases/executeSchema.ts';
 export type { RunPlanInputs, RunPlanOptions } from './phases/plan.ts';
 export { runPlan } from './phases/plan.ts';
 export {

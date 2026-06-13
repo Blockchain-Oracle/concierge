@@ -36,6 +36,10 @@ export const CONCIERGE_ERROR_TYPES = Object.freeze([
   'DecryptionFailed',
   'SessionKeyExpired',
   'SessionKeyRevoked',
+  // Bundler rejected because the session key's policy doesn't permit this
+  // call (target / selector / amount cap). Distinct from a tx revert — the
+  // user must re-issue with broader scope, not retry. (story-66)
+  'SessionKeyPolicyRejected',
   // Revocation flow (story-54). Caller knows the DB step succeeded but the
   // on-chain step did NOT — retry the on-chain step, don't re-issue.
   'RevocationPartialFailure',
