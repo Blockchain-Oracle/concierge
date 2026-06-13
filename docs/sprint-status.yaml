@@ -922,11 +922,11 @@ stories:
   # MCP rework — three new MCP stories
   - id: story-136-mcp-stdio-publish
     epic: "Epic E8 — MCP Server"
-    status: PENDING
+    status: COMPLETE
     depends_on: [story-130-mcp-server-bootstrap]
     issue_url: ""
-    pr_url: ""
-    merged_at: ""
+    pr_url: "https://github.com/Blockchain-Oracle/concierge/pull/131"
+    merged_at: "2026-06-13"
   - id: story-137-mcp-apps-ui-resources
     epic: "Epic E8 — MCP Server"
     status: PENDING
