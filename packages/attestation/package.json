@@ -29,6 +29,7 @@
     "prepack": "pnpm run build"
   },
   "dependencies": {
+    "@concierge/sdk": "workspace:*",
     "viem": "2.52.2",
     "zod": "4.1.13"
   },

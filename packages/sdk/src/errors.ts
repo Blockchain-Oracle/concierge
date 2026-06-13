@@ -24,6 +24,10 @@ export const CONCIERGE_ERROR_TYPES = Object.freeze([
   'InsufficientLiquidity',
   'OracleUnavailable',
   'AttestationFailed',
+  // BOTH IPFS pinning services failed (Pinata primary + web3.storage
+  // fallback). Distinct from RpcError so callers can route to a manual-
+  // pin queue rather than a transient retry. (story-81)
+  'IPFSPinFailed',
   'UserRejected',
   'NetworkUnsupported',
   'RpcError',

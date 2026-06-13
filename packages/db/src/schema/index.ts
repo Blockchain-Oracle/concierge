@@ -25,6 +25,11 @@ export {
   type NewExecution,
 } from './executions.ts';
 export {
+  type NewPinReceipt,
+  type PinReceipt,
+  pinReceipts,
+} from './pinReceipts.ts';
+export {
   type NewProposal,
   type Proposal,
   type ProposalKind,
