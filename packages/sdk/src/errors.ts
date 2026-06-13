@@ -184,6 +184,20 @@ export class ConciergeError extends Error {
         result['metadata'] = '[unserializable metadata]';
       }
     }
+    // For AggregateError causes (e.g. RevocationPartialFailure carrying every
+    // retry attempt), include a lossy summary of inner error messages so the
+    // diagnostic data survives `JSON.stringify(err)`. We deliberately omit raw
+    // `cause` (it may carry URLs), but the summary is the OnChainRevoker's
+    // sanitized output (story-54 scrubLeakage) and safe by contract.
+    if (this.cause instanceof AggregateError) {
+      result['causeSummary'] = {
+        kind: 'AggregateError',
+        message: this.cause.message,
+        attempts: this.cause.errors.map((e) =>
+          e instanceof Error ? { name: e.name, message: e.message } : { value: String(e) },
+        ),
+      };
+    }
     return result;
   }
 }

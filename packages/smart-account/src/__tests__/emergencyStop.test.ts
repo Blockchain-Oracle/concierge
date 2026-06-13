@@ -77,24 +77,41 @@ describe('emergencyStop (story-54)', () => {
       { id: SK_1, agentId: AGENT_ID, publicAddress: SK_ADDR_A, revokedAt: null },
       { id: SK_2, agentId: AGENT_ID, publicAddress: SK_ADDR_B, revokedAt: null },
     ]);
-    let calls = 0;
+    // Intercept by WHERE argument (which is what production code routes on),
+    // not by call order — Promise.allSettled offers no scheduling guarantees.
     const realUpdate = handle.db.update;
     handle.db.update = (...args: unknown[]) => {
-      calls++;
-      if (calls === 2) {
-        return {
-          // biome-ignore lint/suspicious/noExplicitAny: stub
-          set: (_p: any) => ({
-            where: (_w: unknown) => ({
-              returning: async () => {
-                throw new Error('connection terminated');
-              },
-            }),
-          }),
-        };
-      }
       // biome-ignore lint/suspicious/noExplicitAny: stub
-      return (realUpdate as any)(...args);
+      const chain = (realUpdate as any)(...args);
+      return {
+        // biome-ignore lint/suspicious/noExplicitAny: stub
+        set: (patch: any) => ({
+          where: (w: unknown) => {
+            // Walk the WHERE for the target id literal — argument-based
+            // intercept (deterministic) instead of call-order (raceable).
+            const seen = new WeakSet<object>();
+            let targetId: string | undefined;
+            function walk(node: unknown): void {
+              if (node === null || typeof node !== 'object') return;
+              if (seen.has(node as object)) return;
+              seen.add(node as object);
+              // biome-ignore lint/suspicious/noExplicitAny: drizzle internals
+              const n = node as any;
+              if (typeof n.value === 'string' && n.value === SK_2) targetId = SK_2;
+              if (Array.isArray(n.queryChunks)) for (const c of n.queryChunks) walk(c);
+            }
+            walk(w);
+            if (targetId === SK_2) {
+              return {
+                returning: async () => {
+                  throw new Error('connection terminated');
+                },
+              };
+            }
+            return chain.set(patch).where(w);
+          },
+        }),
+      };
     };
     const result = await emergencyStop({
       db: handle.db,
@@ -102,11 +119,63 @@ describe('emergencyStop (story-54)', () => {
       onChainRevoker,
     });
     expect(result.revoked).toHaveLength(1);
+    expect(result.revoked[0]?.sessionKeyId).toBe(SK_1);
     expect(result.unexpectedFailures).toHaveLength(1);
+    expect(result.unexpectedFailures[0]?.sessionKeyId).toBe(SK_2);
     expect(result.partialFailures).toHaveLength(0);
     expect((result.unexpectedFailures[0]?.cause as Error)?.message).toMatch(
       /connection terminated/,
     );
+  });
+
+  it('bounds concurrency to maxConcurrency (default 2) — avoids Pimlico + nonce hazards', async () => {
+    const rows = Array.from({ length: 6 }, (_, i) => ({
+      id: `99999999-9999-4999-8999-${String(i).padStart(12, '0')}`,
+      agentId: AGENT_ID,
+      publicAddress: SK_ADDR_A,
+      revokedAt: null as Date | null,
+    }));
+    const { db } = makeDb(rows);
+    let inFlight = 0;
+    let peak = 0;
+    onChainRevoker.mockImplementation(async () => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 5));
+      inFlight--;
+      return { txHash: TX_HASH };
+    });
+    const result = await emergencyStop({
+      db,
+      agentId: AGENT_ID,
+      onChainRevoker,
+      maxConcurrency: 2,
+    });
+    expect(result.revoked).toHaveLength(6);
+    expect(peak).toBeLessThanOrEqual(2);
+  });
+
+  it('logs unexpected failures to stderr at push time', async () => {
+    const handle = makeDb([
+      { id: SK_1, agentId: AGENT_ID, publicAddress: SK_ADDR_A, revokedAt: null },
+    ]);
+    handle.db.update = () => ({
+      // biome-ignore lint/suspicious/noExplicitAny: stub
+      set: (_p: any) => ({
+        where: (_w: unknown) => ({
+          returning: async () => {
+            throw new Error('boom');
+          },
+        }),
+      }),
+    });
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await emergencyStop({ db: handle.db, agentId: AGENT_ID, onChainRevoker });
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining('unexpected revocation failure'),
+      expect.objectContaining({ agentId: AGENT_ID }),
+    );
+    errSpy.mockRestore();
   });
 
   it('throws ConfigError on invalid agentId UUID (boundary input validation)', async () => {
