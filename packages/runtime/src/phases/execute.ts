@@ -1,6 +1,7 @@
 import { ConciergeError } from '@concierge/sdk';
 import { sanitizeError } from '../sanitize.ts';
 import type { AgentState, PhaseOutcome } from '../types.ts';
+import { defaultDriftLog, driftPct, eoaFallback, insertOrThrow } from './executeHelpers.ts';
 import type { ExecuteOutcome, ExecutionRow } from './executeSchema.ts';
 
 /** Mantle block time ~6s; 30s wait = 5 confirmations of margin (per story spec). */
@@ -11,12 +12,6 @@ const MAX_REVERT_REASON_LEN = 4096;
 /** UserOp hash shape — 0x + 64 hex chars. Rejecting malformed values closes
  * a CWE-117 log-injection vector via executor-supplied hash interpolation. */
 const USER_OP_HASH_RE = /^0x[0-9a-fA-F]{64}$/;
-
-function defaultDriftLog(msg: string): void {
-  // Stderr so the warning is visible even when no logger is wired (round-1:
-  // logDrift? optional made drift signal silently disable-able).
-  process.stderr.write(`[concierge/runtime] ${msg}\n`);
-}
 
 export interface ApprovedProposal {
   readonly id: string;
@@ -105,13 +100,6 @@ export interface RunExecuteDeps {
 
 const NEVER_ABORT = new AbortController().signal;
 
-function driftPct(actual: bigint, estimate: bigint): number {
-  if (estimate === 0n) return Number.POSITIVE_INFINITY;
-  // Convert to number via difference / estimate; bounded scale so safe in float.
-  const ratio = Number((actual * 10_000n) / estimate) / 10_000;
-  return Math.abs(ratio - 1) * 100;
-}
-
 function isSessionKeyExpired(err: unknown): boolean {
   return err instanceof ConciergeError && err.type === 'SessionKeyExpired';
 }
@@ -176,15 +164,15 @@ export async function runExecute(
       txParams: inputs.proposal.txParams,
       signal,
     });
-    userOpHash = submitted.userOpHash;
-    if (!USER_OP_HASH_RE.test(userOpHash)) {
-      // Defense-in-depth: a malformed userOpHash interpolated into logs and
-      // error messages is a CWE-117 vector. Reject at the boundary.
+    if (!USER_OP_HASH_RE.test(submitted.userOpHash)) {
+      // CWE-117 boundary: reject malformed hash before any interpolation.
       throw new ConciergeError(
         'InvariantViolation',
         `[@concierge/runtime] runExecute: executor returned malformed userOpHash.`,
       );
     }
+    // Normalize to lowercase so downstream log/DB dedup keys are case-stable.
+    userOpHash = submitted.userOpHash.toLowerCase();
   } catch (err) {
     if (err instanceof ConciergeError && err.type === 'InvariantViolation') throw err;
     if (isSessionKeyExpired(err)) {
@@ -207,10 +195,13 @@ export async function runExecute(
     );
   }
 
-  // Round-1: abort fired BETWEEN submit-resolve and wait-start. The UserOp is
-  // already on the bundler; persisting a timeout row preserves the hash so a
-  // late poller can reconcile rather than orphaning the on-chain op DB-side.
+  // Abort between submit-resolve and wait-start: UserOp is already on the
+  // bundler. Persist a timeout row so late polling can reconcile, AND emit a
+  // structured stderr signal so ops sees the orphan-on-bundler event.
   if (signal.aborted) {
+    (deps.logDrift ?? defaultDriftLog)(
+      `orphan_on_bundler agent=${inputs.state.agentId} userOpHash=${userOpHash}`,
+    );
     const row = await insertOrThrow(deps.repository, {
       proposalId: inputs.proposal.id,
       agentId: inputs.state.agentId,
@@ -304,67 +295,4 @@ export async function runExecute(
       gasEstimateDriftPct: drift,
     },
   };
-}
-
-async function eoaFallback(
-  inputs: RunExecuteInputs,
-  deps: RunExecuteDeps,
-): Promise<PhaseOutcome<ExecuteOutcome>> {
-  let queued: { readonly queueId: string };
-  try {
-    queued = await deps.eoaQueue.enqueue({
-      proposalId: inputs.proposal.id,
-      agentId: inputs.state.agentId,
-    });
-  } catch (err) {
-    const safe = sanitizeError(err);
-    throw new ConciergeError(
-      'RpcError',
-      `[@concierge/runtime] runExecute (EOA fallback): enqueue failed: ${safe.message}`,
-      safe,
-    );
-  }
-  // Round-1: orphan reconciliation. If the row insert fails AFTER the queue
-  // entry is committed, the queueId is structured into the error metadata
-  // so ops can cancel the queue row (or hand-insert the missing execution).
-  let row: { readonly id: string };
-  try {
-    row = await deps.repository.insert({
-      proposalId: inputs.proposal.id,
-      agentId: inputs.state.agentId,
-      status: 'awaiting_user_signature',
-    });
-  } catch (err) {
-    const safe = sanitizeError(err);
-    throw new ConciergeError(
-      'RpcError',
-      `[@concierge/runtime] runExecute (EOA fallback): row insert failed AFTER queue enqueue; reconcile queueId=${queued.queueId}: ${safe.message}`,
-      safe,
-      { proposalId: inputs.proposal.id, queueId: queued.queueId },
-    );
-  }
-  return {
-    kind: 'continue',
-    data: {
-      status: 'awaiting_user_signature',
-      executionId: row.id,
-      queueId: queued.queueId,
-    },
-  };
-}
-
-async function insertOrThrow(
-  repo: ExecutionRepository,
-  row: ExecutionRow,
-): Promise<{ readonly id: string }> {
-  try {
-    return await repo.insert(row);
-  } catch (err) {
-    const safe = sanitizeError(err);
-    throw new ConciergeError(
-      'RpcError',
-      `[@concierge/runtime] runExecute: execution row insert failed: ${safe.message}`,
-      safe,
-    );
-  }
 }

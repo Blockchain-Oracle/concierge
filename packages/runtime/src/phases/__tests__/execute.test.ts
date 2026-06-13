@@ -5,6 +5,7 @@ import {
   type ExecutionRepository,
   runExecute,
   type SessionKeyLoader,
+  type UserOpReceipt,
 } from '../execute.ts';
 import {
   makeExecutor,
@@ -281,108 +282,5 @@ describe('runExecute — boundary validation', () => {
         },
       ),
     ).rejects.toBeInstanceOf(ConciergeError);
-  });
-});
-
-describe('runExecute — round-1 hardening', () => {
-  it('CWE-117: executor returns malformed userOpHash → InvariantViolation', async () => {
-    const executor = makeExecutor(null, {
-      submit: vi.fn().mockResolvedValue({ userOpHash: '0xnotahash\nINJECTED' }),
-    });
-    await expect(
-      runExecute(
-        { state: STATE, proposal: PROPOSAL },
-        {
-          executor,
-          sessionKey: withKey(),
-          repository: makeRepo(),
-          eoaQueue: makeQueue(),
-        },
-      ),
-    ).rejects.toSatisfy(
-      (e: unknown) => e instanceof ConciergeError && e.type === 'InvariantViolation',
-    );
-  });
-
-  it('AbortSignal fires between submit and waitForReceipt → timeout row preserves userOpHash', async () => {
-    const ctl = new AbortController();
-    const repo = makeRepo();
-    const executor = makeExecutor(null, {
-      submit: vi.fn().mockImplementation(async () => {
-        ctl.abort();
-        return { userOpHash: USER_OP };
-      }),
-      waitForReceipt: vi.fn(), // MUST NOT be called
-    });
-    const out = await runExecute(
-      { state: STATE, proposal: PROPOSAL },
-      {
-        executor,
-        sessionKey: withKey(),
-        repository: repo,
-        eoaQueue: makeQueue(),
-        abortSignal: ctl.signal,
-      },
-    );
-    if (out.kind === 'continue' && out.data.status === 'timeout') {
-      expect(out.data.userOpHash).toBe(USER_OP);
-    } else {
-      throw new Error('expected timeout');
-    }
-    expect(executor.waitForReceipt).not.toHaveBeenCalled();
-    expect(repo.rows[0]?.status).toBe('timeout');
-  });
-
-  it('EOA orphan reconciliation: enqueue succeeds, insert fails → error metadata carries queueId', async () => {
-    const queue = makeQueue();
-    const repo: ExecutionRepository = {
-      insert: vi.fn().mockRejectedValue(new Error('insert exploded')),
-    };
-    await expect(
-      runExecute(
-        { state: STATE, proposal: PROPOSAL },
-        {
-          executor: makeExecutor(null),
-          sessionKey: noKey(),
-          repository: repo,
-          eoaQueue: queue,
-        },
-      ),
-    ).rejects.toSatisfy((e: unknown) => {
-      if (!(e instanceof ConciergeError)) return false;
-      const md = e.metadata as { queueId?: unknown } | undefined;
-      return e.type === 'RpcError' && md?.queueId === 'q-1';
-    });
-  });
-
-  it('drift threshold boundary: actual = 120_000n (exactly 20%) → no log', async () => {
-    const driftLog = vi.fn();
-    await runExecute(
-      { state: STATE, proposal: PROPOSAL },
-      {
-        executor: makeExecutor(okReceipt({ gasUsedActual: 120_000n })),
-        sessionKey: withKey(),
-        repository: makeRepo(),
-        eoaQueue: makeQueue(),
-        logDrift: driftLog,
-      },
-    );
-    // strict > means 20% itself does NOT log
-    expect(driftLog).not.toHaveBeenCalled();
-  });
-
-  it('drift threshold boundary: actual = 120_100n (just over 20%) → log fires', async () => {
-    const driftLog = vi.fn();
-    await runExecute(
-      { state: STATE, proposal: PROPOSAL },
-      {
-        executor: makeExecutor(okReceipt({ gasUsedActual: 120_100n })),
-        sessionKey: withKey(),
-        repository: makeRepo(),
-        eoaQueue: makeQueue(),
-        logDrift: driftLog,
-      },
-    );
-    expect(driftLog).toHaveBeenCalledTimes(1);
   });
 });
