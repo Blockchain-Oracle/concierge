@@ -71,6 +71,9 @@ function inMemRepo(seed: Record<string, string> = {}): IpfsCacheRepo & {
     async touch(cid) {
       touchCalls.push(cid);
     },
+    async delete(cid: string) {
+      store.delete(cid);
+    },
   };
 }
 
@@ -124,7 +127,7 @@ describe('round-1: createGatewayFetcher URL validation (CWE-918 SSRF)', () => {
 });
 
 describe('round-1: streaming size cap (CWE-770)', () => {
-  it('content-length header > MAX → returns oversized text triggering downstream SCHEMA_VIOLATION', async () => {
+  it('content-length header > MAX → typed oversized result (NOT 1MB string alloc)', async () => {
     const fetchImpl: typeof globalThis.fetch = async () =>
       new Response('x', {
         status: 200,
@@ -132,37 +135,57 @@ describe('round-1: streaming size cap (CWE-770)', () => {
       });
     const g = createGatewayFetcher({ primary: 'https://ipfs.io', fetchImpl });
     const r = await g.fetch(VALID_CID(1), AbortSignal.timeout(5000));
-    expect(r.text.length).toBeGreaterThan(MAX_CONTENT_BYTES);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe('oversized');
   });
 
-  it('streamed body > MAX → reader cancelled before buffer grows past cap', async () => {
-    // Produce a stream that emits 100KB chunks indefinitely. We assert the
-    // captured text length is bounded — proving the reader aborted.
-    let chunksEmitted = 0;
+  it('round-2: content-length NaN → falls through to streaming counter (does NOT bypass)', async () => {
+    let totalEmitted = 0;
     const fetchImpl: typeof globalThis.fetch = async () => {
       const stream = new ReadableStream<Uint8Array>({
         pull(controller) {
-          chunksEmitted++;
-          if (chunksEmitted > 100) {
+          const chunk = new Uint8Array(200_000);
+          totalEmitted += chunk.byteLength;
+          if (totalEmitted > MAX_CONTENT_BYTES * 2) {
+            controller.close();
+            return;
+          }
+          controller.enqueue(chunk);
+        },
+      });
+      return new Response(stream, { status: 200, headers: { 'content-length': 'abc' } });
+    };
+    const g = createGatewayFetcher({ primary: 'https://ipfs.io', fetchImpl });
+    const r = await g.fetch(VALID_CID(1), AbortSignal.timeout(5000));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe('oversized');
+  });
+
+  it('streamed body > MAX → reader cancelled; returns typed oversized result', async () => {
+    const fetchImpl: typeof globalThis.fetch = async () => {
+      let emitted = 0;
+      const stream = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (emitted > MAX_CONTENT_BYTES * 2) {
             controller.close();
             return;
           }
           controller.enqueue(new Uint8Array(100_000));
+          emitted += 100_000;
         },
       });
       return new Response(stream, { status: 200, headers: {} });
     };
     const g = createGatewayFetcher({ primary: 'https://ipfs.io', fetchImpl });
     const r = await g.fetch(VALID_CID(1), AbortSignal.timeout(5000));
-    // Cap is 1MB; allow some slack for the last chunk that pushed over.
-    expect(r.text.length).toBeLessThanOrEqual(MAX_CONTENT_BYTES + 100_000 + 1);
-    expect(chunksEmitted).toBeLessThanOrEqual(12);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe('oversized');
   });
 
   it('getOrFetchPayload surfaces oversized as SCHEMA_VIOLATION', async () => {
     const gateway: IpfsGatewayFetcher = {
       async fetch() {
-        return { status: 200, text: 'x'.repeat(MAX_CONTENT_BYTES + 1) };
+        return { ok: false, reason: 'oversized', status: 200 };
       },
     };
     const res = await getOrFetchPayload(VALID_CID(1), { repo: inMemRepo(), gateway });
@@ -215,10 +238,11 @@ describe('round-1: cache write failure observability (silent-failure fix)', () =
         throw new Error('pg pool drained');
       },
       async touch() {},
+      async delete() {},
     };
     const gateway: IpfsGatewayFetcher = {
       async fetch() {
-        return { status: 200, text: JSON.stringify(envelope(1)) };
+        return { ok: true, status: 200, text: JSON.stringify(envelope(1)) };
       },
     };
     const logger = { error: vi.fn() };
@@ -231,7 +255,7 @@ describe('round-1: cache write failure observability (silent-failure fix)', () =
     expect(meta?.['errName']).toBe('Error');
   });
 
-  it('repo.put rejects with ConciergeError → re-thrown (config bug must escalate)', async () => {
+  it('round-2: repo.put ConciergeError is ALSO swallowed + logged (contract: read MUST succeed)', async () => {
     const repo: IpfsCacheRepo = {
       async get() {
         return null;
@@ -240,15 +264,17 @@ describe('round-1: cache write failure observability (silent-failure fix)', () =
         throw new ConciergeError('ConfigError', 'cache misconfigured');
       },
       async touch() {},
+      async delete() {},
     };
     const gateway: IpfsGatewayFetcher = {
       async fetch() {
-        return { status: 200, text: JSON.stringify(envelope(1)) };
+        return { ok: true, status: 200, text: JSON.stringify(envelope(1)) };
       },
     };
-    await expect(getOrFetchPayload(VALID_CID(1), { repo, gateway })).rejects.toBeInstanceOf(
-      ConciergeError,
-    );
+    const logger = { error: vi.fn() };
+    const res = await getOrFetchPayload(VALID_CID(1), { repo, gateway, logger });
+    expect(res.ok).toBe(true);
+    expect(logger.error).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -261,7 +287,7 @@ describe('round-1: AgentHistoryEntry discriminated union', () => {
         repo: inMemRepo(),
         gateway: {
           async fetch() {
-            return { status: 404, text: '' };
+            return { ok: false, reason: 'http', status: 404 };
           },
         },
       },
@@ -282,7 +308,7 @@ describe('round-1: AgentHistoryEntry discriminated union', () => {
         repo,
         gateway: {
           async fetch() {
-            return { status: 404, text: '' };
+            return { ok: false, reason: 'http', status: 404 };
           },
         },
       },
@@ -319,7 +345,7 @@ describe('round-1: stronger cache assertions (test-quality)', () => {
         repo,
         gateway: {
           async fetch() {
-            return { status: 404, text: '' };
+            return { ok: false, reason: 'http', status: 404 };
           },
         },
       },
