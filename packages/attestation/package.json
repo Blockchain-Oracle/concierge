@@ -28,6 +28,7 @@
     "prepack": "pnpm run build"
   },
   "dependencies": {
+    "viem": "2.52.2",
     "zod": "4.1.13"
   },
   "devDependencies": {

@@ -1,4 +1,5 @@
 export { type CanonicalizeOptions, canonicalize } from './canonicalize.ts';
+export { computeFeedbackHash } from './hash.ts';
 export {
   type FeedbackEnvelope,
   feedbackEnvelopeSchema,
