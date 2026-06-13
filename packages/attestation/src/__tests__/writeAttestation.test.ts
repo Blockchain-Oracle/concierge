@@ -139,25 +139,22 @@ describe('writeAttestation — fail-fast ordering (spec BDD)', () => {
       },
     };
     const logger = { info: vi.fn(), error: vi.fn() };
-    await expect(
-      writeAttestation(INPUTS, {
-        pinDeps: { primary: pinata },
-        writer,
-        logger,
-      }),
-    ).rejects.toSatisfy((e: unknown) => {
-      if (!(e instanceof ConciergeError) || e.type !== 'AttestationFailed') return false;
-      const md = e.metadata as
-        | { cid?: string; hash?: string; dataURI?: string; agentId?: string }
-        | undefined;
-      return (
-        md?.cid === VALID_CIDV1 &&
-        typeof md?.hash === 'string' &&
-        md.hash.startsWith('0x') &&
-        md?.dataURI === `ipfs://${VALID_CIDV1}` &&
-        md?.agentId === '1'
-      );
-    });
+    // Round-2: split bundled toSatisfy into per-field assertions so a single
+    // field regression doesn't collapse to one opaque failure.
+    let caught: unknown;
+    try {
+      await writeAttestation(INPUTS, { pinDeps: { primary: pinata }, writer, logger });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(ConciergeError);
+    const ce = caught as ConciergeError;
+    expect(ce.type).toBe('AttestationFailed');
+    const md = ce.metadata as { cid: string; hash: string; dataURI: string; agentId: string };
+    expect(md.cid).toBe(VALID_CIDV1);
+    expect(md.hash).toMatch(/^0x[a-f0-9]{64}$/);
+    expect(md.dataURI).toBe(`ipfs://${VALID_CIDV1}`);
+    expect(md.agentId).toBe('1');
     expect(logger.error).toHaveBeenCalledTimes(1);
     expect(logger.info).not.toHaveBeenCalled();
   });

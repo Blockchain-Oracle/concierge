@@ -5,12 +5,23 @@ import { isValidCid } from './pinService.ts';
 import { type FeedbackEnvelope, parseFeedbackEnvelope, type SchemaId } from './schema.ts';
 
 const DATAURI_PREFIX = 'ipfs://';
-const UINT256_DECIMAL_RE = /^[0-9]+$/;
 const DEFAULT_ATTEST_TIMEOUT_MS = 60_000;
+const UINT256_MAX = 2n ** 256n - 1n;
+// Round-2: canonical decimal form ONLY — rejects leading zeros so envelope.agentId
+// round-trips by string equality (downstream string comparison wouldn't see '00001' === '1').
+const UINT256_CANONICAL_DECIMAL_RE = /^(0|[1-9][0-9]{0,77})$/;
+const ISO_8601_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
 
 function stripCtrl(s: string): string {
   // biome-ignore lint/suspicious/noControlCharactersInRegex: CWE-117 mitigation
   return s.replace(/[\u0000-\u001f\u007f]/g, '?');
+}
+
+// Round-2 CWE-400: slice BEFORE sanitize so a multi-GB upstream error message
+// doesn't materialize through regex replace before truncation.
+function safeErrMsg(err: unknown, maxLen: number): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  return stripCtrl(raw.slice(0, maxLen));
 }
 
 /**
@@ -18,14 +29,13 @@ function stripCtrl(s: string): string {
  * `giveFeedback(uint256 agentId, ... string feedbackURI, bytes32 feedbackHash)`
  * per research/concierge/03-providers/erc8004.md.
  *
- * **Open contradiction (flagged to human for story-83 resolution):** the
- * already-merged story-42 `attestAction` provider tool uses EIP-712 typed-
- * data hashing (`hashActionPayload`) for feedbackHash, NOT keccak256 of the
- * canonical content. Per CLAUDE.md non-negotiable, the research doc wins.
- * This interface is the spec-conforming shape; production wiring will need
- * either (a) a new lower-level adapter calling giveFeedback directly with
- * our keccak hash, or (b) amendment of story-42 to expose a raw-bytes32
- * variant. story-84 / a follow-up will wire one of these.
+ * **Open contradiction (BLOCKS story-84):** the already-merged story-42
+ * `attestAction` provider tool uses EIP-712 typed-data hashing
+ * (`hashActionPayload`) for feedbackHash, NOT keccak256 of the canonical
+ * content. Per CLAUDE.md non-negotiable, research wins. Resolution path:
+ * either amend story-42 to expose a raw-bytes32 variant, or build a new
+ * low-level adapter calling giveFeedback directly with our keccak hash.
+ * MUST be decided before any story-84 / production wiring.
  */
 export interface Erc8004AttestWriter {
   giveFeedback(args: {
@@ -69,22 +79,26 @@ export interface WriteAttestationResult {
   readonly pin: PinFeedbackResult;
 }
 
+function configError(msg: string): ConciergeError {
+  return new ConciergeError('ConfigError', `[@concierge/attestation] writeAttestation: ${msg}`);
+}
+
 /**
  * Compose the four primitives — envelope build, IPFS pin, content hash,
  * on-chain attest — into ONE function for story-67 record() to call.
  *
  * **Ordering contract (load-bearing):**
- *   1. Build + validate envelope (Zod throws → no IO)
- *   2. computeFeedbackPair: canonical bytes + hash in one pass
- *   3. pinFeedback: IPFS first so the dataURI resolves at on-chain mine time
- *   4. writer.giveFeedback: on-chain reference to the now-pinned CID
+ *   1. Boundary fail-fast: agentId, createdAt, caller signal not pre-aborted
+ *   2. Build + validate envelope (Zod throws → no IO)
+ *   3. computeFeedbackPair: canonical bytes + hash in one pass
+ *   4. pinFeedback: IPFS first so the dataURI resolves at on-chain mine time
+ *   5. writer.giveFeedback: on-chain reference to the now-pinned CID
  *
- * **NO retries inside.** If any step fails, the typed error surfaces to the
- * caller (story-67 record phase) which decides whether to queue retry.
+ * **NO retries inside.** Typed errors surface to the caller.
  *
- * **No pin rollback on on-chain failure** — orphan CIDs on Pinata are cheap
- * and harmless; the next attempt produces the SAME CID (content-addressed)
- * so re-pinning is idempotent.
+ * **No pin rollback on on-chain failure** — CIDs are content-addressed so
+ * orphan pins are cheap and re-pinning is idempotent. Both error paths
+ * that produce an orphan log via `logOrphanPin` for reconciliation.
  */
 export async function writeAttestation(
   inputs: WriteAttestationInputs,
@@ -93,20 +107,33 @@ export async function writeAttestation(
   const now = deps.now ?? (() => new Date());
   const started = now();
 
-  // Round-1 CRITICAL fail-fast: agentId MUST be a uint256-shaped decimal
-  // string. BigInt('agent-1') throws raw SyntaxError mid-pipeline — AFTER
-  // a successful pin — which round-0 misclassified as AttestationFailed.
-  // Surface as ConfigError BEFORE any IO.
-  if (!UINT256_DECIMAL_RE.test(inputs.agentId)) {
-    throw new ConciergeError(
-      'ConfigError',
-      `[@concierge/attestation] writeAttestation: agentId must be a uint256 decimal string (got '${stripCtrl(inputs.agentId).slice(0, 64)}').`,
+  // Round-2 boundary fail-fast: agentId canonical-decimal + uint256-bounded.
+  // Rejects: non-decimal, leading zeros, empty, >78 digits (silent-failure #3+#4).
+  if (!UINT256_CANONICAL_DECIMAL_RE.test(inputs.agentId)) {
+    throw configError(
+      `agentId must be a uint256 canonical decimal string with no leading zeros, max 78 digits (got '${stripCtrl(inputs.agentId).slice(0, 64)}').`,
+    );
+  }
+  const agentIdBig = BigInt(inputs.agentId);
+  if (agentIdBig > UINT256_MAX) {
+    throw configError(`agentId exceeds uint256 max (got '${inputs.agentId.slice(0, 80)}').`);
+  }
+
+  // Round-2 createdAt boundary fail-fast (code-reviewer IMPORTANT #2): if
+  // Zod's datetime() ever relaxes, malformed timestamps become permanent on IPFS.
+  if (!ISO_8601_RE.test(inputs.createdAt)) {
+    throw configError(
+      `createdAt must be ISO-8601 (got '${stripCtrl(inputs.createdAt).slice(0, 64)}').`,
     );
   }
 
-  // Step 1: validate envelope at the boundary. Wrap ZodError in
-  // ConciergeError so the caller's record() phase can type-discriminate
-  // (round-1 silent-failure #4: raw Zod escaped the public surface).
+  // Round-2 silent-failure #3: pre-aborted caller signal short-circuits all
+  // downstream IO with no fail-fast budget — surface as ConfigError instead.
+  if (deps.signal?.aborted) {
+    throw configError('caller AbortSignal already aborted before any IO began.');
+  }
+
+  // Step 1: validate envelope at the boundary.
   const envelope: FeedbackEnvelope = {
     v: 1,
     schema: inputs.providerSchema,
@@ -119,31 +146,42 @@ export async function writeAttestation(
   try {
     parseFeedbackEnvelope(envelope);
   } catch (err) {
-    // parseFeedbackEnvelope rethrows ZodError as plain Error with control
-    // chars already stripped (story-80 round-2). Wrap any error here in
-    // ConfigError so callers can type-discriminate on the public surface.
     if (err instanceof ConciergeError) throw err;
-    const msg = err instanceof Error ? err.message : String(err);
-    throw new ConciergeError(
-      'ConfigError',
-      `[@concierge/attestation] writeAttestation: envelope validation failed: ${stripCtrl(msg).slice(0, 2048)}`,
-    );
+    throw configError(`envelope validation failed: ${safeErrMsg(err, 2048)}`);
   }
 
-  // Step 2: canonical bytes + hash, ONE pass (avoids double canonicalize).
+  // Step 2: canonical bytes + hash in one pass.
   const { hash, canonical } = computeFeedbackPair(envelope);
 
-  // Step 3: pin BEFORE on-chain tx. If pin fails (IPFSPinFailed) we throw
-  // here — the on-chain reference would point to non-existent content
-  // otherwise.
+  // Step 3: pin BEFORE on-chain tx.
   const signal = deps.signal ?? AbortSignal.timeout(DEFAULT_ATTEST_TIMEOUT_MS);
   const pinDeps: PinFeedbackDeps = { ...deps.pinDeps, signal };
   const pin = await pinFeedback(envelope, pinDeps);
 
-  // Round-1 defense-in-depth (security CWE-20 info): assert the CID still
-  // passes the validator BEFORE we string-concat into dataURI. If the
-  // CIDv1 regex is ever loosened upstream, this catches the regression.
+  // Shared orphan-pin log — emitted from BOTH post-pin error paths so
+  // reconcile workers see every orphan, not just on-chain failures.
+  const logOrphanPin = (errName: string, errMessage: string, msg: string): void => {
+    deps.logger?.error(
+      {
+        agentId: inputs.agentId,
+        hash,
+        orphanCid: pin.cid,
+        errName,
+        errMessage,
+      },
+      msg,
+    );
+  };
+
+  // Round-1 defense-in-depth, round-2 wired to orphan log: if pinService
+  // contract is breached (returns malformed CID), the pin is already orphaned
+  // — must log before throwing so reconciliation sees it.
   if (!isValidCid(pin.cid)) {
+    logOrphanPin(
+      'PinServiceContractViolation',
+      `pinService returned CID failing isValidCid: '${stripCtrl(pin.cid).slice(0, 128)}'`,
+      'writeAttestation: pinService contract breach (orphan pin — manual reconcile required)',
+    );
     throw new ConciergeError(
       'InvariantViolation',
       `[@concierge/attestation] writeAttestation: pinService returned a CID that failed isValidCid post-pin: '${stripCtrl(pin.cid).slice(0, 128)}'.`,
@@ -151,38 +189,26 @@ export async function writeAttestation(
   }
   const dataURI = `${DATAURI_PREFIX}${pin.cid}`;
 
-  // Step 4: on-chain giveFeedback. Failure here does NOT rollback the pin —
-  // the CID is permanent on IPFS regardless, and re-pinning is idempotent.
+  // Step 4: on-chain giveFeedback.
   let onChainResult: { readonly attestationUid: string; readonly txHash: `0x${string}` };
   try {
     onChainResult = await deps.writer.giveFeedback({
-      agentId: BigInt(inputs.agentId),
+      agentId: agentIdBig,
       providerSchema: inputs.providerSchema,
       dataHash: hash,
       dataURI,
       signal,
     });
   } catch (err) {
-    // Round-1 fix: orphan-pin observability — surface the orphan CID in
-    // the log so reconcile workers can match Pinata billing to on-chain
-    // attestations.
-    deps.logger?.error(
-      {
-        agentId: inputs.agentId,
-        hash,
-        orphanCid: pin.cid,
-        dataURI,
-        errName: err instanceof Error ? err.name : 'unknown',
-        errMessage:
-          err instanceof Error ? stripCtrl(err.message).slice(0, 512) : String(err).slice(0, 512),
-      },
+    logOrphanPin(
+      err instanceof Error ? err.name : 'unknown',
+      safeErrMsg(err, 512),
       'writeAttestation: on-chain giveFeedback failed (pin orphaned but content-addressed; safe to retry)',
     );
     if (err instanceof ConciergeError) throw err;
-    const msg = err instanceof Error ? stripCtrl(err.message).slice(0, 512) : String(err);
     throw new ConciergeError(
       'AttestationFailed',
-      `[@concierge/attestation] writeAttestation: giveFeedback failed AFTER successful pin (cid=${pin.cid}): ${msg}`,
+      `[@concierge/attestation] writeAttestation: giveFeedback failed AFTER successful pin (cid=${pin.cid}): ${safeErrMsg(err, 512)}`,
       err instanceof Error ? err : undefined,
       { agentId: inputs.agentId, hash, cid: pin.cid, dataURI },
     );
