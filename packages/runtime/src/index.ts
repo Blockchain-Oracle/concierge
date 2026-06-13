@@ -1,4 +1,5 @@
 export { createLock } from './lock.ts';
+export { sanitizeError, sanitizeMessage } from './sanitize.ts';
 export { tick } from './tick.ts';
 export type {
   AgentState,
@@ -12,6 +13,7 @@ export type {
   Proposal,
   ProposeFn,
   RecordFn,
+  ReleaseOutcome,
   Sim,
   SimulateFn,
   TickConfig,
@@ -20,4 +22,4 @@ export type {
   TickPhase,
   TickResult,
 } from './types.ts';
-export { ORCHESTRATED_PHASES, TICK_PHASES } from './types.ts';
+export { ORCHESTRATED_PHASES } from './types.ts';
