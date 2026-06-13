@@ -309,6 +309,8 @@ describe('runRecordFallback — delegates to runRecord', () => {
         now: () => NOW,
       },
     );
-    if (out.kind === 'continue') expect(out.data.kind).toBe('attested');
+    expect(out.kind).toBe('continue');
+    if (out.kind !== 'continue') throw new Error('expected continue');
+    expect(out.data.kind).toBe('attested');
   });
 });

@@ -14,12 +14,18 @@ import {
  * for reconcile) from "attester.attestAction threw" (queue retry).
  */
 class PostAttestInfraError extends Error {
-  readonly inner: ConciergeError;
-  constructor(inner: ConciergeError) {
-    super(inner.message);
+  // Round-2: use the standard Error.cause slot (ES2022) instead of a bespoke
+  // `inner` field. One source of truth; future maintainers reading `.cause`
+  // can't drift from the marker's payload.
+  constructor(cause: ConciergeError) {
+    super(cause.message, { cause });
     this.name = 'PostAttestInfraError';
-    this.inner = inner;
   }
+}
+function isPostAttestInfra(
+  err: unknown,
+): err is PostAttestInfraError & { readonly cause: ConciergeError } {
+  return err instanceof PostAttestInfraError && err.cause instanceof ConciergeError;
 }
 
 /** Trusted output from the originating provider — already validated below. */
@@ -55,7 +61,19 @@ export interface Erc8004Client {
   }): Promise<{ readonly attestationUid: string; readonly attestationTxHash: string }>;
 }
 
-/** Reads current attestation state for idempotence; attaches uid on success. */
+/**
+ * Reads current attestation state for idempotence; attaches uid on success.
+ *
+ * **Implementation contract (TOCTOU):** `attachAttestation` MUST be a
+ * conditional write that only succeeds when the row's `attestation_uid` is
+ * still NULL (e.g., `UPDATE executions SET ... WHERE id=$1 AND
+ * attestation_uid IS NULL` returning affected rows, or a UNIQUE constraint
+ * + `ON CONFLICT DO NOTHING`). Two concurrent ticks both reading null from
+ * `getAttestation` is the documented race; the repo layer is the source of
+ * truth that prevents double-attestation. A unique-violation surfacing as
+ * a thrown error is correct — the runtime wraps it as
+ * `PostAttestInfraError` and operators reconcile from the metadata.
+ */
 export interface ExecutionAttestationRepository {
   getAttestation(executionId: string): Promise<{ readonly attestationUid: string | null }>;
   attachAttestation(args: {
@@ -108,6 +126,19 @@ export interface RunRecordDeps {
 const NEVER_ABORT = new AbortController().signal;
 
 /**
+ * Defensive stringify — a hostile/buggy Erc8004Client could return a value
+ * whose `.toString()` throws or returns control bytes. Wrap so the surface
+ * cannot crash the log/throw path (CWE-117 hardening).
+ */
+function safeStringify(v: unknown): string {
+  try {
+    return sanitizeMessage(String(v)).slice(0, 256);
+  } catch {
+    return '<unprintable>';
+  }
+}
+
+/**
  * Validate provider-built payload at the runtime boundary. Schema length cap
  * lives in the Zod schema itself (.max(128)); we just run safeParse and
  * sanitize the error.message before interpolation (CWE-117).
@@ -146,7 +177,16 @@ export async function runRecord(
   const signal = deps.abortSignal ?? NEVER_ABORT;
   const started = deps.now();
 
-  // Idempotence: skip re-attesting if a prior tick already landed the uid.
+  // Idempotence + TOCTOU:
+  // The getAttestation null check is racy by construction — two concurrent
+  // ticks reading null both proceed to attestAction (double on-chain attest).
+  // The PRODUCTION fix lives in the ExecutionAttestationRepository contract:
+  // attachAttestation MUST be a conditional `UPDATE … WHERE attestation_uid
+  // IS NULL` (or `INSERT … ON CONFLICT DO NOTHING RETURNING`), with the
+  // second writer surfacing as a unique-violation. The unique-violation is
+  // then caught by the inner try below and wrapped as a
+  // PostAttestInfraError → reconcile path. The runtime layer cannot prevent
+  // the race; we document it here so the contract is visible to readers.
   let existing: { readonly attestationUid: string | null };
   try {
     existing = await deps.repository.getAttestation(inputs.exec.executionId);
@@ -191,24 +231,34 @@ export async function runRecord(
       payload: payload.payload,
       signal,
     });
-    if (!isHash32(attestationUid) || !isHash32(attestationTxHash)) {
+    if (
+      typeof attestationUid !== 'string' ||
+      typeof attestationTxHash !== 'string' ||
+      !isHash32(attestationUid) ||
+      !isHash32(attestationTxHash)
+    ) {
       // Surface the raw response BEFORE throwing so ops can manually
       // reconcile the on-chain attestation that almost certainly already
       // landed (the bundler returned something — just wrong-shaped).
-      (deps.logRecord ?? (() => {}))({
+      const rawUidSafe = safeStringify(attestationUid);
+      const rawTxSafe = safeStringify(attestationTxHash);
+      deps.logRecord?.({
         tickId: inputs.tickId,
         agentId: inputs.state.agentId,
         phase: 'record',
         durationMs: deps.now().getTime() - started.getTime(),
-        attestationUid: sanitizeMessage(String(attestationUid)).slice(0, 256),
+        attestationUid: rawUidSafe,
         txHash: inputs.exec.txHash,
         outcome: 'attested',
       });
       throw new ConciergeError(
         'InvariantViolation',
-        `[@concierge/runtime] runRecord: ERC-8004 returned malformed uid/txHash; raw uid=${sanitizeMessage(String(attestationUid)).slice(0, 256)} raw txHash=${sanitizeMessage(String(attestationTxHash)).slice(0, 256)}.`,
+        `[@concierge/runtime] runRecord: ERC-8004 returned malformed uid/txHash; raw uid=${rawUidSafe} raw txHash=${rawTxSafe}.`,
       );
     }
+    // Normalize uid + txHash to lowercase BEFORE persist/return. EAS uids
+    // are bytes32; case is not semantically meaningful on-chain. Consumers
+    // (off-chain reads, dedup, eq() queries) MUST query lowercased.
     try {
       await deps.repository.attachAttestation({
         executionId: inputs.exec.executionId,
@@ -247,7 +297,7 @@ export async function runRecord(
     // detail) is treated as a normal attest failure and queued. Without this,
     // a provider switching to ConciergeError would silently break ADR-004
     // non-blocking semantics.
-    if (err instanceof PostAttestInfraError) throw err.inner;
+    if (isPostAttestInfra(err)) throw err.cause;
     if (err instanceof ConciergeError && err.type === 'InvariantViolation') throw err;
     const attestErr = sanitizeError(err);
     // Non-blocking per ADR-004: attestation queues for retry; tick proceeds.
