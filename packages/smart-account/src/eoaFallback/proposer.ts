@@ -6,6 +6,11 @@ import { type EnqueueInput, enqueue } from './queue.ts';
  * Event payload broadcast to the user's connected web session so the UI can
  * pop the proposal modal (story-108). Decoupled from any specific transport
  * (SSE, WebSocket, Redis pub/sub) — caller injects an emitter.
+ *
+ * SECURITY: the transport MUST be per-user-scoped. Implementers must route
+ * on `userId` (e.g. per-user SSE topic, Redis channel `user:{userId}`). Do
+ * NOT fan out to a shared topic — that would leak trading strategy + capital
+ * sizing (`to`/`data`/`value`) across tenants.
  */
 export interface ProposalEvents {
   'eoa.proposal.pending': {
@@ -57,10 +62,18 @@ export async function proposeForUser(config: ProposeForUserConfig): Promise<Prop
         createdAt,
       });
     } catch (err) {
+      // Sanitize: emitter errors may carry Redis/SSE URLs with apikeys.
+      const sanitizedMsg =
+        err instanceof Error
+          ? err.message.replace(
+              /([?&](?:api[_-]?key|key|token|secret)=)[^&\s"'<>]+/gi,
+              '$1<redacted>',
+            )
+          : String(err);
       // biome-ignore lint/suspicious/noConsole: proposal event drop must be observable
       console.error(
         `[@concierge/smart-account] proposeForUser: eoa.proposal.pending emit failed (non-fatal — row queued, UI can poll)`,
-        { queueId: id, agentId: config.txParams.agentId, error: err },
+        { queueId: id, agentId: config.txParams.agentId, error: sanitizedMsg },
       );
     }
   }

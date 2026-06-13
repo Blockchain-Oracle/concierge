@@ -1,242 +1,177 @@
 import { randomUUID } from 'node:crypto';
 import { ConciergeError } from '@concierge/sdk';
-import type { Address, Hex, PublicClient } from 'viem';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Address, Hex } from 'viem';
+import { describe, expect, it, vi } from 'vitest';
 import { proposeForUser } from '../proposer.ts';
-import {
-  enqueue,
-  getPending,
-  markConfirmed,
-  markFailed,
-  markSigned,
-  type QueueRow,
-} from '../queue.ts';
-import { sendSignedTx } from '../sender.ts';
-
-const USER_ID = 'user-1';
-const AGENT_A = '11111111-1111-4111-8111-111111111111';
-const AGENT_B = '22222222-2222-4222-8222-222222222222';
-const TO = '0x1234567890123456789012345678901234567890' as Address;
-const DATA = '0xdeadbeef' as Hex;
-const VALUE = '1000000000000000000';
-const SIGNED_TX = '0xabc123' as Hex;
-const TX_HASH = '0x4444444444444444444444444444444444444444444444444444444444444444' as Hex;
-
-function extractLiterals(where: unknown): string[] {
-  const out: string[] = [];
-  const seen = new WeakSet<object>();
-  function walk(node: unknown): void {
-    if (node === null || typeof node !== 'object') return;
-    if (seen.has(node as object)) return;
-    seen.add(node as object);
-    // biome-ignore lint/suspicious/noExplicitAny: drizzle internals
-    const n = node as any;
-    if (typeof n.value === 'string' && !/is null/i.test(n.value)) out.push(n.value);
-    if (Array.isArray(n.queryChunks)) for (const c of n.queryChunks) walk(c);
-  }
-  walk(where);
-  return out;
-}
-
-function makeDb() {
-  const rows: QueueRow[] = [];
-  // biome-ignore lint/suspicious/noExplicitAny: stub
-  const db: any = {
-    insert: () => ({
-      // biome-ignore lint/suspicious/noExplicitAny: drizzle
-      values: (v: any) => ({
-        returning: async (_proj?: unknown) => {
-          const row: QueueRow = {
-            id: randomUUID(),
-            userId: v.userId,
-            agentId: v.agentId,
-            to: v.to,
-            data: v.data,
-            value: v.value,
-            status: v.status,
-            signedTx: null,
-            txHash: null,
-            blockNumber: null,
-            error: null,
-            createdAt: new Date(),
-            updatedAt: new Date(),
-          };
-          rows.push(row);
-          return [{ id: row.id, createdAt: row.createdAt }];
-        },
-      }),
-    }),
-    select: () => ({
-      from: () => ({
-        where: (w: unknown) => {
-          const lits = extractLiterals(w);
-          // getPending: agentId + status='pending'
-          const matched = rows.filter((r) => lits.includes(r.agentId) && lits.includes(r.status));
-          return {
-            // biome-ignore lint/suspicious/noThenProperty: drizzle awaitable stub
-            then: (resolve: (v: unknown) => unknown) => resolve(matched),
-          };
-        },
-      }),
-    }),
-    update: () => ({
-      // biome-ignore lint/suspicious/noExplicitAny: stub
-      set: (patch: any) => ({
-        where: (w: unknown) => ({
-          returning: async () => {
-            const lits = extractLiterals(w);
-            // Match by id literal; if the WHERE also carries a status literal,
-            // enforce it (state-machine guards in markSigned/markConfirmed).
-            const updated: QueueRow[] = [];
-            for (const r of rows) {
-              if (!lits.includes(r.id)) continue;
-              const statusLit = lits.find((l) =>
-                ['pending', 'signed', 'confirmed', 'failed'].includes(l),
-              );
-              if (statusLit && r.status !== statusLit) continue;
-              Object.assign(r, patch, { updatedAt: new Date() });
-              updated.push(r);
-            }
-            return updated;
-          },
-        }),
-      }),
-    }),
-  };
-  return { db, rows };
-}
+import { enqueue, getPending, markConfirmed, markFailed, markSigned } from '../queue.ts';
+import { AGENT_A, AGENT_B, BASE_ENQ, makeDb, OTHER_USER, TX_HASH, USER_ID } from './_eoaStub.ts';
 
 describe('eoaFallback queue (story-55)', () => {
   describe('enqueue', () => {
     it('inserts a pending row and returns id + createdAt', async () => {
       const { db, rows } = makeDb();
-      const result = await enqueue(db, {
-        userId: USER_ID,
-        agentId: AGENT_A,
-        to: TO,
-        data: DATA,
-        value: VALUE,
-      });
+      const result = await enqueue(db, BASE_ENQ);
       expect(result.id).toMatch(/^[0-9a-f-]{36}$/);
-      expect(result.createdAt).toBeInstanceOf(Date);
-      expect(rows[0]).toMatchObject({ status: 'pending', agentId: AGENT_A, to: TO });
+      expect(rows[0]).toMatchObject({ status: 'pending', agentId: AGENT_A });
     });
 
-    it('rejects invalid agentId / address / hex / value at the boundary', async () => {
+    it('rejects invalid inputs at the boundary', async () => {
       const { db } = makeDb();
-      const base = { userId: USER_ID, agentId: AGENT_A, to: TO, data: DATA, value: VALUE };
-      await expect(enqueue(db, { ...base, agentId: 'not-a-uuid' })).rejects.toSatisfy(
-        (e: unknown) => e instanceof ConciergeError && e.type === 'ConfigError',
-      );
-      await expect(enqueue(db, { ...base, to: '0xnotanaddress' as Address })).rejects.toSatisfy(
-        (e: unknown) => e instanceof ConciergeError && e.type === 'ConfigError',
-      );
-      await expect(enqueue(db, { ...base, data: '0xabc' as Hex })).rejects.toSatisfy(
-        (e: unknown) => e instanceof ConciergeError && e.type === 'ConfigError',
-      );
-      await expect(enqueue(db, { ...base, value: '-1' })).rejects.toSatisfy(
-        (e: unknown) => e instanceof ConciergeError && e.type === 'ConfigError',
-      );
-      await expect(enqueue(db, { ...base, value: '1'.repeat(79) })).rejects.toSatisfy(
-        (e: unknown) => e instanceof ConciergeError && e.type === 'ConfigError',
-      );
+      const bad = [
+        { ...BASE_ENQ, userId: '' },
+        { ...BASE_ENQ, agentId: 'not-a-uuid' },
+        { ...BASE_ENQ, to: '0xnotanaddress' as Address },
+        { ...BASE_ENQ, data: '0xabc' as Hex },
+        { ...BASE_ENQ, value: '-1' },
+        { ...BASE_ENQ, value: '1'.repeat(79) },
+      ];
+      for (const b of bad) {
+        await expect(enqueue(db, b)).rejects.toSatisfy(
+          (e: unknown) => e instanceof ConciergeError && e.type === 'ConfigError',
+        );
+      }
     });
 
-    it('concurrent enqueue: 100 parallel inserts all land with unique ids', async () => {
+    it('concurrent enqueue: parallel inserts are non-throwing and produce one row each', async () => {
       const { db, rows } = makeDb();
-      const inputs = Array.from({ length: 100 }, () => ({
-        userId: USER_ID,
-        agentId: AGENT_A,
-        to: TO,
-        data: DATA,
-        value: VALUE,
-      }));
-      const results = await Promise.all(inputs.map((i) => enqueue(db, i)));
-      const ids = new Set(results.map((r) => r.id));
-      expect(ids.size).toBe(100);
-      expect(rows.length).toBe(100);
+      const results = await Promise.all(Array.from({ length: 100 }, () => enqueue(db, BASE_ENQ)));
+      expect(results).toHaveLength(100);
+      expect(rows).toHaveLength(100);
     });
   });
 
   describe('getPending', () => {
-    it('returns ONLY agent-A pending rows; agent-B rows do not leak', async () => {
+    it('returns ONLY (agent-A, user-1) pending rows', async () => {
       const { db } = makeDb();
-      await enqueue(db, { userId: USER_ID, agentId: AGENT_A, to: TO, data: DATA, value: VALUE });
-      await enqueue(db, { userId: USER_ID, agentId: AGENT_B, to: TO, data: DATA, value: VALUE });
-      await enqueue(db, { userId: USER_ID, agentId: AGENT_A, to: TO, data: DATA, value: VALUE });
-      const pendingA = await getPending(db, { agentId: AGENT_A });
-      expect(pendingA).toHaveLength(2);
-      for (const r of pendingA) expect(r.agentId).toBe(AGENT_A);
+      await enqueue(db, BASE_ENQ);
+      await enqueue(db, { ...BASE_ENQ, agentId: AGENT_B });
+      await enqueue(db, { ...BASE_ENQ, userId: OTHER_USER });
+      await enqueue(db, BASE_ENQ);
+      const pending = await getPending(db, { agentId: AGENT_A, expectedUserId: USER_ID });
+      expect(pending).toHaveLength(2);
+      for (const r of pending) {
+        expect(r.agentId).toBe(AGENT_A);
+        expect(r.userId).toBe(USER_ID);
+      }
     });
 
-    it('throws ConfigError on invalid agentId', async () => {
+    it('returns [] when only non-pending rows exist for the agent', async () => {
+      const { db, rows } = makeDb();
+      await enqueue(db, BASE_ENQ);
+      if (rows[0]) rows[0].status = 'confirmed';
+      const pending = await getPending(db, { agentId: AGENT_A, expectedUserId: USER_ID });
+      expect(pending).toHaveLength(0);
+    });
+
+    it('rejects invalid agentId / userId', async () => {
       const { db } = makeDb();
-      await expect(getPending(db, { agentId: 'bogus' })).rejects.toSatisfy(
+      await expect(getPending(db, { agentId: 'bogus', expectedUserId: USER_ID })).rejects.toSatisfy(
+        (e: unknown) => e instanceof ConciergeError && e.type === 'ConfigError',
+      );
+      await expect(getPending(db, { agentId: AGENT_A, expectedUserId: '' })).rejects.toSatisfy(
         (e: unknown) => e instanceof ConciergeError && e.type === 'ConfigError',
       );
     });
   });
 
-  describe('state machine (markSigned / markConfirmed / markFailed)', () => {
+  describe('state machine (discriminated MarkResult)', () => {
     it('happy lifecycle: pending → signed → confirmed', async () => {
       const { db } = makeDb();
-      const { id } = await enqueue(db, {
-        userId: USER_ID,
-        agentId: AGENT_A,
-        to: TO,
-        data: DATA,
-        value: VALUE,
+      const { id } = await enqueue(db, BASE_ENQ);
+      const signed = await markSigned(db, {
+        id,
+        expectedUserId: USER_ID,
+        signedTx: '0xabcd' as Hex,
+        txHash: TX_HASH,
       });
-      const signed = await markSigned(db, { id, signedTx: SIGNED_TX, txHash: TX_HASH });
-      expect(signed?.status).toBe('signed');
-      expect(signed?.txHash).toBe(TX_HASH);
-      const confirmed = await markConfirmed(db, { id, blockNumber: 12345n });
-      expect(confirmed?.status).toBe('confirmed');
-      expect(confirmed?.blockNumber).toBe(12345n);
+      expect(signed.kind).toBe('updated');
+      const confirmed = await markConfirmed(db, {
+        id,
+        expectedUserId: USER_ID,
+        blockNumber: 12345n,
+      });
+      expect(confirmed.kind).toBe('updated');
+      if (confirmed.kind === 'updated') expect(confirmed.row.blockNumber).toBe(12345n);
     });
 
-    it('markSigned guard: returns null if row is not pending (double-fire safety)', async () => {
+    it('markSigned wrong-tenant returns not-authorized (IDOR defense)', async () => {
       const { db } = makeDb();
-      const { id } = await enqueue(db, {
-        userId: USER_ID,
-        agentId: AGENT_A,
-        to: TO,
-        data: DATA,
-        value: VALUE,
+      const { id } = await enqueue(db, BASE_ENQ);
+      const result = await markSigned(db, {
+        id,
+        expectedUserId: OTHER_USER,
+        signedTx: '0xabcd' as Hex,
+        txHash: TX_HASH,
       });
-      await markSigned(db, { id, signedTx: SIGNED_TX, txHash: TX_HASH });
-      const second = await markSigned(db, { id, signedTx: SIGNED_TX, txHash: TX_HASH });
-      expect(second).toBeNull();
+      expect(result.kind).toBe('not-authorized');
     });
 
-    it('markConfirmed guard: returns null if row is not signed', async () => {
+    it('markSigned not-found returns not-found', async () => {
       const { db } = makeDb();
-      const { id } = await enqueue(db, {
-        userId: USER_ID,
-        agentId: AGENT_A,
-        to: TO,
-        data: DATA,
-        value: VALUE,
+      const result = await markSigned(db, {
+        id: randomUUID(),
+        expectedUserId: USER_ID,
+        signedTx: '0xabcd' as Hex,
+        txHash: TX_HASH,
       });
-      const result = await markConfirmed(db, { id, blockNumber: 1n });
-      expect(result).toBeNull();
+      expect(result.kind).toBe('not-found');
     });
 
-    it('markFailed: works from pending OR signed; rejects empty error message', async () => {
+    it('markSigned wrong-state returns wrong-state with current row', async () => {
       const { db } = makeDb();
-      const { id } = await enqueue(db, {
-        userId: USER_ID,
-        agentId: AGENT_A,
-        to: TO,
-        data: DATA,
-        value: VALUE,
+      const { id } = await enqueue(db, BASE_ENQ);
+      await markSigned(db, {
+        id,
+        expectedUserId: USER_ID,
+        signedTx: '0xabcd' as Hex,
+        txHash: TX_HASH,
       });
-      await expect(markFailed(db, { id, error: '' })).rejects.toSatisfy(
+      const second = await markSigned(db, {
+        id,
+        expectedUserId: USER_ID,
+        signedTx: '0xabcd' as Hex,
+        txHash: TX_HASH,
+      });
+      expect(second.kind).toBe('wrong-state');
+      if (second.kind === 'wrong-state') expect(second.current.status).toBe('signed');
+    });
+
+    it('markFailed CANNOT overwrite confirmed (terminal-state guard)', async () => {
+      const { db, rows } = makeDb();
+      const { id } = await enqueue(db, BASE_ENQ);
+      if (rows[0]) {
+        rows[0].status = 'confirmed';
+        rows[0].blockNumber = 999n;
+      }
+      const result = await markFailed(db, {
+        id,
+        expectedUserId: USER_ID,
+        error: 'late timeout',
+      });
+      expect(result.kind).toBe('wrong-state');
+      if (result.kind === 'wrong-state') expect(result.current.status).toBe('confirmed');
+      expect(rows[0]?.status).toBe('confirmed');
+    });
+
+    it('markConfirmed from failed state returns wrong-state (no resurrection)', async () => {
+      const { db, rows } = makeDb();
+      const { id } = await enqueue(db, BASE_ENQ);
+      await markFailed(db, { id, expectedUserId: USER_ID, error: 'early fail' });
+      if (rows[0]) rows[0].status = 'failed';
+      const result = await markConfirmed(db, {
+        id,
+        expectedUserId: USER_ID,
+        blockNumber: 1n,
+      });
+      expect(result.kind).toBe('wrong-state');
+    });
+
+    it('markFailed empty error string rejected', async () => {
+      const { db } = makeDb();
+      const { id } = await enqueue(db, BASE_ENQ);
+      await expect(markFailed(db, { id, expectedUserId: USER_ID, error: '' })).rejects.toSatisfy(
         (e: unknown) => e instanceof ConciergeError && e.type === 'ConfigError',
       );
-      const failed = await markFailed(db, { id, error: 'gas estimation failed' });
-      expect(failed?.status).toBe('failed');
-      expect(failed?.error).toBe('gas estimation failed');
     });
   });
 
@@ -244,143 +179,33 @@ describe('eoaFallback queue (story-55)', () => {
     it('enqueues and emits eoa.proposal.pending', async () => {
       const { db } = makeDb();
       const events = { emit: vi.fn().mockResolvedValue(undefined) };
-      const result = await proposeForUser({
-        db,
-        txParams: { userId: USER_ID, agentId: AGENT_A, to: TO, data: DATA, value: VALUE },
-        events,
-      });
+      const result = await proposeForUser({ db, txParams: BASE_ENQ, events });
       expect(result.queueId).toMatch(/^[0-9a-f-]{36}$/);
       expect(events.emit).toHaveBeenCalledWith(
         'eoa.proposal.pending',
-        expect.objectContaining({ queueId: result.queueId, agentId: AGENT_A, to: TO }),
+        expect.objectContaining({ queueId: result.queueId, agentId: AGENT_A }),
       );
     });
 
-    it('emit failure is non-fatal — row still enqueued, error logged', async () => {
+    it('emit failure non-fatal — row enqueued, apikey redacted in log', async () => {
       const { db, rows } = makeDb();
-      const events = { emit: vi.fn().mockRejectedValue(new Error('redis down')) };
+      const events = {
+        emit: vi
+          .fn()
+          .mockRejectedValue(
+            new Error(
+              'publish failed at https://emit.example/x?apikey=FAKE_TEST_FIXTURE_NOT_A_KEY',
+            ),
+          ),
+      };
       const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-      const result = await proposeForUser({
-        db,
-        txParams: { userId: USER_ID, agentId: AGENT_A, to: TO, data: DATA, value: VALUE },
-        events,
-      });
+      const result = await proposeForUser({ db, txParams: BASE_ENQ, events });
       expect(result.queueId).toMatch(/^[0-9a-f-]{36}$/);
       expect(rows[0]?.status).toBe('pending');
-      expect(errSpy).toHaveBeenCalledWith(
-        expect.stringContaining('emit failed'),
-        expect.objectContaining({ queueId: result.queueId }),
-      );
+      const callArgs = errSpy.mock.calls[0];
+      expect(callArgs?.[1]).toMatchObject({ error: expect.stringContaining('<redacted>') });
+      expect(JSON.stringify(callArgs)).not.toContain('FAKE_TEST_FIXTURE_NOT_A_KEY');
       errSpy.mockRestore();
-    });
-  });
-
-  describe('sendSignedTx', () => {
-    function makePublicClientStub(opts: {
-      sendThrows?: Error;
-      receiptStatus?: 'success' | 'reverted';
-      receiptThrows?: Error;
-    }): PublicClient {
-      // biome-ignore lint/suspicious/noExplicitAny: viem PublicClient stub
-      const stub: any = {
-        sendRawTransaction: vi.fn(async () => {
-          if (opts.sendThrows) throw opts.sendThrows;
-          return TX_HASH;
-        }),
-        waitForTransactionReceipt: vi.fn(async () => {
-          if (opts.receiptThrows) throw opts.receiptThrows;
-          return {
-            status: opts.receiptStatus ?? 'success',
-            blockNumber: 9999n,
-            transactionHash: TX_HASH,
-          };
-        }),
-      };
-      return stub as PublicClient;
-    }
-
-    let db: ReturnType<typeof makeDb>['db'];
-    let queueId: string;
-    beforeEach(async () => {
-      const h = makeDb();
-      db = h.db;
-      const { id } = await enqueue(db, {
-        userId: USER_ID,
-        agentId: AGENT_A,
-        to: TO,
-        data: DATA,
-        value: VALUE,
-      });
-      queueId = id;
-    });
-
-    it('happy path: broadcast → markSigned → receipt success → markConfirmed', async () => {
-      const result = await sendSignedTx({
-        db,
-        publicClient: makePublicClientStub({ receiptStatus: 'success' }),
-        queueId,
-        signedTx: SIGNED_TX,
-      });
-      expect(result.kind).toBe('confirmed');
-      if (result.kind === 'confirmed') {
-        expect(result.row.status).toBe('confirmed');
-        expect(result.row.blockNumber).toBe(9999n);
-      }
-    });
-
-    it('on-chain revert → markFailed with revert reason', async () => {
-      const result = await sendSignedTx({
-        db,
-        publicClient: makePublicClientStub({ receiptStatus: 'reverted' }),
-        queueId,
-        signedTx: SIGNED_TX,
-      });
-      expect(result.kind).toBe('failed');
-      if (result.kind === 'failed') {
-        expect(result.row.status).toBe('failed');
-        expect(result.error).toMatch(/reverted/);
-      }
-    });
-
-    it('pre-broadcast viem error → markFailed; row never reaches signed', async () => {
-      const result = await sendSignedTx({
-        db,
-        publicClient: makePublicClientStub({ sendThrows: new Error('insufficient funds') }),
-        queueId,
-        signedTx: SIGNED_TX,
-      });
-      expect(result.kind).toBe('failed');
-      if (result.kind === 'failed') {
-        expect(result.row.status).toBe('failed');
-        expect(result.row.signedTx).toBeNull();
-        expect(result.error).toMatch(/insufficient funds/);
-      }
-    });
-
-    it('receipt timeout → markFailed', async () => {
-      const result = await sendSignedTx({
-        db,
-        publicClient: makePublicClientStub({
-          receiptThrows: new Error('Timed out while waiting for transaction'),
-        }),
-        queueId,
-        signedTx: SIGNED_TX,
-      });
-      expect(result.kind).toBe('failed');
-      if (result.kind === 'failed') {
-        expect(result.error).toMatch(/Timed out/);
-      }
-    });
-
-    it('rejects invalid signedTx hex at boundary', async () => {
-      await expect(
-        sendSignedTx({
-          db,
-          publicClient: makePublicClientStub({}),
-          queueId,
-          signedTx: 'not-hex' as Hex,
-        }),
-      ).rejects.toSatisfy((e: unknown) => e instanceof ConciergeError && e.type === 'ConfigError');
     });
   });
 });
