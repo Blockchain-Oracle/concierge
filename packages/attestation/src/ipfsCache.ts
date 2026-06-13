@@ -5,7 +5,7 @@ import { type FeedbackEnvelope, parseFeedbackEnvelope } from './schema.ts';
 /** Typed reasons a payload couldn't be returned — surfaces structured in the dashboard. */
 export type PayloadError = 'NOT_FOUND' | 'SCHEMA_VIOLATION' | 'TIMEOUT' | 'INVALID_HASH';
 
-export const MAX_CONTENT_BYTES = 1_048_576; // 1MB — matches DB CHECK constraint
+export const MAX_CONTENT_BYTES = 1_048_576; // 1MB — keep in sync with ipfs_cache CHECK
 const DEFAULT_GATEWAY_TIMEOUT_MS = 10_000;
 const ALLOWED_SCHEMES = new Set(['https:', 'http:']);
 
@@ -18,13 +18,20 @@ export interface IpfsCacheRepo {
   get(cid: string): Promise<{ readonly content: string } | null>;
   put(row: { readonly cid: string; readonly content: string }): Promise<void>;
   touch(cid: string): Promise<void>;
+  /** Round-2: eviction needed when cached content fails CURRENT schema (rotation). */
+  delete(cid: string): Promise<void>;
 }
 
+/**
+ * Round-2 typed gateway result — replaces the `'x'.repeat()` oversize sentinel
+ * that ironically allocated the very memory the cap exists to prevent.
+ */
+export type GatewayFetchResult =
+  | { readonly ok: true; readonly status: number; readonly text: string }
+  | { readonly ok: false; readonly reason: 'oversized' | 'http'; readonly status: number };
+
 export interface IpfsGatewayFetcher {
-  fetch(
-    cid: string,
-    signal: AbortSignal,
-  ): Promise<{ readonly status: number; readonly text: string }>;
+  fetch(cid: string, signal: AbortSignal): Promise<GatewayFetchResult>;
 }
 
 export type GetOrFetchResult =
@@ -43,8 +50,6 @@ export interface GetOrFetchDeps {
   readonly signal?: AbortSignal;
 }
 
-/** Parses + schema-validates content; returns ONLY the envelope so callers
- *  attach their own `source` discriminator (no misleading literal default). */
 function parseEnvelope(
   content: string,
 ): { ok: true; envelope: FeedbackEnvelope } | { ok: false; cause: string } {
@@ -54,6 +59,57 @@ function parseEnvelope(
     const msg = err instanceof Error ? stripCtrl(err.message).slice(0, 256) : 'parse failed';
     return { ok: false, cause: msg };
   }
+}
+
+async function tryGatewayFetch(
+  cid: string,
+  deps: GetOrFetchDeps,
+  signal: AbortSignal,
+): Promise<GetOrFetchResult> {
+  let resp: GatewayFetchResult;
+  try {
+    resp = await deps.gateway.fetch(cid, signal);
+  } catch (err) {
+    const isAbort =
+      err instanceof Error && (err.name === 'AbortError' || err.name === 'TimeoutError');
+    const msg =
+      err instanceof Error ? stripCtrl(err.message).slice(0, 256) : 'gateway fetch failed';
+    return { ok: false, error: isAbort ? 'TIMEOUT' : 'NOT_FOUND', cause: msg };
+  }
+
+  if (!resp.ok) {
+    if (resp.reason === 'oversized') {
+      return {
+        ok: false,
+        error: 'SCHEMA_VIOLATION',
+        cause: `content exceeds ${MAX_CONTENT_BYTES} bytes`,
+      };
+    }
+    if (resp.status === 404) return { ok: false, error: 'NOT_FOUND', cause: 'gateway 404' };
+    return { ok: false, error: 'NOT_FOUND', cause: `gateway status ${resp.status}` };
+  }
+
+  const parsed = parseEnvelope(resp.text);
+  if (!parsed.ok) return { ok: false, error: 'SCHEMA_VIOLATION', cause: parsed.cause };
+
+  try {
+    await deps.repo.put({ cid, content: resp.text });
+  } catch (err) {
+    // Round-2: drop the ConciergeError re-throw — contract is "read MUST
+    // succeed even if cache write fails". Log every failure so ops sees
+    // cache degradation; never propagate to caller.
+    deps.logger?.error(
+      {
+        cid,
+        errName: err instanceof Error ? err.name : 'unknown',
+        errMessage:
+          err instanceof Error ? stripCtrl(err.message).slice(0, 512) : String(err).slice(0, 512),
+      },
+      'ipfsCache.put failed (read returned ok; subsequent reads will re-fetch)',
+    );
+  }
+
+  return { ok: true, content: resp.text, envelope: parsed.envelope, source: 'gateway' };
 }
 
 export async function getOrFetchPayload(
@@ -66,114 +122,106 @@ export async function getOrFetchPayload(
 
   const cached = await deps.repo.get(cid);
   if (cached !== null) {
-    await deps.repo.touch(cid);
     const parsed = parseEnvelope(cached.content);
-    if (!parsed.ok) return { ok: false, error: 'SCHEMA_VIOLATION', cause: parsed.cause };
-    return { ok: true, content: cached.content, envelope: parsed.envelope, source: 'cache' };
+    if (parsed.ok) {
+      await deps.repo.touch(cid);
+      return { ok: true, content: cached.content, envelope: parsed.envelope, source: 'cache' };
+    }
+    // Round-2 silent-failure HIGH: cache-hit SCHEMA_VIOLATION means schema
+    // rotated since write. Log, evict (don't touch LRU on poison), fall
+    // through to gateway. Content-addressed → re-fetch yields identical
+    // bytes; parse will fail again, but the cache stops poisoning silently.
+    deps.logger?.error(
+      { cid, cause: parsed.cause },
+      'ipfsCache hit failed CURRENT schema — evicting stale row + re-fetching',
+    );
+    try {
+      await deps.repo.delete(cid);
+    } catch (err) {
+      deps.logger?.error(
+        {
+          cid,
+          errName: err instanceof Error ? err.name : 'unknown',
+          errMessage:
+            err instanceof Error ? stripCtrl(err.message).slice(0, 512) : String(err).slice(0, 512),
+        },
+        'ipfsCache.delete failed during stale-row eviction',
+      );
+    }
   }
 
   const signal = deps.signal ?? AbortSignal.timeout(DEFAULT_GATEWAY_TIMEOUT_MS);
-  let resp: { readonly status: number; readonly text: string };
-  try {
-    resp = await deps.gateway.fetch(cid, signal);
-  } catch (err) {
-    const isAbort =
-      err instanceof Error && (err.name === 'AbortError' || err.name === 'TimeoutError');
-    const msg =
-      err instanceof Error ? stripCtrl(err.message).slice(0, 256) : 'gateway fetch failed';
-    return { ok: false, error: isAbort ? 'TIMEOUT' : 'NOT_FOUND', cause: msg };
-  }
-
-  if (resp.status === 404) return { ok: false, error: 'NOT_FOUND', cause: 'gateway 404' };
-  if (resp.status < 200 || resp.status >= 300) {
-    return { ok: false, error: 'NOT_FOUND', cause: `gateway status ${resp.status}` };
-  }
-  if (resp.text.length > MAX_CONTENT_BYTES) {
-    return {
-      ok: false,
-      error: 'SCHEMA_VIOLATION',
-      cause: `content exceeds ${MAX_CONTENT_BYTES} bytes`,
-    };
-  }
-
-  const parsed = parseEnvelope(resp.text);
-  if (!parsed.ok) return { ok: false, error: 'SCHEMA_VIOLATION', cause: parsed.cause };
-
-  try {
-    await deps.repo.put({ cid, content: resp.text });
-  } catch (err) {
-    // Round-1 (silent-failure CRITICAL): emit observable log before swallowing.
-    // Read MUST succeed even if cache write fails (content-addressed; re-fetch
-    // is idempotent), but ops must see the cache degradation.
-    deps.logger?.error(
-      {
-        cid,
-        errName: err instanceof Error ? err.name : 'unknown',
-        errMessage:
-          err instanceof Error ? stripCtrl(err.message).slice(0, 512) : String(err).slice(0, 512),
-      },
-      'ipfsCache.put failed (read returned ok; subsequent reads will re-fetch)',
-    );
-    if (err instanceof ConciergeError) throw err;
-  }
-
-  return { ok: true, content: resp.text, envelope: parsed.envelope, source: 'gateway' };
+  return tryGatewayFetch(cid, deps, signal);
 }
 
-/** Round-1 CWE-918: validate gateway base URL config. Origin-only, http(s). */
-function validateGatewayBase(label: string, base: string): URL {
+/** Round-2 simplification: collapse 3 URL-validation throws into a code map. */
+const URL_VALIDATION_MESSAGES: Record<string, string> = {
+  parse: 'must be a valid absolute URL',
+  scheme: 'must use http(s) scheme',
+  origin: 'must be origin-only (no path/query/fragment)',
+};
+
+function validateGatewayUrl(
+  base: string,
+): { ok: true; origin: string } | { ok: false; code: keyof typeof URL_VALIDATION_MESSAGES } {
   let url: URL;
   try {
     url = new URL(base);
   } catch {
-    throw new ConciergeError(
-      'ConfigError',
-      `[@concierge/attestation] ${label} URL must be a valid absolute URL (got '${stripCtrl(base).slice(0, 128)}').`,
-    );
+    return { ok: false, code: 'parse' };
   }
-  if (!ALLOWED_SCHEMES.has(url.protocol)) {
-    throw new ConciergeError(
-      'ConfigError',
-      `[@concierge/attestation] ${label} URL must use http(s) scheme (got '${stripCtrl(url.protocol)}').`,
-    );
-  }
+  if (!ALLOWED_SCHEMES.has(url.protocol)) return { ok: false, code: 'scheme' };
   if (url.pathname !== '/' || url.search !== '' || url.hash !== '') {
-    throw new ConciergeError(
-      'ConfigError',
-      `[@concierge/attestation] ${label} URL must be origin-only (no path/query/fragment): '${stripCtrl(base).slice(0, 128)}'.`,
-    );
+    return { ok: false, code: 'origin' };
   }
-  return url;
+  return { ok: true, origin: url.origin };
+}
+
+function gatewayBaseOrigin(label: string, base: string): string {
+  const v = validateGatewayUrl(base);
+  if (v.ok) return v.origin;
+  throw new ConciergeError(
+    'ConfigError',
+    `[@concierge/attestation] ${label} URL ${URL_VALIDATION_MESSAGES[v.code]} (got '${stripCtrl(base).slice(0, 128)}').`,
+  );
 }
 
 /**
  * Default gateway fetcher with streaming size cap (CWE-770) + base URL
- * validation (CWE-918). Tries primary → fallback on transport error or non-2xx.
+ * validation (CWE-918). Returns typed `GatewayFetchResult` — no sentinel strings.
  */
 export function createGatewayFetcher(opts: {
   readonly primary: string;
   readonly fallback?: string;
   readonly fetchImpl?: typeof globalThis.fetch;
 }): IpfsGatewayFetcher {
-  const primaryOrigin = validateGatewayBase('primary', opts.primary).origin;
+  const primaryOrigin = gatewayBaseOrigin('primary', opts.primary);
   const fallbackOrigin =
-    opts.fallback !== undefined ? validateGatewayBase('fallback', opts.fallback).origin : null;
+    opts.fallback !== undefined ? gatewayBaseOrigin('fallback', opts.fallback) : null;
   const fetchImpl = opts.fetchImpl ?? globalThis.fetch.bind(globalThis);
 
-  // Round-1 CWE-770: stream the body with a running counter so a hostile
-  // gateway streaming GBs can't OOM before the size guard fires.
-  const fetchCapped = async (
-    url: string,
-    signal: AbortSignal,
-  ): Promise<{ readonly status: number; readonly text: string }> => {
+  const fetchCapped = async (url: string, signal: AbortSignal): Promise<GatewayFetchResult> => {
     const r = await fetchImpl(url, { signal });
-    if (!r.ok) return { status: r.status, text: '' };
+    if (!r.ok) return { ok: false, reason: 'http', status: r.status };
+
     const lenHeader = r.headers.get('content-length');
-    if (lenHeader !== null && Number.parseInt(lenHeader, 10) > MAX_CONTENT_BYTES) {
-      // Surface oversized as SCHEMA_VIOLATION upstream via the post-fetch cap.
-      return { status: r.status, text: 'x'.repeat(MAX_CONTENT_BYTES + 1) };
+    if (lenHeader !== null) {
+      const declared = Number.parseInt(lenHeader, 10);
+      if (Number.isFinite(declared) && declared > MAX_CONTENT_BYTES) {
+        return { ok: false, reason: 'oversized', status: r.status };
+      }
     }
-    if (r.body === null) return { status: r.status, text: await r.text() };
+
+    // Round-2 silent-failure HIGH: when r.body is null, .text() is uncapped.
+    // Defensively cap the resulting string so a hostile gateway hiding
+    // content in a body-null response can't bypass the streaming counter.
+    if (r.body === null) {
+      const text = await r.text();
+      if (text.length > MAX_CONTENT_BYTES) {
+        return { ok: false, reason: 'oversized', status: r.status };
+      }
+      return { ok: true, status: r.status, text };
+    }
 
     const reader = r.body.getReader();
     const chunks: Uint8Array[] = [];
@@ -184,14 +232,14 @@ export function createGatewayFetcher(opts: {
       total += value.byteLength;
       if (total > MAX_CONTENT_BYTES) {
         await reader.cancel();
-        return { status: r.status, text: 'x'.repeat(MAX_CONTENT_BYTES + 1) };
+        return { ok: false, reason: 'oversized', status: r.status };
       }
       chunks.push(value);
     }
     const text = new TextDecoder('utf-8', { fatal: false }).decode(
       chunks.length === 1 ? chunks[0] : Buffer.concat(chunks),
     );
-    return { status: r.status, text };
+    return { ok: true, status: r.status, text };
   };
 
   return {
@@ -199,7 +247,7 @@ export function createGatewayFetcher(opts: {
       const primaryUrl = `${primaryOrigin}/ipfs/${cid}`;
       try {
         const r = await fetchCapped(primaryUrl, signal);
-        if (r.status >= 200 && r.status < 300) return r;
+        if (r.ok) return r;
         if (fallbackOrigin === null) return r;
       } catch (err) {
         if (fallbackOrigin === null) throw err;

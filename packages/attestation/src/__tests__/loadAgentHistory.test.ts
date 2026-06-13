@@ -66,6 +66,9 @@ function inMemRepo(seed: Record<string, string> = {}): IpfsCacheRepo & {
     async touch(cid) {
       touchCalls.push(cid);
     },
+    async delete(cid: string) {
+      store.delete(cid);
+    },
   };
 }
 
@@ -77,8 +80,10 @@ function fakeGateway(
     calls,
     async fetch(cid) {
       calls.push(cid);
-      const r = responses[cid] ?? { status: 404, text: '' };
-      return r;
+      const r = responses[cid];
+      if (r === undefined) return { ok: false, reason: 'http', status: 404 };
+      if (r.status >= 200 && r.status < 300) return { ok: true, status: r.status, text: r.text };
+      return { ok: false, reason: 'http', status: r.status };
     },
   };
 }
