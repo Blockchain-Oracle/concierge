@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, randomBytes, randomFillSync } from 'node:crypto';
+import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { ConciergeError } from '@concierge/sdk';
 
 /**
@@ -25,24 +25,34 @@ export function assertEncryptionKey(key: Buffer, caller: string): void {
 }
 
 /**
- * Build the AAD that binds a ciphertext to a specific row identity. A DB-write
- * attacker can swap envelopes between rows; with AAD bound to (agentId,
- * sessionKeyAddress), the swapped envelope's GCM tag verification fails closed.
- * AAD is NOT secret — only its presence + binding matters.
+ * AAD binds a ciphertext to a specific (agentId, sessionKeyAddress) row identity.
+ * A DB-write attacker who swaps envelopes between rows hits a GCM tag-verification
+ * failure when the AAD at decrypt time doesn't match the encrypt-time AAD.
+ *
+ * Struct param (not positional) so a future caller cannot accidentally swap
+ * `agentId` and `sessionKeyAddress` — both are `string` and the compiler would
+ * otherwise be silent on a positional mistake. AAD is NOT secret; only its
+ * presence + binding matter.
  */
-export function envelopeAad(agentId: string, sessionKeyAddress: string): Buffer {
-  return Buffer.from(`${agentId}:${sessionKeyAddress.toLowerCase()}`, 'utf8');
+export interface EnvelopeAadParts {
+  readonly agentId: string;
+  readonly sessionKeyAddress: string;
+}
+
+export function envelopeAad(parts: EnvelopeAadParts): Buffer {
+  return Buffer.from(`${parts.agentId}:${parts.sessionKeyAddress.toLowerCase()}`, 'utf8');
 }
 
 /**
- * Encrypt 32-byte plaintext into a 60-byte envelope. Caller is responsible for
- * wiping `plaintext` after the call — this function does not own the input.
+ * Encrypt 32-byte plaintext into a 60-byte envelope.
  *
- * IV is fresh `randomBytes(12)` per encryption. Note: NIST SP 800-38D bounds
- * random 96-bit IVs at ~2^32 encryptions per key before collision probability
- * is unsafe. Callers MUST derive the encryption key per-user (NEVER share a
- * global key across users) and avoid issuance loops that re-encrypt under the
- * same key millions of times.
+ * IV is fresh `randomBytes(12)` per encryption. NIST SP 800-38D bounds random
+ * 96-bit IVs at ~2^32 encryptions per key. Callers MUST derive `key` per-user
+ * (NEVER share a global key across users) so this bound is unreachable in
+ * practice.
+ *
+ * Caller owns `plaintext` — this function does NOT wipe it. Wrap the call in
+ * a try/finally that wipes regardless of throw.
  */
 export function encryptEnvelope(plaintext: Buffer, key: Buffer, aad: Buffer): Buffer {
   if (plaintext.length !== PLAINTEXT_BYTES) {
@@ -60,14 +70,14 @@ export function encryptEnvelope(plaintext: Buffer, key: Buffer, aad: Buffer): Bu
 }
 
 /**
- * Decrypt a 60-byte envelope back to 32 bytes of plaintext. Throws on any
- * tampering (wrong AAD, wrong key, modified ciphertext, modified IV, modified
- * tag) via AES-256-GCM's authenticated decryption. Errors are intentionally
- * NOT wrapped with the raw Node crypto error as `cause` — that would expose
- * envelope bytes through stack-trace capture in upstream loggers.
+ * Decrypt a 60-byte envelope back to 32 bytes of plaintext.
+ *
+ * AES-256-GCM authenticated decryption: any single-bit tamper of envelope, IV,
+ * tag, ciphertext, or AAD causes `final()` to throw. The Node crypto error is
+ * intentionally NOT attached as `cause` — its stack frames can capture envelope
+ * bytes / key references via locals snapshot in upstream loggers.
  */
 export function decryptEnvelope(envelope: Buffer, key: Buffer, aad: Buffer): Buffer {
-  // Strict equality on envelope length — anything else is corruption.
   if (envelope.length !== ENVELOPE_BYTES) {
     throw new ConciergeError(
       'DecryptionFailed',
@@ -77,27 +87,15 @@ export function decryptEnvelope(envelope: Buffer, key: Buffer, aad: Buffer): Buf
   const iv = envelope.subarray(0, IV_BYTES);
   const tag = envelope.subarray(IV_BYTES, IV_BYTES + TAG_BYTES);
   const ciphertext = envelope.subarray(IV_BYTES + TAG_BYTES);
-  let plaintext: Buffer;
   try {
     const decipher = createDecipheriv('aes-256-gcm', key, iv);
     decipher.setAAD(aad);
     decipher.setAuthTag(tag);
-    plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+    return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
   } catch {
-    // Drop the cause — Node's crypto error stack may capture envelope bytes
-    // via locals snapshot. Wipe the AAD reference for good measure.
-    randomFillSync(Buffer.from(aad));
     throw new ConciergeError(
       'DecryptionFailed',
       '[@concierge/smart-account] decryptEnvelope: AES-256-GCM decryption failed — wrong encryption key, wrong AAD (agentId/sessionKeyAddress mismatch — possible row swap), tampered ciphertext, or corrupted envelope.',
     );
   }
-  if (plaintext.length !== PLAINTEXT_BYTES) {
-    randomFillSync(plaintext);
-    throw new ConciergeError(
-      'DecryptionFailed',
-      `[@concierge/smart-account] decryptEnvelope: decrypted plaintext is not ${PLAINTEXT_BYTES} bytes (got ${plaintext.length}).`,
-    );
-  }
-  return plaintext;
 }

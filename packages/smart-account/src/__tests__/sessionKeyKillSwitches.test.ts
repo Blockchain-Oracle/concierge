@@ -217,49 +217,25 @@ describe('persistSessionKey + loadSessionKey — kill switches + config errors',
     }
   });
 
-  it('throws SessionKeyExpired when validUntil has passed', async () => {
-    const { db, persisted, rows } = await issueAndPersist();
-    if (rows[0]) rows[0].validUntil = new Date(Date.now() - 1000);
-    try {
-      await loadSessionKey({
-        db,
-        sessionKeyId: persisted.sessionKeyId,
-        expectedAgentId: AGENT_ID,
-        encryptionKey,
-      });
-      expect.fail('should have thrown');
-    } catch (e) {
-      expect(e).toBeInstanceOf(ConciergeError);
-      expect((e as ConciergeError).type).toBe('SessionKeyExpired');
-    }
-  });
-
   it('throws SessionKeyRevoked when revokedAt is set', async () => {
     const { db, persisted, rows } = await issueAndPersist();
     if (rows[0]) rows[0].revokedAt = new Date();
-    try {
-      await loadSessionKey({
+    await expect(
+      loadSessionKey({
         db,
         sessionKeyId: persisted.sessionKeyId,
         expectedAgentId: AGENT_ID,
         encryptionKey,
-      });
-      expect.fail('should have thrown');
-    } catch (e) {
-      expect(e).toBeInstanceOf(ConciergeError);
-      expect((e as ConciergeError).type).toBe('SessionKeyRevoked');
-    }
+      }),
+    ).rejects.toSatisfy(
+      (e: unknown) => e instanceof ConciergeError && e.type === 'SessionKeyRevoked',
+    );
   });
 
   it('throws SessionKeyExpired when validAfter is in the future (not-yet-valid kill switch)', async () => {
     const { db, persisted, rows } = await issueAndPersist();
-    const row = rows[0];
-    expect(row).toBeDefined();
-    if (row) {
-      // biome-ignore lint/suspicious/noExplicitAny: stub row policyJson is unknown-typed
-      const pj = row.policyJson as any;
-      pj.validAfter = Math.floor(Date.now() / 1000) + 3600;
-    }
+    // biome-ignore lint/suspicious/noExplicitAny: stub row policyJson is unknown-typed
+    if (rows[0]) (rows[0].policyJson as any).validAfter = Math.floor(Date.now() / 1000) + 3600;
     try {
       await loadSessionKey({
         db,

@@ -214,4 +214,47 @@ describe('issueSessionKey — EIP-712 typed-data signing', () => {
     expect(result.validAfter).toBeGreaterThanOrEqual(before);
     expect(result.validAfter).toBeLessThanOrEqual(after);
   });
+
+  it('throws ConfigError when validUntil is already in the past (both bounds historical)', async () => {
+    const ownerAccount = privateKeyToAccount(generatePrivateKey());
+    const t = Math.floor(Date.now() / 1000);
+    await expect(
+      issueSessionKey({
+        ownerAccount,
+        conciergeAccount: CONCIERGE_ACCOUNT_STUB,
+        chain: 'mantle-sepolia',
+        providers: [PROVIDER],
+        spendingLimits: [],
+        validAfter: t - 2000,
+        validUntil: t - 1000,
+      }),
+    ).rejects.toSatisfy(
+      (e: unknown) =>
+        e instanceof ConciergeError &&
+        e.type === 'ConfigError' &&
+        String(e.message).includes('already in the past'),
+    );
+  });
+
+  it('wraps a kernel-nonce RPC failure as RpcError with cause preserved', async () => {
+    const { getKernelV3Nonce } = await import('@zerodev/sdk/accounts');
+    const original = new Error('rpc connection reset');
+    vi.mocked(getKernelV3Nonce).mockRejectedValueOnce(original);
+    const ownerAccount = privateKeyToAccount(generatePrivateKey());
+    await expect(
+      issueSessionKey({
+        ownerAccount,
+        conciergeAccount: CONCIERGE_ACCOUNT_STUB,
+        chain: 'mantle-sepolia',
+        providers: [PROVIDER],
+        spendingLimits: [],
+      }),
+    ).rejects.toSatisfy(
+      (e: unknown) =>
+        e instanceof ConciergeError &&
+        e.type === 'RpcError' &&
+        String(e.message).includes('failed to read kernel validator nonce') &&
+        e.cause === original,
+    );
+  });
 });
