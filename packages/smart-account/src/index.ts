@@ -22,6 +22,23 @@ export type {
   PartialFailure,
 } from './emergencyStop.ts';
 export { emergencyStop } from './emergencyStop.ts';
+export type {
+  ProposalEventEmitter,
+  ProposalEvents,
+  ProposeForUserConfig,
+  ProposeForUserResult,
+} from './eoaFallback/proposer.ts';
+export { proposeForUser } from './eoaFallback/proposer.ts';
+export type { EnqueueInput, QueueRow } from './eoaFallback/queue.ts';
+export {
+  enqueue,
+  getPending,
+  markConfirmed,
+  markFailed,
+  markSigned,
+} from './eoaFallback/queue.ts';
+export type { SendSignedTxConfig, SendSignedTxResult } from './eoaFallback/sender.ts';
+export { sendSignedTx } from './eoaFallback/sender.ts';
 export type { GetUserOpGasPriceConfig, UserOpGasPrice } from './gasPrice.ts';
 export { getUserOpGasPrice } from './gasPrice.ts';
 export type { IssueSessionKeyConfig, IssueSessionKeyResult } from './issueSessionKey.ts';
