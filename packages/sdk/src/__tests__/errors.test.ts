@@ -58,7 +58,7 @@ describe('ConciergeError (ADR-019)', () => {
   });
 
   it('constructs for every ADR-019 error type (runtime list drives the loop)', () => {
-    expect(CONCIERGE_ERROR_TYPES).toHaveLength(17);
+    expect(CONCIERGE_ERROR_TYPES).toHaveLength(20);
     for (const type of CONCIERGE_ERROR_TYPES) {
       expect(new ConciergeError(type, type).type).toBe(type);
     }

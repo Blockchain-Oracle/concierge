@@ -1,4 +1,20 @@
 export { createLock } from './lock.ts';
+export type { RunPlanInputs, RunPlanOptions } from './phases/plan.ts';
+export { runPlan } from './phases/plan.ts';
+export {
+  type ActionDescriptor,
+  actionDescriptorSchema,
+  type LlmPlan,
+  type PlanIntent,
+  planIntentSchema,
+  planSchema,
+} from './phases/planSchema.ts';
+export {
+  filterToPlanTools,
+  isBannedToolName,
+  PLAN_BANNED_TOOL_NAMES,
+  type PlanBannedToolName,
+} from './phases/planTools.ts';
 export { sanitizeError, sanitizeMessage } from './sanitize.ts';
 export { tick } from './tick.ts';
 export type {
