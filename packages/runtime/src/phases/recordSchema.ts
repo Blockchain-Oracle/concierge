@@ -13,11 +13,13 @@ import { hash32Schema as HASH_32 } from './hash.ts';
  * regex so the namespace convention can't drift (lowercase + dot-separated +
  * `.v<digits>` suffix). Length capped at 128 inline (drops MAX constant).
  */
+// Round-2: require at least TWO leading segments (vendor + protocol) and
+// versions starting at v1 (v0 has no semantic meaning today).
 const providerSchemaIdSchema = z
   .string()
   .min(1)
   .max(128)
-  .regex(/^[a-z0-9]+(\.[a-z0-9]+)*\.v\d+$/);
+  .regex(/^[a-z0-9]+(\.[a-z0-9]+)+\.v[1-9]\d*$/);
 
 export const attestationPayloadSchema = z.object({
   providerSchema: providerSchemaIdSchema,
