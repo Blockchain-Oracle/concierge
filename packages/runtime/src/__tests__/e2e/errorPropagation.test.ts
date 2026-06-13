@@ -14,10 +14,9 @@ describe('e2e ErrorPropagation — phase errors halt the tick at the failing pha
     });
     const result = await run();
     expect(result.kind).toBe('errored');
-    if (result.kind === 'errored') {
-      expect(result.phase).toBe('simulate');
-      expect(result.error.message).toContain('oracle stale');
-    }
+    if (result.kind !== 'errored') throw new Error('expected errored');
+    expect(result.phase).toBe('simulate');
+    expect(result.error.message).toContain('oracle stale');
     expect(config.execute).not.toHaveBeenCalled();
     expect(config.record).not.toHaveBeenCalled();
     expect(fakes.executions).toHaveLength(0);
@@ -31,10 +30,9 @@ describe('e2e ErrorPropagation — phase errors halt the tick at the failing pha
     );
     const result = await run();
     expect(result.kind).toBe('errored');
-    if (result.kind === 'errored') {
-      expect(result.phase).toBe('execute');
-      expect(result.cause).toBe('thrown');
-    }
+    if (result.kind !== 'errored') throw new Error('expected errored');
+    expect(result.phase).toBe('execute');
+    expect(result.cause).toBe('thrown');
     expect(config.record).not.toHaveBeenCalled();
   });
 });

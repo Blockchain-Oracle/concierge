@@ -119,6 +119,21 @@ export function makeLock(fakes: FakeOutputs): TickLock {
   };
 }
 
+/** Deferred promise — production-grade primitive for forcing a real async boundary in tests. */
+export function deferred<T>(): {
+  promise: Promise<T>;
+  resolve: (v: T) => void;
+  reject: (err: unknown) => void;
+} {
+  let resolve!: (v: T) => void;
+  let reject!: (err: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 export function buildTickConfig(
   args: BuildTickArgs = {},
   fakes: FakeOutputs = makeFakes(),
@@ -138,10 +153,15 @@ export function buildTickConfig(
   });
   const record: RecordFn = vi.fn().mockImplementation(async () => {
     const r = args.recordOutcome ?? DEFAULT_RECORD;
+    // Round-1 fix: record attempt regardless of outcome so failed attest
+    // attempts are observable (was previously invisible if record returned
+    // an error variant).
     if (r.kind === 'continue') {
       const last = fakes.executions.at(-1);
       if (last !== undefined) last.attestationUid = r.data.attestationUid;
       fakes.attestationsAttempted.push(r.data.attestationUid);
+    } else {
+      fakes.attestationsAttempted.push('<attempted-and-failed>');
     }
     return r;
   });

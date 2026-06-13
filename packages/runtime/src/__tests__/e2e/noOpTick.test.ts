@@ -10,10 +10,9 @@ describe('e2e NoOpTick — plan returns stop early; downstream phases NOT invoke
     });
     const result = await run();
     expect(result.kind).toBe('stopped');
-    if (result.kind === 'stopped') {
-      expect(result.phase).toBe('plan');
-      expect(result.reason).toBe('noop');
-    }
+    if (result.kind !== 'stopped') throw new Error('expected stopped');
+    expect(result.phase).toBe('plan');
+    expect(result.reason).toBe('noop');
     expect(config.plan).toHaveBeenCalledTimes(1);
     expect(config.simulate).not.toHaveBeenCalled();
     expect(config.propose).not.toHaveBeenCalled();
