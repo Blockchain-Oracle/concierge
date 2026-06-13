@@ -399,11 +399,11 @@ stories:
     merged_at: "2026-06-13"
   - id: story-67-tick-phase-record
     epic: "Epic E5 — Agent Runtime"
-    status: PENDING
+    status: COMPLETE
     depends_on: [story-66-tick-phase-execute]
     issue_url: ""
-    pr_url: ""
-    merged_at: ""
+    pr_url: "https://github.com/Blockchain-Oracle/concierge/pull/110"
+    merged_at: "2026-06-13"
   - id: story-68-bullmq-cron-worker
     epic: "Epic E5 — Agent Runtime"
     status: PENDING
