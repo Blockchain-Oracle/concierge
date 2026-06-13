@@ -42,13 +42,24 @@ export const proposalCreatedEventSchema = z.object({
 });
 export type ProposalCreatedEvent = z.infer<typeof proposalCreatedEventSchema>;
 
-/** A row already pending for this agent — propose() returns existing id, no insert. */
+/**
+ * Discriminated union — `created` carries the truthful `requiresApproval`
+ * (computed THIS tick); `already_pending` deliberately does NOT carry the
+ * stored row's flag because the propose phase has not re-read it. Consumers
+ * fetch the full proposal by id (per the SSE comment above).
+ */
 export const PROPOSAL_DECISION_KINDS = ['created', 'already_pending'] as const;
 export type ProposalDecisionKind = (typeof PROPOSAL_DECISION_KINDS)[number];
 
-export const proposalDecisionSchema = z.object({
-  kind: z.enum(PROPOSAL_DECISION_KINDS),
-  proposalId: z.string().min(1),
-  requiresApproval: z.boolean(),
-});
+export const proposalDecisionSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('created'),
+    proposalId: z.string().min(1),
+    requiresApproval: z.boolean(),
+  }),
+  z.object({
+    kind: z.literal('already_pending'),
+    proposalId: z.string().min(1),
+  }),
+]);
 export type ProposalDecision = z.infer<typeof proposalDecisionSchema>;

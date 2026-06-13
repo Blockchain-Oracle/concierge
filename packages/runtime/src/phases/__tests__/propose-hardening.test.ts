@@ -1,6 +1,5 @@
 import { ConciergeError } from '@concierge/sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { AgentState, Plan } from '../../types.ts';
 import {
   decideRequiresApproval,
   type NewProposalRow,
@@ -8,61 +7,23 @@ import {
   type ProposalRepository,
   runPropose,
 } from '../propose.ts';
-import type { DetailedSim } from '../simulate.ts';
+import {
+  HF_BEFORE,
+  HF_FLOOR,
+  HF_HEALTHY,
+  HF_NEAR_FLOOR,
+  makePub,
+  makeRepo,
+  NOW,
+  PLAN,
+  PROPOSAL_ID,
+  STATE,
+  simOf,
+  TICK_ID,
+} from './_proposeFixtures.ts';
 
 afterEach(() => vi.restoreAllMocks());
 
-const STATE: AgentState = {
-  agentId: '00000000-0000-0000-0000-000000000001',
-  userId: '00000000-0000-0000-0000-000000000002',
-  chain: 'mantle-sepolia',
-  goal: 'idle yield',
-  policyId: 'p',
-  recentTicks: [],
-  openPositions: [],
-};
-const TICK_ID = '00000000-0000-0000-0000-000000000003';
-const PROPOSAL_ID = '00000000-0000-0000-0000-000000000004';
-const NOW = new Date('2026-06-13T10:00:00Z');
-
-const HF_BEFORE = 2_000_000_000_000_000_000n;
-const HF_HEALTHY = 1_900_000_000_000_000_000n;
-const HF_FLOOR = 1_500_000_000_000_000_000n;
-const HF_NEAR_FLOOR = 1_550_000_000_000_000_000n; // within 10% buffer
-
-function simOf(healthFactorAfter: bigint, warnings: string[] = []): DetailedSim {
-  return {
-    ok: true,
-    gasEstimateWei: 100_000n,
-    expectedValueDeltaUsd: null,
-    warnings,
-    deltaState: {
-      healthFactorBefore: HF_BEFORE,
-      healthFactorAfter,
-      balanceDeltas: Object.freeze({}),
-      debtDeltas: Object.freeze({}),
-      oracleChecks: Object.freeze({ stale: false }),
-    },
-  };
-}
-
-const PLAN: Plan = {
-  intent: 'rebalance',
-  providerCalls: [{ provider: 'aave', action: 'supply', args: {} }],
-};
-
-function makeRepo(over: Partial<ProposalRepository> = {}): ProposalRepository {
-  return {
-    findPendingByAgent: vi.fn().mockResolvedValue(null),
-    insert: vi.fn().mockResolvedValue({ id: PROPOSAL_ID }),
-    ...over,
-  };
-}
-
-function makePub(): ProposalPublisher & { mock: ReturnType<typeof vi.fn> } {
-  const mock = vi.fn().mockResolvedValue(undefined);
-  return { publish: mock, mock };
-}
 describe('runPropose — boundary validation', () => {
   it('unknown kind → ConciergeError(InvariantViolation)', async () => {
     await expect(
@@ -222,6 +183,7 @@ describe('runPropose — round-1 hardening: TOCTOU + boundary', () => {
       },
       { repository: repo, publisher: makePub(), now: () => NOW },
     );
+    expect(out.kind).toBe('continue');
     if (out.kind === 'continue') expect(out.data.kind).toBe('already_pending');
   });
 
@@ -337,5 +299,66 @@ describe('runPropose — round-1 hardening: TOCTOU + boundary', () => {
       expect(out2.data.kind).toBe('already_pending');
       expect(out2.data.proposalId).toBe('p1');
     }
+  });
+
+  it('round-2: 23505 recovery findPending THROWS → distinct RpcError surfaces recovery cause', async () => {
+    const findCalls = vi.fn();
+    findCalls
+      .mockResolvedValueOnce(null) // initial check
+      .mockRejectedValueOnce(new Error('recovery read pool exhausted'));
+    const dupErr = Object.assign(new Error('dup'), { code: '23505' });
+    const repo: ProposalRepository = {
+      findPendingByAgent: findCalls,
+      insert: vi.fn().mockRejectedValue(dupErr),
+    };
+    await expect(
+      runPropose(
+        {
+          state: STATE,
+          tickId: TICK_ID,
+          plan: PLAN,
+          sim: simOf(HF_HEALTHY),
+          kind: 'supply',
+          protocol: 'aave',
+          amountUsd: 25,
+          hypothesis: '',
+        },
+        { repository: repo, publisher: makePub(), now: () => NOW },
+      ),
+    ).rejects.toSatisfy((e: unknown) => {
+      if (!(e instanceof ConciergeError)) return false;
+      return (
+        e.type === 'RpcError' && e.message.includes('post-unique-violation recovery read failed')
+      );
+    });
+  });
+
+  it('round-2: 23505 fires but recovery returns null → InvariantViolation (index lies)', async () => {
+    const findCalls = vi.fn();
+    findCalls
+      .mockResolvedValueOnce(null) // initial check
+      .mockResolvedValueOnce(null); // recovery: no winner
+    const dupErr = Object.assign(new Error('dup'), { code: '23505' });
+    const repo: ProposalRepository = {
+      findPendingByAgent: findCalls,
+      insert: vi.fn().mockRejectedValue(dupErr),
+    };
+    await expect(
+      runPropose(
+        {
+          state: STATE,
+          tickId: TICK_ID,
+          plan: PLAN,
+          sim: simOf(HF_HEALTHY),
+          kind: 'supply',
+          protocol: 'aave',
+          amountUsd: 25,
+          hypothesis: '',
+        },
+        { repository: repo, publisher: makePub(), now: () => NOW },
+      ),
+    ).rejects.toSatisfy(
+      (e: unknown) => e instanceof ConciergeError && e.type === 'InvariantViolation',
+    );
   });
 });

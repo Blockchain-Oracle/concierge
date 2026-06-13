@@ -200,7 +200,7 @@ export async function runPropose(
   if (existing !== null) {
     return {
       kind: 'continue',
-      data: { kind: 'already_pending', proposalId: existing.id, requiresApproval: true },
+      data: { kind: 'already_pending', proposalId: existing.id },
     };
   }
 
@@ -236,15 +236,33 @@ export async function runPropose(
     // converging on `already_pending` — same outcome as the polite-path
     // pre-check, just observed via the index instead.
     if (isPgUniqueViolation(err)) {
-      const winner = await deps.repository
-        .findPendingByAgent(inputs.state.agentId)
-        .catch(() => null);
+      // Round-2: distinguish "recovery read failed" (infra) from "no winner
+      // observed" (genuinely weird — index fired but row vanished). The pre-
+      // round-2 .catch(() => null) collapsed both into a fall-through that
+      // re-threw the ORIGINAL 23505 error, hiding the recovery failure cause.
+      let winner: { readonly id: string } | null;
+      try {
+        winner = await deps.repository.findPendingByAgent(inputs.state.agentId);
+      } catch (recoveryErr) {
+        const safeRec = sanitizeError(recoveryErr);
+        throw new ConciergeError(
+          'RpcError',
+          `[@concierge/runtime] runPropose: post-unique-violation recovery read failed: ${safeRec.message}`,
+          safeRec,
+        );
+      }
       if (winner !== null) {
         return {
           kind: 'continue',
-          data: { kind: 'already_pending', proposalId: winner.id, requiresApproval: true },
+          data: { kind: 'already_pending', proposalId: winner.id },
         };
       }
+      // Index fired but no row visible — surface as InvariantViolation since
+      // the unique partial index is the source of truth.
+      throw new ConciergeError(
+        'InvariantViolation',
+        `[@concierge/runtime] runPropose: unique_violation fired but no pending row found for agent ${inputs.state.agentId}.`,
+      );
     }
     const safe = sanitizeError(err);
     throw new ConciergeError(
