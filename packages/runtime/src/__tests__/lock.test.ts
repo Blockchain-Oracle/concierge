@@ -7,7 +7,6 @@ interface FakeRedis {
 }
 
 function makeRedis(opts: { setReturns?: string | null } = {}): FakeRedis {
-  // Use `in opts` so an explicit `null` is preserved (?? on null returns default).
   const setReturn = 'setReturns' in opts ? opts.setReturns : 'OK';
   return {
     set: vi.fn().mockResolvedValue(setReturn),
@@ -25,6 +24,15 @@ describe('createLock — Redis NX semantics', () => {
     expect(redis.set).toHaveBeenCalledWith('lock:agent:a', expect.any(String), 'PX', 30_000, 'NX');
   });
 
+  it('nonce uses crypto.randomUUID (36 chars, 4-2-1 hex shape — NOT Math.random)', async () => {
+    const redis = makeRedis({ setReturns: 'OK' });
+    // biome-ignore lint/suspicious/noExplicitAny: fake redis
+    const lock = createLock(redis as any);
+    await lock.acquire('lock:agent:a', 30_000);
+    const nonce = redis.set.mock.calls[0]?.[1] as string;
+    expect(nonce).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  });
+
   it('acquire returns false when SET returns null (lock held by another holder)', async () => {
     const redis = makeRedis({ setReturns: null });
     // biome-ignore lint/suspicious/noExplicitAny: fake redis
@@ -33,7 +41,7 @@ describe('createLock — Redis NX semantics', () => {
     expect(got).toBe(false);
   });
 
-  it('release runs the atomic check+DEL Lua script with the per-call nonce', async () => {
+  it('release runs Lua check+DEL with the per-acquire nonce', async () => {
     const redis = makeRedis();
     // biome-ignore lint/suspicious/noExplicitAny: fake redis
     const lock = createLock(redis as any);
@@ -45,7 +53,7 @@ describe('createLock — Redis NX semantics', () => {
     expect(key).toBe('lock:agent:a');
   });
 
-  it('release is a no-op when this process never acquired the lock', async () => {
+  it('release is a no-op when this lock never acquired the key', async () => {
     const redis = makeRedis();
     // biome-ignore lint/suspicious/noExplicitAny: fake redis
     const lock = createLock(redis as any);
@@ -53,14 +61,28 @@ describe('createLock — Redis NX semantics', () => {
     expect(redis.eval).not.toHaveBeenCalled();
   });
 
-  it('acquire generates a distinct nonce per call (no static leak)', async () => {
+  it('CLOSURE-SCOPED nonceFor: two separate createLock instances do NOT share state', async () => {
+    const redisA = makeRedis({ setReturns: 'OK' });
+    const redisB = makeRedis({ setReturns: 'OK' });
+    // biome-ignore lint/suspicious/noExplicitAny: fake redis
+    const lockA = createLock(redisA as any);
+    // biome-ignore lint/suspicious/noExplicitAny: fake redis
+    const lockB = createLock(redisB as any);
+    await lockA.acquire('shared-key', 1000);
+    // lockB should NOT know about shared-key — its nonceFor is independent.
+    await lockB.release('shared-key');
+    expect(redisB.eval).not.toHaveBeenCalled();
+    // lockA still owns its nonce.
+    await lockA.release('shared-key');
+    expect(redisA.eval).toHaveBeenCalledTimes(1);
+  });
+
+  it('acquire generates distinct nonces per call', async () => {
     const redis = makeRedis({ setReturns: 'OK' });
     // biome-ignore lint/suspicious/noExplicitAny: fake redis
     const lock = createLock(redis as any);
     await lock.acquire('lock:a', 1000);
     await lock.acquire('lock:b', 1000);
-    const nonceA = redis.set.mock.calls[0]?.[1];
-    const nonceB = redis.set.mock.calls[1]?.[1];
-    expect(nonceA).not.toBe(nonceB);
+    expect(redis.set.mock.calls[0]?.[1]).not.toBe(redis.set.mock.calls[1]?.[1]);
   });
 });

@@ -1,26 +1,28 @@
 /**
- * Tick phases per `research/concierge/04-agent-runtime.md` § 2.1. `decide` is
- * out-of-loop (governance moment, runs only on `proposal.requiresApproval`)
- * and `record` is the post-execute attestation hook.
+ * Tick phases per `research/concierge/04-agent-runtime.md` § 2.1.
+ *
+ * The 5 in-loop phases the orchestrator drives sequentially. `decide` is
+ * out-of-loop (governance moment; runs on `proposal.requiresApproval`) so it
+ * lives in the broader `TickPhase` union but NOT in `OrchestratedPhase`.
  */
-export type TickPhase = 'plan' | 'simulate' | 'propose' | 'execute' | 'record';
+export const ORCHESTRATED_PHASES = ['plan', 'simulate', 'propose', 'execute', 'record'] as const;
 
-export const TICK_PHASE_ORDER: readonly TickPhase[] = Object.freeze([
-  'plan',
-  'simulate',
-  'propose',
-  'execute',
-  'record',
-]);
+export type OrchestratedPhase = (typeof ORCHESTRATED_PHASES)[number];
+
+/** Includes the out-of-loop `decide` phase for historical/log fields. */
+export type TickPhase = OrchestratedPhase | 'decide';
+
+export const TICK_PHASES: readonly TickPhase[] = Object.freeze([...ORCHESTRATED_PHASES, 'decide']);
 
 /**
- * Per-phase result discriminator. Every phase returns one of three shapes:
- *   - `{ kind: 'continue', data }` — proceed to the next phase, carrying data
- *   - `{ kind: 'stop' }`            — clean early-return (NOOP / awaiting / etc)
- *   - `{ kind: 'error', error }`    — typed failure; tick aborts + logs + releases lock
+ * Per-phase result discriminator. Three shapes:
+ *   - `continue` — proceed to next phase, carrying typed `data`
+ *   - `stop`     — clean early-return (NOOP / awaiting approval / sim NOT OK)
+ *   - `error`    — typed failure; tick aborts + logs + releases lock
  *
- * `data` is intentionally typed per phase below so the next phase's input is
- * constrained at the type system level (no `any` slip).
+ * `error.error: unknown` at this boundary because phase impls may rethrow
+ * arbitrary values. The PUBLIC `TickResult.errored.error` is normalised to
+ * `Error` so consumers don't need defensive `instanceof` ladders.
  */
 export type PhaseOutcome<TData> =
   | { kind: 'continue'; data: TData }
@@ -28,20 +30,40 @@ export type PhaseOutcome<TData> =
   | { kind: 'error'; error: unknown };
 
 /**
- * Phase function signatures. The orchestrator (tick.ts) is parameterised by
- * these so it's unit-testable without the actual phase implementations (which
- * land in stories 63-67). Each phase reads from the prior phase's `data`.
+ * Per-phase function signatures — named aliases so the chain is type-checked
+ * at the DI boundary (Plan flows into Simulate's arg, etc.). A generic
+ * `PhaseFn<TIn, TOut>` would erase the chain at the lowest-common-denominator
+ * shape; the named aliases pull their weight.
+ *
+ * Each phase function receives an `AbortSignal` so it can cancel cleanly when
+ * the lock TTL is approaching (`tick` sets the signal at `lockTtlMs - 5s`).
  */
-export type PlanFn = (state: AgentState) => Promise<PhaseOutcome<Plan>>;
-export type SimulateFn = (state: AgentState, plan: Plan) => Promise<PhaseOutcome<Sim>>;
-export type ProposeFn = (state: AgentState, sim: Sim) => Promise<PhaseOutcome<Proposal>>;
-export type ExecuteFn = (state: AgentState, proposal: Proposal) => Promise<PhaseOutcome<Exec>>;
-export type RecordFn = (state: AgentState, exec: Exec) => Promise<PhaseOutcome<Attestation>>;
+export type PlanFn = (state: AgentState, signal: AbortSignal) => Promise<PhaseOutcome<Plan>>;
+export type SimulateFn = (
+  state: AgentState,
+  plan: Plan,
+  signal: AbortSignal,
+) => Promise<PhaseOutcome<Sim>>;
+export type ProposeFn = (
+  state: AgentState,
+  sim: Sim,
+  signal: AbortSignal,
+) => Promise<PhaseOutcome<Proposal>>;
+export type ExecuteFn = (
+  state: AgentState,
+  proposal: Proposal,
+  signal: AbortSignal,
+) => Promise<PhaseOutcome<Exec>>;
+export type RecordFn = (
+  state: AgentState,
+  exec: Exec,
+  signal: AbortSignal,
+) => Promise<PhaseOutcome<Attestation>>;
 
 /**
- * Aggregate state loaded once per tick from Postgres. Treated as immutable
- * within a single tick — phases that need to mutate write directly to the
- * DB and the next tick re-loads.
+ * Agent state loaded once per tick. Deep-readonly so a phase that mutates
+ * the snapshot is a compile error — phases that need to mutate WRITE to the
+ * DB; next tick re-loads.
  */
 export interface AgentState {
   readonly agentId: string;
@@ -49,9 +71,8 @@ export interface AgentState {
   readonly chain: 'mantle-mainnet' | 'mantle-sepolia';
   readonly goal: string;
   readonly policyId: string;
-  /** Last 5 ticks for short-term context. Newest first. */
+  /** Last 5 ticks for short-term context. Newest first. `phase` is the full TickPhase set. */
   readonly recentTicks: readonly { tickId: string; phase: TickPhase; ts: Date }[];
-  /** Open positions across providers (Aave loans, Ethena sUSDe stake, etc.). */
   readonly openPositions: readonly { protocol: string; identifier: string }[];
 }
 
@@ -85,14 +106,15 @@ export interface Attestation {
 }
 
 /**
- * Final tick outcome. Discriminated by the phase that terminated the run.
- * `skipped` is the lock-contention path — another worker is already ticking
- * this agent; we exit clean without running anything.
+ * Final tick outcome. `cause: 'thrown' | 'returned'` on `errored` distinguishes
+ * a phase function that THREW (likely programmer bug — TypeError/ReferenceError)
+ * from one that returned a typed `{kind:'error'}` (legitimate domain failure).
+ * Operators dashboard the two separately.
  */
 export type TickResult =
-  | { kind: 'skipped'; reason: 'already_running' }
-  | { kind: 'stopped'; phase: TickPhase; reason: string }
-  | { kind: 'errored'; phase: TickPhase; error: unknown }
+  | { kind: 'skipped' }
+  | { kind: 'stopped'; phase: OrchestratedPhase; reason: string }
+  | { kind: 'errored'; phase: OrchestratedPhase; error: Error; cause: 'thrown' | 'returned' }
   | { kind: 'completed'; attestation: Attestation };
 
 export interface TickConfig {
@@ -103,12 +125,16 @@ export interface TickConfig {
   readonly propose: ProposeFn;
   readonly execute: ExecuteFn;
   readonly record: RecordFn;
-  /** Injected for testability — production caller passes `createLock(redis)`. */
   readonly lock: TickLock;
-  /** Optional structured logger. Defaults to a silent no-op logger if omitted. */
   readonly logger?: TickLogger;
-  /** Lock TTL (ms). Default 60_000 — long enough for a 6-phase tick. */
+  /** Lock TTL (ms). Default 60_000. Per-phase AbortSignal fires at TTL - 5s. */
   readonly lockTtlMs?: number;
+  /**
+   * Sanitizer for error messages before they land in logs / TickResult.
+   * Default redacts `apikey=`/`key=`/`token=`/`secret=` URL params (Pimlico
+   * shape — see story-55). Caller can override for stricter rules.
+   */
+  readonly sanitizeError?: (err: unknown) => Error;
 }
 
 export interface TickLock {
@@ -116,10 +142,6 @@ export interface TickLock {
   release(key: string): Promise<void>;
 }
 
-/**
- * Minimal logger surface — concrete impl is pino in production, no-op in
- * tests. Avoids leaking pino types into every caller.
- */
 export interface TickLogger {
   info(obj: Record<string, unknown>, msg?: string): void;
   warn(obj: Record<string, unknown>, msg?: string): void;

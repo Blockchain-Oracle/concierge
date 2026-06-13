@@ -1,11 +1,11 @@
 export { createLock } from './lock.ts';
-export { loadAgentState } from './state.ts';
 export { tick } from './tick.ts';
 export type {
   AgentState,
   Attestation,
   Exec,
   ExecuteFn,
+  OrchestratedPhase,
   PhaseOutcome,
   Plan,
   PlanFn,
@@ -20,4 +20,4 @@ export type {
   TickPhase,
   TickResult,
 } from './types.ts';
-export { TICK_PHASE_ORDER } from './types.ts';
+export { ORCHESTRATED_PHASES, TICK_PHASES } from './types.ts';

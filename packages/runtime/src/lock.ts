@@ -1,15 +1,12 @@
+import { randomUUID } from 'node:crypto';
 import type Redis from 'ioredis';
 import type { TickLock } from './types.ts';
 
 /**
- * Redis NX lock. The `SET key value NX EX ttl` primitive is atomic — only
- * one caller wins, the rest see `OK` of null. The value carries a per-process
- * nonce so a stale release from a different process can be ignored (avoids
- * the classic "release someone else's lock" race when the original holder's
- * TTL expired mid-tick).
- *
- * NOTE: this implementation uses Lua-evaluated release so check+delete is
- * atomic. A bare DEL would clear a lock another worker just re-acquired.
+ * Redis NX lock. The Lua release script does an atomic check+DEL so a stale
+ * TTL expiry can't accidentally drop someone else's lock. Nonce uses
+ * `crypto.randomUUID()` (security CWE-338 — Math.random predictable enough
+ * for spoofed release racing).
  */
 const RELEASE_SCRIPT = `
 if redis.call('GET', KEYS[1]) == ARGV[1] then
@@ -20,9 +17,12 @@ end
 `.trim();
 
 export function createLock(redis: Redis): TickLock {
+  // Closure-scoped per createLock() call — module-global Map was a cross-
+  // instance + cross-test contamination smell flagged by 4 reviewers.
+  const nonceFor = new Map<string, string>();
   return {
     async acquire(key: string, ttlMs: number): Promise<boolean> {
-      const nonce = generateNonce();
+      const nonce = randomUUID();
       const ok = await redis.set(key, nonce, 'PX', ttlMs, 'NX');
       if (ok === 'OK') {
         nonceFor.set(key, nonce);
@@ -32,19 +32,15 @@ export function createLock(redis: Redis): TickLock {
     },
     async release(key: string): Promise<void> {
       const nonce = nonceFor.get(key);
-      if (nonce === undefined) return; // we never held it; nothing to do
+      if (nonce === undefined) {
+        // We never held it (acquire never returned true OR already released).
+        // The bare return is intentional but observable through tick.ts which
+        // wraps release() in its own try/catch and logs.
+        return;
+      }
       nonceFor.delete(key);
       // biome-ignore lint/suspicious/noExplicitAny: ioredis eval typing
       await (redis as any).eval(RELEASE_SCRIPT, 1, key, nonce);
     },
   };
-}
-
-const nonceFor = new Map<string, string>();
-
-function generateNonce(): string {
-  // 16 bytes hex — enough collision resistance for a lock-id space.
-  // crypto.randomUUID() is fine here; we don't need cryptographic strength
-  // beyond distinctness per process / per call.
-  return `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
