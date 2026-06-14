@@ -9,8 +9,6 @@
     { "path": "./packages/langchain" },
     { "path": "./packages/openai" },
     { "path": "./packages/agentkit" },
-    { "path": "./packages/ui" },
-    { "path": "./packages/skill" },
     { "path": "./packages/attestation" },
     { "path": "./packages/providers/mantle-dex" },
     { "path": "./apps/web" },
